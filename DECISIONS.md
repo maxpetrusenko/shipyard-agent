@@ -78,5 +78,33 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Slightly slower implementation pace but much lower risk.
 - Revisit Trigger: None during sprint.
 
+### D-008
+- Date: 2026-02-16
+- Status: Accepted
+- Decision: MVP authentication provider is Firebase Google OAuth.
+- Alternatives Considered: Email/password, magic link as primary.
+- Rationale: Fastest reliable setup for authenticated collaboration under sprint constraints.
+- Consequences: Users need Google account for default flow in MVP.
+- Revisit Trigger: If target users require non-Google identity methods.
+
+### D-009
+- Date: 2026-02-16
+- Status: Accepted
+- Decision: Deployment URL strategy uses one canonical production URL and optional preview URLs for QA.
+- Alternatives Considered: Multiple environment URLs exposed to users.
+- Rationale: Reduces confusion in demos/evaluation and simplifies support.
+- Consequences: Must gate unfinished features behind flags or branches, not alternate user-facing URLs.
+- Revisit Trigger: Need parallel public environments for larger team QA.
+
+### D-010
+- Date: 2026-02-16
+- Status: Accepted
+- Decision: Error recovery UX must provide visible reconnect state, autosync retry, and non-destructive conflict messaging.
+- Alternatives Considered: Silent retries only.
+- Rationale: Realtime failures must be explicit to users during demos and tests.
+- Consequences: Additional UI states and copy are required.
+- Revisit Trigger: If telemetry proves messages are noisy or confusing.
+
 ## Change Log
 - 2026-02-16: Initial decision set created from Pre-Search and sprint constraints.
+- 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.

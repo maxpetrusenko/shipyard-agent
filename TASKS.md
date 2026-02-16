@@ -16,7 +16,7 @@ Source: `G4 Week 1 - CollabBoard.pdf`
 |---|---|---|---|---|---|
 | T-001 | 2026-02-16 14:30 | Finalize `PRESEARCH.md` from PDF rubric | C | Max | Done |
 | T-002 | 2026-02-16 15:00 | Finalize `PRD.md`, `MVP.md`, `DECISIONS.md` | C | Max | Done |
-| T-003 | 2026-02-16 15:30 | Break implementation work into Linear tickets | D | Max | Todo |
+| T-003 | 2026-02-16 15:30 | Break implementation work into Linear tickets | D | Max | Done |
 | T-004 | 2026-02-16 16:30 | Initialize app scaffold (web + backend functions) | A | Max | Todo |
 | T-005 | 2026-02-16 17:30 | Implement authentication flow | A | Max | Todo |
 | T-006 | 2026-02-16 18:30 | Implement presence and multiplayer cursors | A | Max | Todo |
@@ -30,6 +30,31 @@ Source: `G4 Week 1 - CollabBoard.pdf`
 | T-014 | 2026-02-20 18:00 | Prepare early submission package (video + docs) | C | Max | Todo |
 | T-015 | 2026-02-22 20:00 | Final polish, cost analysis, social post assets | C | Max | Todo |
 | T-016 | 2026-02-22 22:00 | Final submission freeze and upload | C | Max | Todo |
+
+## Dependency Map
+- T-004 blocks T-005, T-006, and T-007.
+- T-005 blocks T-006 (identity labels) and T-010 (auth hard-gate).
+- T-006 and T-007 block T-009.
+- T-008 depends on baseline object model from T-007.
+- T-009 blocks T-010.
+- T-010 blocks T-011 and T-012 for post-MVP AI expansion.
+
+## Execution Roles
+- Max: accountable owner and final decision maker.
+- Codex: architecture/docs/review support and implementation assistance.
+- Cursor: implementation acceleration and rapid edits.
+- Claude: adversarial review and prompt iteration support.
+
+## Linear Integration Status
+- Integration confirmed for team `Maxpetrusenko`.
+- Created issues:
+  - T-004 -> `MAX-19`
+  - T-005 -> `MAX-20`
+  - T-006 -> `MAX-21`
+  - T-007 -> `MAX-22`
+  - T-008 -> `MAX-23`
+  - T-009 -> `MAX-24`
+  - T-010 -> `MAX-25`
 
 ## Required Artifacts Checklist
 - [ ] Public deployed URL

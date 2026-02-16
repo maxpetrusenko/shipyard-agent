@@ -3,6 +3,11 @@
 Date: 2026-02-16
 MVP deadline: Tuesday, 2026-02-17 (24-hour gate)
 
+## MVP Auth Provider Decision
+- Primary method: Firebase Auth with Google OAuth.
+- Fallback method (only if Google OAuth setup is blocked): Firebase email-link auth.
+- Auth scope for MVP: authenticated board access and user identity for presence/cursors.
+
 ## Hard-Gate Checklist
 - [ ] Infinite board with pan/zoom
 - [ ] Sticky notes with editable text
@@ -11,7 +16,7 @@ MVP deadline: Tuesday, 2026-02-17 (24-hour gate)
 - [ ] Real-time sync between 2+ users
 - [ ] Multiplayer cursors with name labels
 - [ ] Presence awareness (who is online)
-- [ ] User authentication
+- [ ] User authentication (Google OAuth for MVP)
 - [ ] Deployed and publicly accessible
 
 All items above are required to pass MVP.

@@ -60,6 +60,21 @@ CollabBoard AI is a real-time collaborative whiteboard where multiple authentica
 - FR-18: Multi-step commands execute sequentially and predictably.
 - FR-19: AI outputs are visible to all users in shared state.
 
+### 6.5 Board Access and Sharing
+- FR-20: Each board has a canonical share URL pattern `/b/{boardId}`.
+- FR-21: Opening a board share URL requires authentication; unauthenticated users are redirected to sign in.
+- FR-22: Share URL grants discovery of board route, but edit access is enforced by board membership/permissions.
+
+### 6.6 Object Operation UX Contracts
+- FR-23: Delete selected objects via `Delete`/`Backspace` and a visible UI action.
+- FR-24: Duplicate selected objects via `Cmd/Ctrl + D` and a visible UI action.
+- FR-25: Copy/paste via `Cmd/Ctrl + C` and `Cmd/Ctrl + V`; pasted objects preserve style and relative offsets for multi-select.
+
+### 6.7 AI Command Input UX
+- FR-26: Provide a persistent AI command panel with an input box and submit action.
+- FR-27: AI panel shows command status (`running`, `success`, `error`) and concise result feedback.
+- FR-28: Input behavior supports `Enter` to submit and `Shift+Enter` for newline.
+
 ## 7) Non-Functional Requirements
 - NFR-1: 60 FPS target during pan/zoom/manipulation.
 - NFR-2: Object sync latency target <100ms.
@@ -77,6 +92,8 @@ CollabBoard AI is a real-time collaborative whiteboard where multiple authentica
   - 5+ user run
 - AC-3: AI demonstrates 6+ valid command types including 1+ multi-step command.
 - AC-4: Public deployment accessible with auth.
+- AC-5: Authenticated collaborator opening `/b/{boardId}` lands on the same board state.
+- AC-6: Delete/duplicate/copy-paste shortcuts and AI panel behavior match FR-23 through FR-28.
 
 ## 9) Milestones
 - M1 (2026-02-16): Pre-Search complete + architecture locked.
