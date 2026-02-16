@@ -13,7 +13,7 @@ Realtime collaborative whiteboard MVP using React + TypeScript + Firebase.
   - delete (`Delete`/`Backspace`)
   - duplicate (`Cmd/Ctrl + D`)
   - copy/paste (`Cmd/Ctrl + C` / `Cmd/Ctrl + V`)
-- AI command panel UI contract (wired for server dispatcher integration)
+- AI command panel wired to backend dispatcher endpoint (`/api/ai/command`)
 
 ## Local Setup
 1. Install deps:
@@ -58,7 +58,7 @@ cd app && npm run build
 3. Deploy:
 ```bash
 cd ..
-firebase deploy --only hosting
+firebase deploy --only hosting,functions
 ```
 
 ## Security

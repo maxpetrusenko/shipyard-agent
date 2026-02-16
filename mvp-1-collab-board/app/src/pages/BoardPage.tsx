@@ -19,6 +19,8 @@ type Viewport = {
 }
 
 const BOARD_HEADER_HEIGHT = 76
+const aiApiBaseUrl = (import.meta.env.VITE_AI_API_BASE_URL || '').replace(/\/$/, '')
+const aiCommandEndpoint = `${aiApiBaseUrl}/api/ai/command`
 
 const isEditableTarget = (target: EventTarget | null) => {
   if (!(target instanceof HTMLElement)) {
@@ -346,7 +348,34 @@ export const BoardPage = () => {
   }, [])
 
   const handleAiCommandSubmit = async (command: string) => {
-    console.info('AI command submitted (wire server dispatcher):', command)
+    if (!user) {
+      throw new Error('Sign in required')
+    }
+
+    const idToken = await user.getIdToken()
+    const response = await fetch(aiCommandEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        boardId,
+        userDisplayName: user.displayName || user.email || 'Anonymous',
+        command,
+        clientCommandId: crypto.randomUUID(),
+      }),
+    })
+
+    const payload = (await response.json().catch(() => null)) as
+      | { error?: string; result?: { message?: string } }
+      | null
+
+    if (!response.ok) {
+      throw new Error(payload?.error || 'AI command failed')
+    }
+
+    return payload?.result?.message
   }
 
   if (!user) {

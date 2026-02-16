@@ -1,7 +1,7 @@
 # PRESEARCH.md
 
 Date: 2026-02-16
-Source: `mvp-1-collab-board/submission/G4 Week 1 - CollabBoard-requirements.pdf`
+Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 
 ## 1) Problem and Constraints
 We need to ship a real-time collaborative whiteboard with an AI board agent in one sprint.

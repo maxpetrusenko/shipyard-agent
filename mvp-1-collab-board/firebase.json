@@ -1,4 +1,9 @@
 {
+  "functions": [
+    {
+      "source": "functions"
+    }
+  ],
   "hosting": {
     "public": "app/dist",
     "ignore": [
@@ -8,9 +13,20 @@
     ],
     "rewrites": [
       {
+        "source": "/api/**",
+        "function": "api"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
     ]
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "database": {
+    "rules": "database.rules.json"
   }
 }

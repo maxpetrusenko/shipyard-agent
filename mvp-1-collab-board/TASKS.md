@@ -2,7 +2,7 @@
 
 Date initialized: 2026-02-16
 Cadence: 1-hour deliverables with hard deadlines
-Source: `mvp-1-collab-board/submission/G4 Week 1 - CollabBoard-requirements.pdf`
+Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 
 ## Priority Lanes
 - Lane A: MVP hard gate (must pass first)

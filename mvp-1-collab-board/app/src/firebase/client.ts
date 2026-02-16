@@ -5,7 +5,7 @@ import { GoogleAuthProvider, getAuth } from 'firebase/auth'
 import type { Database } from 'firebase/database'
 import { getDatabase } from 'firebase/database'
 import type { Firestore } from 'firebase/firestore'
-import { getFirestore } from 'firebase/firestore'
+import { enableMultiTabIndexedDbPersistence, getFirestore } from 'firebase/firestore'
 
 import { firebaseConfig, isFirebaseConfigured, missingFirebaseEnvKeys } from '../config/env'
 
@@ -18,6 +18,9 @@ if (isFirebaseConfigured) {
   app = initializeApp(firebaseConfig)
   auth = getAuth(app)
   db = getFirestore(app)
+  void enableMultiTabIndexedDbPersistence(db).catch((error) => {
+    console.warn('Firestore offline persistence disabled:', error)
+  })
   rtdb = getDatabase(app)
 } else {
   console.warn(`Firebase env missing: ${missingFirebaseEnvKeys.join(', ')}`)

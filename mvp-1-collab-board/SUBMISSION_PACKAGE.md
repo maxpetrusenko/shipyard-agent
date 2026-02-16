@@ -14,9 +14,9 @@ Repository: https://github.com/appDevelopment-tech/gauntlet-cohort-1
 - Doc submission in PDF format
 
 ## 1) Deployed Apps
-Status: In progress
-- Production URL: TBD
-- Preview URL: TBD
+Status: Live
+- Production URL: https://mvp-1-collab-board.web.app
+- Preview URL: n/a
 - Auth mode for MVP: Google OAuth (Firebase Auth)
 
 ## 2) Demo Video
@@ -110,7 +110,8 @@ Dev spend tracking fields:
 ## 7) Documentation Submission Format
 - This package is provided in Markdown and PDF.
 - PDF file: `SUBMISSION_PACKAGE.pdf`
-- All document PDFs are in `mvp-1-collab-board/submission/`.
+- Submission PDFs are in `mvp-1-collab-board/submission/`.
+- Source requirements PDF is kept at `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`.
 
 ## 8) GitHub PAT Token Note
 - If repository automation cannot use existing auth, use a PAT with least privilege for repo read/write.

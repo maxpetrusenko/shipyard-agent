@@ -2,7 +2,7 @@
 
 Date: 2026-02-16
 Product: CollabBoard AI
-Source of truth: `mvp-1-collab-board/submission/G4 Week 1 - CollabBoard-requirements.pdf`
+Source of truth: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 
 ## 1) Product Summary
 CollabBoard AI is a real-time collaborative whiteboard where authenticated users co-edit board objects and issue natural-language AI commands that modify shared board state.

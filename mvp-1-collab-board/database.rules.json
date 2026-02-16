@@ -1,0 +1,15 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "presence": {
+      "$boardId": {
+        ".read": "auth != null",
+        "$userId": {
+          ".write": "auth != null && auth.uid === $userId",
+          ".validate": "newData.val() == null || (newData.child('boardId').val() === $boardId && newData.child('userId').val() === auth.uid)"
+        }
+      }
+    }
+  }
+}

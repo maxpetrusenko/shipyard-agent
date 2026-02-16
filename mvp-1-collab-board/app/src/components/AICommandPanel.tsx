@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 type AICommandPanelProps = {
   disabled: boolean
-  onSubmit: (command: string) => Promise<void>
+  onSubmit: (command: string) => Promise<unknown>
 }
 
 export const AICommandPanel = ({ disabled, onSubmit }: AICommandPanelProps) => {
@@ -20,7 +20,7 @@ export const AICommandPanel = ({ disabled, onSubmit }: AICommandPanelProps) => {
     try {
       await onSubmit(trimmed)
       setStatus('success')
-      setMessage('Command captured. Wire Cloud Function to execute this plan.')
+      setMessage('Command executed and synced to the board.')
       setCommand('')
     } catch (error) {
       setStatus('error')
@@ -51,9 +51,7 @@ export const AICommandPanel = ({ disabled, onSubmit }: AICommandPanelProps) => {
         Send Command
       </button>
       {message && <p className="panel-note">{message}</p>}
-      <p className="panel-note">
-        MVP includes the UI contract now. Backend tool execution should call the server dispatcher.
-      </p>
+      <p className="panel-note">AI commands are dispatched through the backend tool executor.</p>
     </aside>
   )
 }
