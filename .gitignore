@@ -1,1 +1,18 @@
 .DS_Store
+
+# dependencies and build artifacts
+node_modules/
+dist/
+coverage/
+
+# environment files (never commit secrets)
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+
+# local tool state
+.firebase/
+firebase-debug.log
+.firebaserc
