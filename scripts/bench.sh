@@ -64,7 +64,7 @@ set -a
 source .env 2>/dev/null || true
 set +a
 
-tsx src/index.ts &
+npx tsx src/index.ts &
 SERVER_PID=$!
 trap "kill $SERVER_PID 2>/dev/null || true" EXIT
 
