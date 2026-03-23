@@ -14,7 +14,7 @@ export interface ModelConfig {
 export const MODEL_CONFIGS = {
   planning: {
     model: 'claude-opus-4-6',
-    maxTokens: 4096,
+    maxTokens: 16384,
     temperature: 0.3,
   },
   coding: {
@@ -24,7 +24,7 @@ export const MODEL_CONFIGS = {
   },
   review: {
     model: 'claude-opus-4-6',
-    maxTokens: 2048,
+    maxTokens: 4096,
     temperature: 0.2,
   },
   verification: {

@@ -1,44 +1,176 @@
 /**
- * Shipyard persistence layer: CRUD for runs, messages, contexts.
+ * Shipyard persistence layer.
  *
- * Uses pg Pool (DI from server startup).
+ * Two backends:
+ *   1. JSON file-based (always-on, zero-config) — writes to results/<runId>.json
+ *   2. Postgres (optional, set via setPool) — full relational storage
+ *
+ * File-based persistence is the default and always runs.
+ * Postgres is an additive enhancement when a pool is provided.
  */
 
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Pool } from 'pg';
 import type { RunResult } from './loop.js';
 import type { ContextEntry, LLMMessage } from '../graph/state.js';
 
 // ---------------------------------------------------------------------------
-// Runs
+// Constants
 // ---------------------------------------------------------------------------
 
+/** Default results directory (project root / results) */
+const RESULTS_DIR = join(
+  new URL('../../', import.meta.url).pathname,
+  'results',
+);
+
+// ---------------------------------------------------------------------------
+// File-based persistence (always-on)
+// ---------------------------------------------------------------------------
+
+/** Ensure the results directory exists. */
+function ensureResultsDir(dir: string = RESULTS_DIR): void {
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+}
+
+/** Serialize a RunResult to a JSON-safe object (strips undefined, handles dates). */
+function serializeRun(result: RunResult): Record<string, unknown> {
+  return {
+    runId: result.runId,
+    phase: result.phase,
+    steps: result.steps,
+    fileEdits: result.fileEdits,
+    tokenUsage: result.tokenUsage ?? null,
+    traceUrl: result.traceUrl ?? null,
+    messages: result.messages,
+    error: result.error ?? null,
+    durationMs: result.durationMs,
+    savedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Save a RunResult to a JSON file.
+ * File name: results/<runId>.json
+ * Always overwrites (upsert semantics).
+ */
+export function saveRunToFile(
+  result: RunResult,
+  dir: string = RESULTS_DIR,
+): string {
+  ensureResultsDir(dir);
+  const filePath = join(dir, `${result.runId}.json`);
+  writeFileSync(filePath, JSON.stringify(serializeRun(result), null, 2) + '\n');
+  return filePath;
+}
+
+/**
+ * Load a single RunResult from a JSON file.
+ * Returns null if the file doesn't exist or is unparseable.
+ */
+export function loadRunFromFile(
+  runId: string,
+  dir: string = RESULTS_DIR,
+): RunResult | null {
+  const filePath = join(dir, `${runId}.json`);
+  return parseRunFile(filePath);
+}
+
+/**
+ * Load all RunResults from the results directory.
+ * Skips files that don't parse as valid RunResults (e.g. bench results with different schema).
+ */
+export function loadRunsFromFiles(dir: string = RESULTS_DIR): RunResult[] {
+  if (!existsSync(dir)) return [];
+
+  const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
+  const runs: RunResult[] = [];
+
+  for (const file of files) {
+    const run = parseRunFile(join(dir, file));
+    if (run) runs.push(run);
+  }
+
+  return runs;
+}
+
+/**
+ * Parse a single JSON file into a RunResult.
+ * Returns null if the file is missing, empty, or has an incompatible schema.
+ */
+function parseRunFile(filePath: string): RunResult | null {
+  try {
+    const raw = readFileSync(filePath, 'utf-8').trim();
+    if (!raw) return null;
+
+    const data = JSON.parse(raw) as Record<string, unknown>;
+
+    // Must have runId and phase to be a valid RunResult (skip bench results)
+    if (typeof data['runId'] !== 'string' || typeof data['phase'] !== 'string') {
+      return null;
+    }
+
+    return {
+      runId: data['runId'] as string,
+      phase: data['phase'] as RunResult['phase'],
+      steps: (data['steps'] as RunResult['steps']) ?? [],
+      fileEdits: (data['fileEdits'] as RunResult['fileEdits']) ?? [],
+      tokenUsage: (data['tokenUsage'] as RunResult['tokenUsage']) ?? null,
+      traceUrl: (data['traceUrl'] as RunResult['traceUrl']) ?? null,
+      messages: (data['messages'] as RunResult['messages']) ?? [],
+      error: (data['error'] as RunResult['error']) ?? null,
+      durationMs: typeof data['durationMs'] === 'number' ? data['durationMs'] : 0,
+    };
+  } catch {
+    // Corrupt / unreadable file — skip silently
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Postgres persistence (optional)
+// ---------------------------------------------------------------------------
+
+/**
+ * Upsert a RunResult into the shipyard_runs table.
+ * Matches the 001-init.sql schema: token_input/token_output as separate cols.
+ */
 export async function createRun(
   pool: Pool,
   run: RunResult,
 ): Promise<void> {
+  const instruction =
+    run.messages.find((m) => m.role === 'user')?.content ?? '';
+  const status =
+    run.phase === 'done' ? 'done' : run.phase === 'error' ? 'error' : 'running';
+
   await pool.query(
-    `INSERT INTO shipyard_runs (id, instruction, status, phase, steps, file_edits, token_usage, trace_url, error, duration_ms)
+    `INSERT INTO shipyard_runs
+       (id, instruction, phase, steps, file_edits, token_input, token_output, trace_url, error, duration_ms)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT (id) DO UPDATE SET
-       status = EXCLUDED.status,
-       phase = EXCLUDED.phase,
-       steps = EXCLUDED.steps,
-       file_edits = EXCLUDED.file_edits,
-       token_usage = EXCLUDED.token_usage,
-       trace_url = EXCLUDED.trace_url,
-       error = EXCLUDED.error,
-       duration_ms = EXCLUDED.duration_ms,
-       updated_at = NOW()`,
+       instruction = EXCLUDED.instruction,
+       phase       = EXCLUDED.phase,
+       steps       = EXCLUDED.steps,
+       file_edits  = EXCLUDED.file_edits,
+       token_input = EXCLUDED.token_input,
+       token_output= EXCLUDED.token_output,
+       trace_url   = EXCLUDED.trace_url,
+       error       = EXCLUDED.error,
+       duration_ms = EXCLUDED.duration_ms`,
     [
       run.runId,
-      run.messages.find((m) => m.role === 'user')?.content ?? '',
-      run.phase === 'done' ? 'done' : run.phase === 'error' ? 'error' : 'running',
-      run.phase,
+      instruction,
+      status,
       JSON.stringify(run.steps),
       JSON.stringify(run.fileEdits),
-      run.tokenUsage ? JSON.stringify(run.tokenUsage) : null,
-      run.traceUrl,
-      run.error,
+      run.tokenUsage?.input ?? null,
+      run.tokenUsage?.output ?? null,
+      run.traceUrl ?? null,
+      run.error ?? null,
       run.durationMs,
     ],
   );
@@ -67,7 +199,7 @@ export async function listRuns(
 }
 
 // ---------------------------------------------------------------------------
-// Messages
+// Messages (Postgres only)
 // ---------------------------------------------------------------------------
 
 export async function appendMessage(
@@ -102,7 +234,7 @@ export async function getMessages(
 }
 
 // ---------------------------------------------------------------------------
-// Contexts
+// Contexts (Postgres only)
 // ---------------------------------------------------------------------------
 
 export async function upsertContext(

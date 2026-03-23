@@ -1,0 +1,11 @@
+Implement the Yjs-based real-time collaboration server for Ship. This enables multiple users to edit the same document simultaneously with conflict-free merging, cursor presence, and live notifications.
+
+Create `collaboration/index.ts` that exports `setupCollaboration(server)`. It must create two WebSocketServer instances (noServer mode): one for document collaboration on `/collaboration/:docName` paths, and one for events on `/events`. Handle the HTTP upgrade manually in `server.on('upgrade')`.
+
+For document collaboration: validate session from cookie header (same 15-min inactivity + 12-hour absolute timeouts), check document visibility access, rate-limit connections per IP (30/min) and messages per connection (50/sec with progressive penalty: close after 50 violations). Use Yjs protocol: message types for sync (0), awareness (1), custom events (2), and cache-clear (3). Implement `getOrCreateDoc(docName)` that loads yjs_state from the database (or converts JSON content to Yjs as fallback, marking doc for cache-clear), sets up persistence with 2-second debounce via `schedulePersist`. On persist, convert Yjs to TipTap JSON, extract plan/success_criteria/vision/goals from content, update properties, and write yjs_state + content + properties to the documents table. Track awareness state per connection, broadcast updates to all clients in the same room except sender, clean up awareness on disconnect, keep doc in memory 30 seconds after last client disconnects.
+
+For events WebSocket: simpler JSON message protocol for real-time notifications. Export `broadcastToUser(userId, eventType, data)` for sending events like 'accountability:updated' and 'fleetgraph:alert'. Export `invalidateDocumentCache(docId)` to force reload from DB when REST API modifies content. Export `handleVisibilityChange` and `handleDocumentConversion` for disconnecting unauthorized users and redirecting on doc type conversion.
+
+In `index.ts`, create the HTTP server, attach collaboration via `setupCollaboration(server)`, set DDoS timeouts (server.timeout=60s, keepAliveTimeout=65s, headersTimeout=66s).
+
+Verify: start the server, open two WebSocket connections to the same document room, send a Yjs sync message from one, confirm the other receives the broadcast, confirm the document is persisted to the database after 2 seconds.

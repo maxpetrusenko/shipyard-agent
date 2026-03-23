@@ -13,10 +13,25 @@ const REVIEW_SYSTEM = `You are the Shipyard quality reviewer (Opus). You evaluat
 
 You have full context: the original instruction, the plan, file edits made, and verification results.
 
+## CRITICAL: Check for COMPLETENESS
+
+Your #1 job is ensuring the instruction was FULLY satisfied, not just partially.
+
+Ask yourself:
+1. Does the instruction imply a codebase-wide change? (e.g. "enable strict mode", "add X to all files", "rename Y everywhere")
+2. If yes: does the number of files edited match the expected scope? If the instruction says "all files" or implies many files, but only 1-3 were edited, that is INCOMPLETE. Choose "retry".
+3. Were ALL plan steps executed? If steps remain pending, choose "continue".
+4. Did verification pass? If not, choose "retry" with the error details.
+
+## Completeness heuristics
+- If the instruction contains words like "all", "every", "across the codebase", "everywhere", "each" — the edit count should reflect that breadth.
+- If the plan listed N files but only M < N were actually edited, that is suspicious.
+- A single-file edit for a codebase-wide instruction is almost always incomplete.
+
 Your decision must be one of:
 - "continue": More steps remain in the plan. Move to the next step.
-- "done": All steps complete, verification passed, instruction fulfilled.
-- "retry": Something is wrong. Provide specific feedback for the planner to fix.
+- "done": All steps complete, verification passed, instruction FULLY fulfilled.
+- "retry": The work is incomplete or incorrect. Provide specific feedback explaining what was missed and what the planner should do differently.
 - "escalate": The issue is ambiguous or beyond automated fixing. Ask the user.
 
 Respond with a JSON object:
@@ -28,11 +43,10 @@ export async function reviewNode(
   const config = getModelConfig('review');
   const anthropic = getClient();
 
-  const allStepsDone = state.steps.every((s) => s.status === 'done');
   const hasMoreSteps = state.currentStepIndex < state.steps.length - 1;
   const verPassed = state.verificationResult?.passed ?? false;
 
-  // Fast path: more steps to do and verification passed
+  // Fast path: more steps to do and verification passed — just advance
   if (hasMoreSteps && verPassed) {
     return {
       phase: 'executing',
@@ -43,14 +57,10 @@ export async function reviewNode(
     };
   }
 
-  // Fast path: all done and passed
-  if (allStepsDone && verPassed) {
-    return {
-      phase: 'done',
-      reviewDecision: 'done',
-      reviewFeedback: null,
-    };
-  }
+  // NOTE: No fast path for "all done". We ALWAYS run the full Opus review
+  // when all steps are complete to verify the instruction was FULLY satisfied.
+  // This catches cases where the plan was too narrow (e.g. 1 file edited
+  // when the instruction required codebase-wide changes).
 
   // Need Opus to evaluate
   const reviewPrompt = [
@@ -62,12 +72,18 @@ export async function reviewNode(
       (s) => `${s.index + 1}. [${s.status}] ${s.description}`,
     ),
     '',
-    '## File Edits',
+    `## File Edits (${state.fileEdits.length} total)`,
     state.fileEdits.length > 0
       ? state.fileEdits
           .map((e) => `- ${e.file_path} (tier ${e.tier})`)
           .join('\n')
       : 'No edits made.',
+    '',
+    `## Plan coverage`,
+    `Total plan steps: ${state.steps.length}`,
+    `Steps completed: ${state.steps.filter((s) => s.status === 'done').length}`,
+    `Total unique files in plan: ${[...new Set(state.steps.flatMap((s) => s.files))].length}`,
+    `Total unique files actually edited: ${[...new Set(state.fileEdits.map((e) => e.file_path))].length}`,
     '',
     '## Verification',
     state.verificationResult

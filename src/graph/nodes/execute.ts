@@ -35,7 +35,10 @@ Rules:
 - Use write_file only for new files
 - Use bash for running commands (build, lint, format) — always cd to ${WORK_DIR} first
 - Make one logical change at a time
-- When done with this step, say "STEP_COMPLETE" in your response`;
+- Process ALL files listed for this step, not just the first one
+- When done with this step, say "STEP_COMPLETE" in your response
+- Do NOT say STEP_COMPLETE until you have addressed every file in the step's file list
+- If the step mentions multiple files, you must edit/verify each one before completing`;
 
 export async function executeNode(
   state: ShipyardStateType,
@@ -87,7 +90,7 @@ export async function executeNode(
   const newEdits: FileEdit[] = [...state.fileEdits];
   const newHistory: ToolCallRecord[] = [...state.toolCallHistory];
   const newMessages: LLMMessage[] = [...state.messages];
-  const maxToolRounds = 25;
+  const maxToolRounds = 40;
 
   // Hook-based recording + file overlay for rollback
   const hooks = createRecordingHooks(newEdits, newHistory);
@@ -120,8 +123,13 @@ export async function executeNode(
 
     const fullText = textBlocks.map((b) => b.text).join('');
 
-    // Check if step is complete
-    if (fullText.includes('STEP_COMPLETE') || response.stop_reason === 'end_turn') {
+    // Check if step is complete:
+    // - Explicit STEP_COMPLETE signal always means done
+    // - end_turn without tool calls means the model has nothing left to do
+    // - end_turn WITH tool calls in previous rounds but not this one = likely done
+    const isExplicitComplete = fullText.includes('STEP_COMPLETE');
+    const isEndTurnNoTools = response.stop_reason === 'end_turn' && toolBlocks.length === 0;
+    if (isExplicitComplete || isEndTurnNoTools) {
       newMessages.push({ role: 'assistant', content: fullText });
 
       // Mark step done

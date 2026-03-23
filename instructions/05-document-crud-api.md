@@ -1,0 +1,11 @@
+Implement the unified document CRUD API routes for Ship. All entity types (wiki, issue, program, project, sprint, person, weekly_plan, weekly_retro) are rows in a single `documents` table differentiated by `document_type`.
+
+Create `routes/documents.ts` with auth middleware on all routes: GET / (list documents by workspace, filter by type/parent, respect visibility: workspace docs visible to all, private docs visible to creator and admins only), POST / (create document with Zod validation for title, document_type, parent_id, properties, visibility, content as TipTap JSON, belongs_to associations array), GET /:id (single document with visibility check, load content from yjs_state via Yjs-to-JSON converter if available, fallback to content column), PATCH /:id (partial update with document_history logging for tracked fields like title/state/priority/assignee_id, timestamp updates for issue state transitions: started_at/completed_at/cancelled_at/reopened_at), DELETE /:id (soft delete via deleted_at).
+
+Create `routes/issues.ts` with: GET / (list issues with assignee name join, belongs_to associations batch lookup), POST / (create issue with auto-incrementing ticket_number per workspace, state enum: triage/backlog/todo/in_progress/in_review/done/cancelled, priority enum: urgent/high/medium/low/none), PATCH /:id (update with state transition timestamps and history logging).
+
+Create `routes/programs.ts`, `routes/projects.ts`, and `routes/weeks.ts` following the same pattern. Create `routes/associations.ts` for managing document_associations (link/unlink documents to programs/projects/sprints). Create `routes/search.ts` with mention search (people + documents, trigram LIKE with SQL wildcard escape) and learning search.
+
+Extract shared utilities to `utils/document-crud.ts`: logDocumentChange (inserts to document_history), getTimestampUpdates (maps state changes to timestamp columns), getBelongsToAssociations (fetches associations for a document). Create `middleware/visibility.ts` with VISIBILITY_FILTER_SQL helper and isWorkspaceAdmin check.
+
+Verify: create a document via POST, retrieve it via GET, update title via PATCH, confirm history entry in document_history, search for it via /api/search/mentions, soft-delete via DELETE, confirm GET returns 404.

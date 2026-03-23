@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Sanitize a variable to a clean integer (strips whitespace, newlines, defaults to 0)
+sanitize_int() {
+  local val="${1:-0}"
+  # Extract the last number found anywhere in the string (handles multiline, trailing newlines)
+  val=$(echo "$val" | grep -oE '[0-9]+' | tail -1)
+  echo "${val:-0}"
+}
+
 # Usage: ./scripts/bench.sh <instruction-name>
 # Example: ./scripts/bench.sh 01-strict-typescript
 
@@ -175,35 +183,55 @@ FILES_CHANGED=$(echo "$DIFF_SHORTSTAT" | grep -oE '[0-9]+ file' | grep -oE '[0-9
 LINES_ADDED=$(echo "$DIFF_SHORTSTAT" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
 LINES_REMOVED=$(echo "$DIFF_SHORTSTAT" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo "0")
 
+# Sanitize ALL numeric variables before jq (prevent empty/multiline breakage)
+TOKEN_INPUT=$(sanitize_int "$TOKEN_INPUT")
+TOKEN_OUTPUT=$(sanitize_int "$TOKEN_OUTPUT")
+DURATION_MS=$(sanitize_int "$DURATION_MS")
+TC_ERRORS=$(sanitize_int "$TC_ERRORS")
+FILES_CHANGED=$(sanitize_int "$FILES_CHANGED")
+LINES_ADDED=$(sanitize_int "$LINES_ADDED")
+LINES_REMOVED=$(sanitize_int "$LINES_REMOVED")
+BASELINE_TOTAL=$(sanitize_int "$BASELINE_TOTAL")
+BASELINE_PASSED=$(sanitize_int "$BASELINE_PASSED")
+AFTER_TOTAL=$(sanitize_int "$AFTER_TOTAL")
+AFTER_PASSED=$(sanitize_int "$AFTER_PASSED")
+AFTER_FAILED=$(sanitize_int "$AFTER_FAILED")
+
+# Sanitize string vars (ensure non-empty)
+PHASE="${PHASE:-unknown}"
+TRACE_URL="${TRACE_URL:-none}"
+ERROR_MSG="${ERROR_MSG:-null}"
+DIFF_STAT="${DIFF_STAT:-}"
+
 # Estimate cost (rough average of Opus + Sonnet mix)
 # Opus: $15/M input, $75/M output; Sonnet: $3/M input, $15/M output
 # Blended rate: ~$9/M input, ~$45/M output
-COST=$(echo "scale=2; ($TOKEN_INPUT * 0.000009 + $TOKEN_OUTPUT * 0.000045)" | bc 2>/dev/null || \
-  awk "BEGIN { printf \"%.2f\", ($TOKEN_INPUT * 0.000009 + $TOKEN_OUTPUT * 0.000045) }")
+COST=$(awk "BEGIN { printf \"%.2f\", ($TOKEN_INPUT * 0.000009 + $TOKEN_OUTPUT * 0.000045) }" 2>/dev/null || echo "0.00")
 
-# Write result JSON
-jq -n \
+# Write result JSON (set +e so jq failure doesn't abort; capture stderr)
+set +e
+JQ_ERR=$(jq -n \
   --arg benchId "$BENCH_ID" \
   --arg instruction "$BENCH_NAME" \
-  --arg startedAt "$(date -u -r $START_TIME +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-  --arg completedAt "$(date -u -r $END_TIME +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+  --arg startedAt "$(date -u -r "$START_TIME" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+  --arg completedAt "$(date -u -r "$END_TIME" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
   --argjson durationMs "$DURATION_MS" \
   --arg phase "$PHASE" \
   --argjson tokenInput "$TOKEN_INPUT" \
   --argjson tokenOutput "$TOKEN_OUTPUT" \
   --arg estimatedCost "\$${COST}" \
   --arg traceUrl "$TRACE_URL" \
-  --argjson filesChanged "${FILES_CHANGED:-0}" \
-  --argjson linesAdded "${LINES_ADDED:-0}" \
-  --argjson linesRemoved "${LINES_REMOVED:-0}" \
+  --argjson filesChanged "$FILES_CHANGED" \
+  --argjson linesAdded "$LINES_ADDED" \
+  --argjson linesRemoved "$LINES_REMOVED" \
   --arg baselineTypecheck "$BASELINE_TYPECHECK" \
   --arg afterTypecheck "$AFTER_TYPECHECK" \
-  --argjson tcErrors "${TC_ERRORS:-0}" \
-  --argjson baselineTotal "${BASELINE_TOTAL:-0}" \
-  --argjson baselinePassed "${BASELINE_PASSED:-0}" \
-  --argjson afterTotal "${AFTER_TOTAL:-0}" \
-  --argjson afterPassed "${AFTER_PASSED:-0}" \
-  --argjson afterFailed "${AFTER_FAILED:-0}" \
+  --argjson tcErrors "$TC_ERRORS" \
+  --argjson baselineTotal "$BASELINE_TOTAL" \
+  --argjson baselinePassed "$BASELINE_PASSED" \
+  --argjson afterTotal "$AFTER_TOTAL" \
+  --argjson afterPassed "$AFTER_PASSED" \
+  --argjson afterFailed "$AFTER_FAILED" \
   --arg error "$ERROR_MSG" \
   --arg diffStat "$DIFF_STAT" \
   '{
@@ -226,7 +254,24 @@ jq -n \
     },
     error: $error,
     diffStat: $diffStat
-  }' > "$RESULT_FILE"
+  }' > "$RESULT_FILE" 2>&1)
+JQ_EXIT=$?
+set -e
+
+if [ "$JQ_EXIT" -ne 0 ]; then
+  echo "  WARNING: jq failed (exit $JQ_EXIT): $JQ_ERR"
+  # Write fallback JSON so the file is never 0 bytes
+  cat > "$RESULT_FILE" <<FALLBACK_EOF
+{
+  "benchId": "${BENCH_ID}",
+  "instruction": "${BENCH_NAME}",
+  "phase": "${PHASE}",
+  "durationMs": ${DURATION_MS},
+  "error": "jq serialization failed: ${JQ_ERR}",
+  "tokenUsage": { "input": ${TOKEN_INPUT}, "output": ${TOKEN_OUTPUT} }
+}
+FALLBACK_EOF
+fi
 
 echo ""
 echo "=== Benchmark Complete ==="

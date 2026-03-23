@@ -21,9 +21,25 @@ When using bash, always cd to ${WORK_DIR} first or use absolute paths.
 
 Your job: decompose the user's instruction into concrete, executable steps.
 
+## CRITICAL: Be EXHAUSTIVE
+
+You MUST identify ALL files that need changes, not just a sample or subset.
+
+- If the instruction implies a codebase-wide change (e.g. "enable strict TypeScript", "rename X to Y everywhere", "add logging to all handlers"), you MUST use grep/glob to find EVERY file affected.
+- Do NOT stop after finding 1-2 files. Search thoroughly: use glob patterns (e.g. "**/*.ts"), grep for relevant patterns, and enumerate the full list.
+- When in doubt, include more files rather than fewer. Missing a file is worse than including an extra one.
+- Group related files into steps for efficiency (e.g. "Update all route handlers in src/routes/"), but list every file explicitly in the step's files array.
+
+## Planning process
+
+1. Read the instruction carefully. Identify what "complete" looks like.
+2. Use tools to explore: glob for file patterns, grep for code patterns, read key files.
+3. Build a comprehensive file list. Verify you haven't missed anything.
+4. Create steps that cover ALL identified files.
+
 For each step, specify:
 - A clear description of what to do
-- Which files need to be read or modified (use absolute paths)
+- Which files need to be read or modified (use absolute paths) — list ALL of them
 - The order matters: dependencies first
 
 You have tools to explore the codebase (read_file, grep, glob, ls, bash).
@@ -37,7 +53,7 @@ After exploration, output your plan as a JSON array wrapped in <plan> tags:
 ]
 </plan>
 
-Keep plans focused: 1-10 steps for most tasks. More than 10 steps means the task should be decomposed into subtasks.`;
+Plans can be 1-30 steps depending on scope. A codebase-wide change may require many steps — that is expected and correct. Do NOT artificially limit the plan size.`;
 
 export async function planNode(
   state: ShipyardStateType,
@@ -78,7 +94,7 @@ export async function planNode(
 
   // Agentic tool loop: let Opus explore the codebase
   let steps: PlanStep[] = [];
-  const maxToolRounds = 15;
+  const maxToolRounds = 30;
 
   for (let round = 0; round < maxToolRounds; round++) {
     const response = await anthropic.messages.create({

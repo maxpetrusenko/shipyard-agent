@@ -3,13 +3,23 @@
  *
  * Processes one instruction at a time (sequential for MVP).
  * Instructions arrive via REST or WebSocket.
+ *
+ * Persistence:
+ *   - File-based (always-on): every completed run is saved to results/<runId>.json
+ *   - Postgres (optional): set via setPool() for relational storage
+ *   - On init: loads existing runs from results/ so history survives restarts
  */
 
 import { v4 as uuid } from 'uuid';
 import { createShipyardGraph } from '../graph/builder.js';
 import { ContextStore } from '../context/store.js';
 import { buildTraceUrl, resolveLangSmithRunUrl } from './langsmith.js';
-import { createRun as persistRun } from './persistence.js';
+import {
+  createRun as persistRunPg,
+  saveRunToFile,
+  loadRunsFromFiles,
+  loadRunFromFile,
+} from './persistence.js';
 import type { Pool } from 'pg';
 import type { ShipyardStateType, ContextEntry } from '../graph/state.js';
 
@@ -51,10 +61,32 @@ export class InstructionLoop {
   private runs: Map<string, RunResult> = new Map();
   private listeners: Set<StateListener> = new Set();
   private pool: Pool | null = null;
+  private initialized = false;
 
   /** Set a pg Pool for optional run persistence. */
   setPool(pool: Pool): void {
     this.pool = pool;
+  }
+
+  /**
+   * Initialize the loop: load persisted runs from disk.
+   * Safe to call multiple times (no-op after first).
+   */
+  init(): void {
+    if (this.initialized) return;
+    this.initialized = true;
+
+    try {
+      const loaded = loadRunsFromFiles();
+      for (const run of loaded) {
+        this.runs.set(run.runId, run);
+      }
+      if (loaded.length > 0) {
+        console.log(`[loop] loaded ${loaded.length} persisted run(s) from disk`);
+      }
+    } catch (err) {
+      console.error('[loop] failed to load persisted runs:', err);
+    }
   }
 
   /** Add a state change listener (for WebSocket broadcasting). */
@@ -75,6 +107,7 @@ export class InstructionLoop {
 
   /** Submit an instruction to the queue. */
   submit(instruction: string, contexts?: ContextEntry[]): string {
+    this.init(); // ensure loaded before first run
     const id = uuid();
     this.queue.push({
       id,
@@ -84,6 +117,39 @@ export class InstructionLoop {
     });
     void this.processNext();
     return id;
+  }
+
+  /**
+   * Resume a previously interrupted run by re-submitting it.
+   * Returns the runId if the run was found and re-queued, null otherwise.
+   */
+  resume(runId: string): string | null {
+    this.init();
+
+    // Check in-memory first, then try loading from disk
+    let existing = this.runs.get(runId) ?? null;
+    if (!existing) {
+      existing = loadRunFromFile(runId);
+    }
+    if (!existing) return null;
+
+    // Only resume runs that didn't finish
+    if (existing.phase === 'done') return null;
+
+    // Extract the original instruction from messages
+    const instruction =
+      existing.messages.find((m) => m.role === 'user')?.content ?? '';
+    if (!instruction) return null;
+
+    // Re-queue with the same ID
+    this.queue.push({
+      id: runId,
+      instruction,
+      contexts: [],
+      createdAt: Date.now(),
+    });
+    void this.processNext();
+    return runId;
   }
 
   /** Inject context mid-run. */
@@ -104,6 +170,7 @@ export class InstructionLoop {
 
   /** Get run result by ID. */
   getRun(id: string): RunResult | undefined {
+    this.init();
     return this.runs.get(id);
   }
 
@@ -119,11 +186,13 @@ export class InstructionLoop {
 
   /** Get all run results. */
   getAllRuns(): RunResult[] {
+    this.init();
     return Array.from(this.runs.values());
   }
 
   /** Get paginated run results. */
   getRunsPaginated(limit: number, offset: number): RunResult[] {
+    this.init();
     const all = Array.from(this.runs.values());
     return all.slice(offset, offset + limit);
   }
@@ -139,6 +208,27 @@ export class InstructionLoop {
       currentRunId: this.currentRunId,
       queueLength: this.queue.length,
     };
+  }
+
+  /**
+   * Persist a run result to file (always) and Postgres (if pool set).
+   * Never throws — logs errors and continues.
+   */
+  private persistRun(runResult: RunResult): void {
+    // Always save to file
+    try {
+      const path = saveRunToFile(runResult);
+      console.log(`[persistence] saved ${runResult.runId} -> ${path}`);
+    } catch (err) {
+      console.error('[persistence] file save failed:', err);
+    }
+
+    // Optionally save to Postgres
+    if (this.pool) {
+      persistRunPg(this.pool, runResult).catch((e) =>
+        console.error('[persistence] pg save failed:', e),
+      );
+    }
   }
 
   /** Process next instruction in the queue. */
@@ -210,11 +300,7 @@ export class InstructionLoop {
       };
 
       this.runs.set(item.id, runResult);
-      if (this.pool) {
-        await persistRun(this.pool, runResult).catch((e) =>
-          console.error('[persistence] failed to save run:', e),
-        );
-      }
+      this.persistRun(runResult);
       this.broadcast(finalState);
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -230,11 +316,7 @@ export class InstructionLoop {
         durationMs: Date.now() - startedAt,
       };
       this.runs.set(item.id, runResult);
-      if (this.pool) {
-        await persistRun(this.pool, runResult).catch((e) =>
-          console.error('[persistence] failed to save error run:', e),
-        );
-      }
+      this.persistRun(runResult);
       this.broadcast({ phase: 'error', error: errorMsg });
     } finally {
       this.processing = false;

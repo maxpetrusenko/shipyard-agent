@@ -1,7 +1,7 @@
 /**
- * spawn_agent tool: creates an isolated sub-graph invocation.
+ * spawn_agent tool: creates an isolated worker invocation for a subtask.
  *
- * MVP: runs sequentially (no parallel workers yet).
+ * Runs the worker's tool-call loop directly (not the full graph).
  */
 
 import { runWorker, type WorkerResult } from '../multi-agent/worker.js';
@@ -19,13 +19,14 @@ export async function spawnAgent(
   const { task, role, contexts = [] } = params;
 
   // Add role context if provided
+  const workerContexts: ContextEntry[] = [...contexts];
   if (role) {
-    contexts.push({
+    workerContexts.push({
       label: 'Agent Role',
       content: `You are acting as a ${role} specialist.`,
       source: 'system',
     });
   }
 
-  return runWorker(`sub-${Date.now()}`, task, contexts);
+  return runWorker(`sub-${Date.now()}`, task, workerContexts);
 }
