@@ -247,6 +247,36 @@ export class InstructionLoop {
 
     const startedAt = Date.now();
 
+    // Store an in-progress placeholder so GET /api/runs/:id doesn't 404
+    // while graph.invoke() is blocking.
+    const inProgressRun: RunResult = {
+      runId: item.id,
+      phase: 'planning',
+      steps: [],
+      fileEdits: [],
+      tokenUsage: null,
+      traceUrl: null,
+      messages: [],
+      error: null,
+      durationMs: 0,
+    };
+    this.runs.set(item.id, inProgressRun);
+
+    // Update the in-progress run whenever state changes are broadcast
+    const unsubProgress = this.onStateChange((state) => {
+      const current = this.runs.get(item.id);
+      if (!current) return;
+      this.runs.set(item.id, {
+        ...current,
+        phase: state.phase ?? current.phase,
+        steps: state.steps ?? current.steps,
+        fileEdits: state.fileEdits ?? current.fileEdits,
+        tokenUsage: state.tokenUsage ?? current.tokenUsage,
+        error: state.error ?? current.error,
+        durationMs: Date.now() - startedAt,
+      });
+    });
+
     try {
       const graph = createShipyardGraph();
 
@@ -278,11 +308,24 @@ export class InstructionLoop {
 
       this.broadcast(initialState);
 
-      const result = await graph.invoke(initialState, {
+      // Use stream() instead of invoke() so we get phase updates mid-execution.
+      // Each yielded chunk is { [nodeName]: partialState }.
+      let finalState: ShipyardStateType = initialState as ShipyardStateType;
+      const stream = await graph.stream(initialState, {
         configurable: { thread_id: item.id },
+        streamMode: 'updates',
       });
 
-      const finalState = result as ShipyardStateType;
+      for await (const chunk of stream) {
+        // chunk is Record<string, Partial<ShipyardStateType>>
+        const nodeUpdates = Object.values(
+          chunk as Record<string, Partial<ShipyardStateType>>,
+        );
+        for (const update of nodeUpdates) {
+          finalState = { ...finalState, ...update };
+          this.broadcast(update);
+        }
+      }
       // Try public share link first, fall back to private URL
       const traceUrl =
         await resolveLangSmithRunUrl(item.id).catch(() => null) ??
@@ -319,6 +362,7 @@ export class InstructionLoop {
       this.persistRun(runResult);
       this.broadcast({ phase: 'error', error: errorMsg });
     } finally {
+      unsubProgress();
       this.processing = false;
       this.currentRunId = null;
       this.abortController = null;
