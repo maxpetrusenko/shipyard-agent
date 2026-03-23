@@ -1,255 +1,246 @@
-<h1 align="center">Shipyard Agent</h1>
+# Shipyard -- Autonomous Coding Agent
 
-<p align="center">
-  <strong>Autonomous coding agent that plans, edits, verifies, and reviews code</strong>
-</p>
-
-<p align="center">
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/TypeScript-5.7-blue.svg" alt="TypeScript">
-  <img src="https://img.shields.io/badge/LangGraph-1.2-purple.svg" alt="LangGraph">
-  <img src="https://img.shields.io/badge/Claude-Opus_4.6-orange.svg" alt="Claude">
-</p>
-
----
-
-## What is Shipyard?
-
-Shipyard is an autonomous coding agent built on LangGraph and the Anthropic SDK. It takes a natural language instruction, decomposes it into steps, makes surgical file edits, verifies correctness, and produces a structured report. It runs as a persistent server that accepts instructions over REST or WebSocket without restarting between tasks.
-
-Built for the Gauntlet Shipyard sprint: build a coding agent from scratch, then use it to rebuild a real application.
-
----
+Autonomous coding agent that takes a natural language instruction, decomposes it into steps, makes surgical file edits, verifies correctness via typecheck and tests, and self-corrects through a review loop. Built on LangGraph + Anthropic Claude.
 
 ## Architecture
 
+Shipyard runs as a stateful LangGraph `StateGraph` with conditional edges:
+
 ```
-User (CLI / WebSocket)
-       |
-   instruction + context
-       |
-  +----v----+     +--------------+
-  | Server  |---->| Context Store|
-  | Express |     | (specs, test |
-  | + WS    |     |  results)    |
-  +----+----+     +------+-------+
-       |                 |
-  +----v-----------------v-------+
-  |       LangGraph StateGraph   |
-  |                              |
-  |  plan -> execute -> verify   |
-  |    ^                  |      |
-  |    |     review <-----+      |
-  |    |       |                 |
-  |    +--retry+   done->report  |
-  |                              |
-  |  Error: 3 retries -> escalate|
-  +------------------------------+
-       |
-  LangSmith Trace
+START -> plan -> execute -> verify -> review
+                                       |-> continue -> execute (next step)
+                                       |-> done -> report -> END
+                                       |-> retry -> plan (with feedback)
+                                       |-> escalate -> error_recovery
+                                                        |-> plan (retry)
+                                                        |-> report (fatal) -> END
 ```
 
 | Node | Model | Purpose |
 |------|-------|---------|
-| `plan` | Opus 4.6 | Decompose instruction, explore codebase |
-| `execute` | Sonnet 4.5 | Make surgical edits via tool calls |
-| `verify` | bash | Run `tsc --noEmit` + `vitest run` |
+| `plan` | Opus 4.6 | Decompose instruction into steps, explore codebase |
+| `execute` | Sonnet 4.5 | Execute current step via tool calls (25 rounds max) |
+| `verify` | bash | Run `tsc --noEmit` + `vitest run`, parse errors |
 | `review` | Opus 4.6 | Quality gate: continue / done / retry / escalate |
-| `report` | Sonnet 4.5 | Summarize results |
+| `error_recovery` | logic | Decide retry (with file rollback) vs abort |
+| `report` | Sonnet 4.5 | Summarize results and cost |
 
----
+Tools: `read_file`, `edit_file` (4-tier surgical edit with fuzzy fallback), `write_file`, `bash`, `grep`, `glob`, `ls`, `spawn_agent`, `ask_user`, `inject_context`.
 
-## File Editing Strategy
+File edits use anchor-based string replacement: exact match, whitespace-normalized, Levenshtein fuzzy (< 10% distance), full rewrite as last resort.
 
-Anchor-based string replacement with a 4-tier cascading fallback:
+## Prerequisites
 
-| Tier | Strategy | When |
-|------|----------|------|
-| 1 | Exact match | `old_string` found verbatim |
-| 2 | Whitespace-normalized | Trimmed leading/trailing per line |
-| 3 | Fuzzy match | Levenshtein distance < 10% of string length |
-| 4 | Full rewrite | Last resort, logged as degraded |
+- **Node.js** >= 20
+- **pnpm** (any recent version; `npm install -g pnpm`)
 
-Every edit is verified (lint, type-check, tests) before moving on. Failed edits trigger re-read and retry with more context. After 3 failures, the step rolls back via FileOverlay snapshots.
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) 20+
-- [pnpm](https://pnpm.io/) (`npm install -g pnpm`)
-
-### Setup
+## Quick Start
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/maxpetrusenko/shipyard-agent.git
-cd shipyard-agent
-
-# 2. Install dependencies
+git clone <repo-url> ship-agent
+cd ship-agent
 pnpm install
-
-# 3. Configure environment
 cp .env.example .env
-# Edit .env with your keys:
-#   ANTHROPIC_API_KEY   - Anthropic API key
-#   LANGCHAIN_API_KEY   - LangSmith key (for tracing)
-#   SHIPYARD_WORK_DIR   - path to the target codebase
-
-# 4. Start the server
+# Edit .env -- at minimum set ANTHROPIC_API_KEY (or log in via Claude Code for OAuth)
 pnpm dev
 ```
 
-The server starts on `http://localhost:4200`.
+Server starts on `http://localhost:4200`. Verify:
 
-### Submit an instruction
+```bash
+curl http://localhost:4200/api/health
+# {"status":"ok"}
+```
+
+For production:
+
+```bash
+pnpm build
+pnpm start
+```
+
+## Configuration
+
+All env vars are documented in `.env.example`. Copy it and fill in your values.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | Yes* | -- | Anthropic API key (`sk-ant-...`). *Not needed if using `ANTHROPIC_AUTH_TOKEN` or Claude Code Keychain auth. |
+| `ANTHROPIC_AUTH_TOKEN` | No | -- | OAuth token (alternative to API key) |
+| `ANTHROPIC_BASE_URL` | No | Anthropic default | Custom API base URL (e.g., local proxy for Claude Max) |
+| `SHIPYARD_PORT` | No | `4200` | HTTP + WebSocket server port |
+| `SHIPYARD_WORK_DIR` | No | `cwd()` | Working directory the agent operates in (the target repo) |
+| `SHIPYARD_API_KEY` | No | -- | Bearer token for API authentication. When set, all endpoints except `/api/health` require `Authorization: Bearer <key>`. |
+| `SHIPYARD_DB_URL` | No | -- | PostgreSQL connection string for persistent run storage. Falls back to in-memory. |
+| `LANGCHAIN_TRACING_V2` | No | `false` | Set `true` to enable LangSmith tracing |
+| `LANGCHAIN_API_KEY` | No | -- | LangSmith API key (also accepts `LANGSMITH_API_KEY`) |
+| `LANGCHAIN_PROJECT` | No | `shipyard` | LangSmith project name (also accepts `LANGSMITH_PROJECT`) |
+
+## API
+
+### `GET /api/health`
+
+```bash
+curl http://localhost:4200/api/health
+```
+
+### `POST /api/run`
+
+Submit an instruction. Returns `{ runId }`.
 
 ```bash
 curl -X POST http://localhost:4200/api/run \
   -H "Content-Type: application/json" \
-  -d '{"instruction": "Add email validation to the login form"}'
+  -d '{"instruction": "Add strict TypeScript to all files"}'
 ```
 
-### Run a benchmark
+With context injection:
 
 ```bash
-pnpm bench 01-strict-typescript
+curl -X POST http://localhost:4200/api/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instruction": "Refactor auth module",
+    "contexts": [{"label": "CLAUDE.md", "content": "...", "source": "system"}]
+  }'
 ```
 
----
+### `GET /api/runs/:id`
 
-## API
+Get full state for a specific run.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/run` | Submit an instruction, returns `{ runId }` |
-| POST | `/api/respond` | Resume after `ask_user` interrupt |
-| GET | `/api/status` | Current run phase and step |
-| GET | `/api/runs/:id` | Full state for a run |
-| GET | `/api/health` | Server health check |
+```bash
+curl http://localhost:4200/api/runs/<run-id>
+```
 
-WebSocket available at `ws://localhost:4200` for real-time phase updates, tool call events, and `ask_user` prompts.
+### `GET /api/runs`
 
----
+List runs with pagination.
 
-## Tools
+```bash
+curl "http://localhost:4200/api/runs?limit=10&offset=0"
+```
 
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read file with line numbers, offset/limit support |
-| `edit_file` | Surgical edit with 4-tier cascade |
-| `write_file` | Create new files |
-| `bash` | Execute shell commands (sandboxed, 120s timeout) |
-| `grep` | Ripgrep-backed content search |
-| `glob` | File pattern matching |
-| `ls` | Directory listing with types and sizes |
-| `inject_context` | Add runtime context (specs, schemas) |
-| `ask_user` | Pause loop for human input |
-| `spawn_agent` | Delegate subtask to isolated worker |
+### `POST /api/inject`
 
----
+Inject context into a running agent (max 500KB).
+
+```bash
+curl -X POST http://localhost:4200/api/inject \
+  -H "Content-Type: application/json" \
+  -d '{"label": "extra-context", "content": "Use zod for all validation"}'
+```
+
+### `POST /api/cancel`
+
+Cancel the current run.
+
+```bash
+curl -X POST http://localhost:4200/api/cancel
+```
+
+### WebSocket (`ws://localhost:4200/ws`)
+
+```jsonc
+// Client -> Server
+{"type": "submit", "instruction": "..."}
+{"type": "inject", "context": {"label": "...", "content": "..."}}
+{"type": "cancel"}
+{"type": "status"}
+
+// Server -> Client
+{"type": "submitted", "runId": "..."}
+{"type": "state_update", "data": {...}}
+{"type": "status", "data": {...}}
+```
+
+30-second heartbeat (ping/pong). Unresponsive clients are terminated.
+
+### Authentication
+
+When `SHIPYARD_API_KEY` is set, all `/api/*` endpoints (except `/api/health`) require:
+
+```
+Authorization: Bearer <your-key>
+```
+
+### Rate Limiting
+
+- `POST /api/run`: 10 requests/minute per IP
+- All other endpoints: 60 requests/minute per IP
+
+## Benchmarks
+
+Place instruction markdown files in `instructions/` (e.g., `instructions/01-strict-typescript.md`), then:
+
+```bash
+./scripts/bench.sh 01-strict-typescript
+```
+
+The harness resets the target repo, captures baseline metrics, starts the server, submits the instruction, polls until completion, runs post-verification (typecheck + tests), and writes a JSON result to `results/`.
+
+Set `SHIPYARD_TARGET` to override the default target repo path.
+
+## Tests
+
+```bash
+pnpm test
+# or: npx vitest run
+```
+
+226 tests across 18 files. Covers: 4-tier edit cascade, bash safety (dangerous command blocking), LangSmith tracing, REST routes, WebSocket, context store, multi-agent coordination, graph state annotations, and tool registry.
+
+Watch mode:
+
+```bash
+pnpm test:watch
+```
 
 ## Project Structure
 
 ```
-shipyard-agent/
-├── src/
-│   ├── index.ts              # Entry point
-│   ├── app.ts                # Express app setup
-│   ├── config/
-│   │   ├── env.ts            # Environment config
-│   │   └── model-policy.ts   # Model routing (Opus/Sonnet)
-│   ├── context/
-│   │   ├── injector.ts       # Context injection middleware
-│   │   └── store.ts          # Context storage with priority
-│   ├── graph/
-│   │   ├── builder.ts        # LangGraph StateGraph wiring
-│   │   ├── edges.ts          # Conditional edge routing
-│   │   ├── state.ts          # ShipyardState annotation
-│   │   └── nodes/
-│   │       ├── plan.ts       # Planning node (Opus)
-│   │       ├── execute.ts    # Execution node (Sonnet)
-│   │       ├── verify.ts     # Verification node (bash)
-│   │       ├── review.ts     # Review node (Opus)
-│   │       ├── report.ts     # Report generation
-│   │       └── error-recovery.ts
-│   ├── multi-agent/
-│   │   ├── supervisor.ts     # Task decomposition + dispatch
-│   │   ├── worker.ts         # Isolated worker execution
-│   │   └── merge.ts          # Output merging + conflict detection
-│   ├── runtime/
-│   │   ├── loop.ts           # Persistent instruction loop
-│   │   ├── persistence.ts    # State save/restore
-│   │   └── langsmith.ts      # Tracing integration
-│   ├── server/
-│   │   ├── routes.ts         # REST API
-│   │   └── ws.ts             # WebSocket handler
-│   └── tools/
-│       ├── index.ts          # Tool registry + dispatch
-│       ├── edit-file.ts      # 4-tier cascade editor
-│       ├── file-overlay.ts   # Copy-on-write snapshots
-│       ├── hooks.ts          # Pre/post tool hooks
-│       └── ...               # Individual tool implementations
-├── scripts/
-│   └── bench.sh              # Benchmark harness
-├── instructions/             # Benchmark instruction files
-├── docs/
-│   ├── PRESEARCH.md          # Architecture research
-│   ├── CODEAGENT.md          # Agent documentation
-│   └── requirements.md       # Project requirements
-└── package.json
+src/
+  index.ts                       # Server entry point (port 4200)
+  app.ts                         # Express app, auth middleware, rate limiter
+  config/
+    env.ts                       # Environment configuration
+    client.ts                    # Anthropic SDK client (API key or OAuth via Keychain)
+    model-policy.ts              # Opus/Sonnet routing + cost estimation
+  graph/
+    state.ts                     # ShipyardState Annotation
+    builder.ts                   # createShipyardGraph()
+    edges.ts                     # Conditional routing logic
+    nodes/
+      plan.ts                    # Opus: decompose instruction into steps
+      execute.ts                 # Sonnet: tool calls + file overlay snapshots
+      verify.ts                  # tsc --noEmit + vitest run
+      review.ts                  # Opus: quality gate (continue/done/retry/escalate)
+      error-recovery.ts          # Retry with file rollback, or abort
+      report.ts                  # Summarize results + estimated cost
+      coordinate.ts              # Multi-agent coordination node
+  tools/
+    index.ts                     # Tool registry + dispatch
+    edit-file.ts                 # 4-tier surgical edit
+    hooks.ts                     # Tool call hooks (cost accumulation)
+    read-file.ts, write-file.ts, bash.ts, grep.ts, glob.ts, ls.ts
+    spawn-agent.ts, ask-user.ts, inject-context.ts
+  server/
+    routes.ts                    # REST endpoints (CRUD, pagination, validation)
+    ws.ts                        # WebSocket handler + heartbeat
+  runtime/
+    loop.ts                      # Instruction queue + dispatch + trace resolution
+    persistence.ts               # DB CRUD (Postgres or in-memory)
+    langsmith.ts                 # Tracing + public share links
+  multi-agent/
+    supervisor.ts                # Task decomposition + worker dispatch
+    worker.ts                    # Isolated sub-graph worker
+    merge.ts                     # Conflict detection + edit merging
+  context/
+    store.ts                     # Context registry
+    injector.ts                  # System prompt builder
+scripts/
+  bench.sh                       # Benchmark harness
+  migrations/
+    001-init.sql                 # DDL: shipyard_runs, shipyard_messages, shipyard_contexts
+test/                            # 18 test files, 226 tests
 ```
-
----
-
-## Observability
-
-Every run produces a LangSmith trace with:
-- LLM calls (input, output, tokens, latency)
-- Tool calls (name, args, result, duration)
-- Node transitions with state snapshots
-- Error classification and recovery actions
-
-Set `LANGCHAIN_TRACING_V2=true` and `LANGCHAIN_API_KEY` in `.env` to enable.
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Agent Framework | LangGraph (TypeScript) |
-| LLM | Claude Opus 4.6 / Sonnet 4.5 (Anthropic SDK) |
-| Observability | LangSmith |
-| Server | Express + WebSocket |
-| Validation | Zod |
-| Testing | Vitest |
-
----
-
-## Common Commands
-
-```bash
-pnpm dev          # Start server (watch mode)
-pnpm build        # Compile TypeScript
-pnpm start        # Run compiled output
-pnpm type-check   # Type-check without emitting
-pnpm test         # Run tests
-pnpm bench <name> # Run benchmark instruction
-```
-
----
-
-## Documentation
-
-- [PRESEARCH.md](./docs/PRESEARCH.md) — Open source research, architecture decisions, file editing strategy
-- [CODEAGENT.md](./docs/CODEAGENT.md) — Agent architecture, trace links, rebuild log
-- [Requirements](./docs/requirements.md) — Project requirements and checklist
-
----
-
-## License
-
-[MIT License](./LICENSE)
