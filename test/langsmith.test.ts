@@ -1,5 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { isTracingEnabled, getTraceProject, buildTraceUrl } from '../src/runtime/langsmith.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import {
+  isTracingEnabled,
+  getTraceProject,
+  buildTraceUrl,
+  canTrace,
+  getLangSmithApiKey,
+  resolveLangSmithRunUrl,
+} from '../src/runtime/langsmith.js';
 
 describe('langsmith tracing helpers', () => {
   const originalEnv = { ...process.env };
@@ -14,8 +21,15 @@ describe('langsmith tracing helpers', () => {
       expect(isTracingEnabled()).toBe(true);
     });
 
+    it('returns true when LANGSMITH_TRACING=true', () => {
+      delete process.env['LANGCHAIN_TRACING_V2'];
+      process.env['LANGSMITH_TRACING'] = 'true';
+      expect(isTracingEnabled()).toBe(true);
+    });
+
     it('returns false when not set', () => {
       delete process.env['LANGCHAIN_TRACING_V2'];
+      delete process.env['LANGSMITH_TRACING'];
       expect(isTracingEnabled()).toBe(false);
     });
 
@@ -25,14 +39,57 @@ describe('langsmith tracing helpers', () => {
     });
   });
 
+  describe('getLangSmithApiKey', () => {
+    it('prefers LANGSMITH_API_KEY', () => {
+      process.env['LANGSMITH_API_KEY'] = 'modern-key';
+      process.env['LANGCHAIN_API_KEY'] = 'legacy-key';
+      expect(getLangSmithApiKey()).toBe('modern-key');
+    });
+
+    it('falls back to LANGCHAIN_API_KEY', () => {
+      delete process.env['LANGSMITH_API_KEY'];
+      process.env['LANGCHAIN_API_KEY'] = 'legacy-key';
+      expect(getLangSmithApiKey()).toBe('legacy-key');
+    });
+
+    it('returns null when neither set', () => {
+      delete process.env['LANGSMITH_API_KEY'];
+      delete process.env['LANGCHAIN_API_KEY'];
+      expect(getLangSmithApiKey()).toBeNull();
+    });
+  });
+
+  describe('canTrace', () => {
+    it('true when tracing enabled + api key set', () => {
+      process.env['LANGCHAIN_TRACING_V2'] = 'true';
+      process.env['LANGCHAIN_API_KEY'] = 'key';
+      expect(canTrace()).toBe(true);
+    });
+
+    it('false when no api key', () => {
+      process.env['LANGCHAIN_TRACING_V2'] = 'true';
+      delete process.env['LANGCHAIN_API_KEY'];
+      delete process.env['LANGSMITH_API_KEY'];
+      expect(canTrace()).toBe(false);
+    });
+  });
+
   describe('getTraceProject', () => {
-    it('returns LANGCHAIN_PROJECT when set', () => {
+    it('prefers LANGSMITH_PROJECT', () => {
+      process.env['LANGSMITH_PROJECT'] = 'modern';
+      process.env['LANGCHAIN_PROJECT'] = 'legacy';
+      expect(getTraceProject()).toBe('modern');
+    });
+
+    it('falls back to LANGCHAIN_PROJECT', () => {
+      delete process.env['LANGSMITH_PROJECT'];
       process.env['LANGCHAIN_PROJECT'] = 'my-project';
       expect(getTraceProject()).toBe('my-project');
     });
 
     it('defaults to shipyard', () => {
       delete process.env['LANGCHAIN_PROJECT'];
+      delete process.env['LANGSMITH_PROJECT'];
       expect(getTraceProject()).toBe('shipyard');
     });
   });
@@ -40,6 +97,7 @@ describe('langsmith tracing helpers', () => {
   describe('buildTraceUrl', () => {
     it('returns null when tracing is disabled', () => {
       delete process.env['LANGCHAIN_TRACING_V2'];
+      delete process.env['LANGSMITH_TRACING'];
       expect(buildTraceUrl('run-123')).toBeNull();
     });
 
@@ -54,9 +112,63 @@ describe('langsmith tracing helpers', () => {
     it('uses default project name in URL', () => {
       process.env['LANGCHAIN_TRACING_V2'] = 'true';
       delete process.env['LANGCHAIN_PROJECT'];
+      delete process.env['LANGSMITH_PROJECT'];
 
       const url = buildTraceUrl('run-xyz');
       expect(url).toContain('/p/shipyard/');
+    });
+  });
+
+  describe('resolveLangSmithRunUrl', () => {
+    it('returns null when tracing disabled', async () => {
+      delete process.env['LANGCHAIN_TRACING_V2'];
+      delete process.env['LANGSMITH_TRACING'];
+      expect(await resolveLangSmithRunUrl('run-1')).toBeNull();
+    });
+
+    it('returns null for empty runId', async () => {
+      process.env['LANGCHAIN_TRACING_V2'] = 'true';
+      process.env['LANGCHAIN_API_KEY'] = 'key';
+      expect(await resolveLangSmithRunUrl('')).toBeNull();
+    });
+
+    it('reuses existing shared link', async () => {
+      process.env['LANGCHAIN_TRACING_V2'] = 'true';
+      process.env['LANGCHAIN_API_KEY'] = 'key';
+
+      const mockClient = {
+        readRunSharedLink: async () => 'https://smith.langchain.com/public/abc/r',
+        shareRun: async () => { throw new Error('should not be called'); },
+      };
+
+      const url = await resolveLangSmithRunUrl('run-1', mockClient);
+      expect(url).toBe('https://smith.langchain.com/public/abc/r');
+    });
+
+    it('creates new share link when none exists', async () => {
+      process.env['LANGCHAIN_TRACING_V2'] = 'true';
+      process.env['LANGCHAIN_API_KEY'] = 'key';
+
+      const mockClient = {
+        readRunSharedLink: async () => { const e = new Error('not found'); (e as any).status = 404; throw e; },
+        shareRun: async () => 'https://smith.langchain.com/public/new-token/r',
+      };
+
+      const url = await resolveLangSmithRunUrl('run-2', mockClient);
+      expect(url).toBe('https://smith.langchain.com/public/new-token/r');
+    });
+
+    it('returns null on persistent failure', async () => {
+      process.env['LANGCHAIN_TRACING_V2'] = 'true';
+      process.env['LANGCHAIN_API_KEY'] = 'key';
+
+      const mockClient = {
+        readRunSharedLink: async () => { throw new Error('server error'); },
+        shareRun: async () => { throw new Error('server error'); },
+      };
+
+      const url = await resolveLangSmithRunUrl('run-3', mockClient, 1, 0);
+      expect(url).toBeNull();
     });
   });
 });

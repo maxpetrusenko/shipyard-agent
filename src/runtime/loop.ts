@@ -8,7 +8,7 @@
 import { v4 as uuid } from 'uuid';
 import { createShipyardGraph } from '../graph/builder.js';
 import { ContextStore } from '../context/store.js';
-import { buildTraceUrl } from './langsmith.js';
+import { buildTraceUrl, resolveLangSmithRunUrl } from './langsmith.js';
 import { createRun as persistRun } from './persistence.js';
 import type { Pool } from 'pg';
 import type { ShipyardStateType, ContextEntry } from '../graph/state.js';
@@ -193,7 +193,10 @@ export class InstructionLoop {
       });
 
       const finalState = result as ShipyardStateType;
-      const traceUrl = buildTraceUrl(item.id);
+      // Try public share link first, fall back to private URL
+      const traceUrl =
+        await resolveLangSmithRunUrl(item.id).catch(() => null) ??
+        buildTraceUrl(item.id);
       const runResult: RunResult = {
         runId: item.id,
         phase: finalState.phase,
