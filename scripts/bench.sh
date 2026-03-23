@@ -59,9 +59,11 @@ echo "  Baseline: typecheck=${BASELINE_TYPECHECK}, tests=${BASELINE_TOTAL} total
 echo "[3/8] Starting Shipyard server..."
 cd "$AGENT_DIR"
 
-# Load .env
+# Load .env, then force workdir to the bench target (not ship-agent cwd)
 set -a
 source .env 2>/dev/null || true
+SHIPYARD_WORK_DIR="$TARGET"
+export SHIPYARD_WORK_DIR
 set +a
 
 npx tsx src/index.ts &
