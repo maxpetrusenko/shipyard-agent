@@ -1,0 +1,1 @@
+Refactor the tool system to follow the bash-tool pattern: add before/after hooks to all tool dispatch calls, create a file overlay (copy-on-write) for safe rollback, extract tool recording logic from execute node into hook callbacks, add a logging hook for debugging. Ensure all existing tests still pass.

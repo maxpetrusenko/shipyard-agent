@@ -1,0 +1,1 @@
+Enable strict TypeScript across the entire codebase. Set "strict": true in all tsconfig.json files. Fix all resulting type errors. Add explicit return types to all exported functions. Replace any `any` types with proper types. Run pnpm type-check to verify zero errors. Run pnpm test to verify zero test failures.
