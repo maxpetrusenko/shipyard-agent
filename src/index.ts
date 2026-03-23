@@ -5,6 +5,7 @@
  * Runs on port 4200 (configurable via SHIPYARD_PORT).
  */
 
+import 'dotenv/config';
 import { createServer } from 'node:http';
 import { createApp } from './app.js';
 import { InstructionLoop } from './runtime/loop.js';

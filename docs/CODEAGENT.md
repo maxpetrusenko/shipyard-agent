@@ -245,6 +245,15 @@ After each run completes, the loop resolves a **public share link** so traces ar
 3. Retry up to 5 times with exponential backoff (handles transient 404s while LangSmith finalizes the run)
 4. Falls back to private `smith.langchain.com` URL if sharing fails
 
+**Live Trace Examples:**
+
+| Run | Execution Path | Trace Link |
+|-----|---------------|------------|
+| JSDoc field docs (simple edit, 2 steps) | plan → execute → verify → review → done | [Trace A](https://smith.langchain.com/public/8b8308d2-92b2-42ae-a142-dcd2d16ed4b1/r) |
+| package.json description (context injection + retry) | plan → execute → verify → review → retry → plan → execute → verify → review → done | [Trace B](https://smith.langchain.com/public/91ad28ad-4d04-43ee-9826-661fcd487589/r) |
+
+Trace A demonstrates the happy path (single pass). Trace B demonstrates context injection (`Convention` context provided via REST body) and the self-correction loop (review sent the agent back to planning twice before accepting).
+
 ### Cost Tracking
 
 Per-run estimated cost accumulated via tool call hooks:
@@ -431,9 +440,9 @@ Projections assume standard Anthropic API pricing (not Max plan) for production 
 
 ### Known Issues Blocking Rebuild
 
-1. **Polling bug**: `graph.invoke()` is blocking. During execution, `GET /api/runs/:id` returns 404 because the run is only stored in memory after invoke completes. Bench.sh polls forever showing "Phase: polling". Fix: store run in Map before invoke, update via broadcast listener, or switch to `graph.stream()`.
+1. ~~**Polling bug**~~: **FIXED**. Switched from `graph.invoke()` to `graph.stream()` with `streamMode: 'updates'`. In-progress placeholder stored in runs Map before graph execution starts. Phase transitions broadcast in real-time.
 
-2. **No trace links yet**: Depends on runs completing successfully. `resolveLangSmithRunUrl()` is wired but never reached because runs don't complete through bench.sh.
+2. ~~**No trace links**~~: **FIXED**. Added `dotenv/config` for env loading, passed `runId` to `graph.stream()` config so LangSmith uses our UUID as the trace ID. Two public trace links obtained (see Section 4).
 
 ---
 
@@ -477,14 +486,16 @@ Projections assume standard Anthropic API pricing (not Max plan) for production 
 - [x] Ship rebuild instructions (03-09)
 - [x] GitHub push (both remotes)
 - [x] LangSmith tracing wired (resolveLangSmithRunUrl + buildTraceUrl)
+- [x] Polling bug fixed (stream instead of invoke, in-progress placeholder)
+- [x] 2 public trace links (Trace A: simple edit, Trace B: context injection + retry)
+- [x] README setup guide (clone & run docs)
+- [x] dotenv loading for .env file support
 
 ### Blocked
-- [ ] **2 trace links** — need polling bug fix, then successful runs
 - [ ] **Ship rebuild execution** — instructions ready, agent not tested E2E
 - [ ] **Ship Rebuild Log** — depends on running agent against ship-refactored
 
 ### Not Started
-- [ ] README setup guide (clone & run docs)
 - [ ] Demo video (3-5 min)
 - [ ] Deployment (agent + rebuilt app publicly accessible)
 - [ ] Social post (X/LinkedIn)

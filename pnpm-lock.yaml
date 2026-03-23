@@ -20,6 +20,9 @@ importers:
       '@langchain/langgraph-checkpoint-postgres':
         specifier: ^1.0.1
         version: 1.0.1(@langchain/core@1.1.35(ws@8.20.0))(@langchain/langgraph-checkpoint@1.0.1(@langchain/core@1.1.35(ws@8.20.0)))
+      dotenv:
+        specifier: ^17.3.1
+        version: 17.3.1
       express:
         specifier: ^4.21.2
         version: 4.22.1
@@ -582,6 +585,10 @@ packages:
   detect-libc@2.1.2:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
+
+  dotenv@17.3.1:
+    resolution: {integrity: sha512-IO8C/dzEb6O3F9/twg6ZLXz164a2fhTnEWb95H23Dm4OuN+92NmEAlTrupP9VW6Jm3sO26tQlqyvyi4CsnY9GA==}
+    engines: {node: '>=12'}
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -1685,6 +1692,8 @@ snapshots:
   destroy@1.2.0: {}
 
   detect-libc@2.1.2: {}
+
+  dotenv@17.3.1: {}
 
   dunder-proto@1.0.1:
     dependencies:

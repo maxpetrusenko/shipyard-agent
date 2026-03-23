@@ -314,6 +314,9 @@ export class InstructionLoop {
       const stream = await graph.stream(initialState, {
         configurable: { thread_id: item.id },
         streamMode: 'updates',
+        runId: item.id,
+        runName: `shipyard-${item.id.slice(0, 8)}`,
+        tags: ['shipyard'],
       });
 
       for await (const chunk of stream) {
