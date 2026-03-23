@@ -49,6 +49,10 @@ START -> plan -> execute -> verify -> review
 
 The `edit_file` tool uses anchor-based string replacement with 4 tiers of matching:
 
+**Tier 0: Empty Guard**
+- Rejects empty or whitespace-only `old_string` before any matching attempt
+- Prevents accidental tier-4 full rewrites from blank input
+
 **Tier 1: Exact Match**
 - `old_string` appears exactly once in the file
 - Direct replacement, highest confidence
@@ -150,13 +154,33 @@ Supervisor (Opus)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/run` | Submit instruction |
-| POST | `/api/inject` | Inject context mid-run |
+| POST | `/api/run` | Submit instruction (max 100KB) |
+| POST | `/api/inject` | Inject context mid-run (max 500KB) |
 | POST | `/api/cancel` | Cancel current run |
 | GET | `/api/status` | Queue status |
-| GET | `/api/runs` | List all runs |
+| GET | `/api/runs` | List runs (`?limit=50&offset=0`) |
 | GET | `/api/runs/:id` | Get specific run |
-| GET | `/api/health` | Health check |
+| GET | `/api/contexts` | List active contexts |
+| DELETE | `/api/contexts/:label` | Remove context by label |
+| GET | `/api/health` | Health check (no auth required) |
+
+### Authentication
+
+Optional Bearer token via `SHIPYARD_API_KEY` env var. When set, all `/api/*` endpoints (except `/api/health`) require `Authorization: Bearer <key>` header. Disabled when env var is unset.
+
+### Rate Limiting
+
+In-memory per-IP rate limiter (no external deps):
+- `POST /api/run`: 10 requests/minute
+- All other `/api/*` endpoints: 60 requests/minute
+- Returns `429 Too Many Requests` when exceeded
+
+### Input Validation
+
+- Instruction body: max 100KB (`POST /api/run`)
+- Context content: max 500KB (`POST /api/inject`)
+- All route handlers wrapped in try/catch with 500 JSON fallback
+- Global Express error handler
 
 ### WebSocket (`/ws`)
 
@@ -171,62 +195,106 @@ Messages (server -> client):
 - `{type: "submitted", runId: "..."}` -> run accepted
 - `{type: "status", data: {...}}` -> queue status
 
+### WebSocket Heartbeat
+
+30-second ping/pong cycle. Server pings all clients every 30s; clients that don't respond with pong before the next ping are terminated. Interval cleaned up on server close.
+
 ---
 
 ## 6. Database Schema
 
-Three tables (migrations 050-052):
+Three tables defined in `scripts/migrations/001-init.sql`:
 
-- `shipyard_runs` - Run history (instruction, status, phase, steps, file_edits, token_usage, trace_url)
+- `shipyard_runs` - Run history (instruction, status, phase, steps, file_edits, token_usage, trace_url, estimated_cost, duration_ms)
 - `shipyard_messages` - Conversation messages per run (role, content, tool info)
 - `shipyard_contexts` - Persistent context entries (label, content, source, active flag)
+
+Indexes on `shipyard_runs(created_at)`, `shipyard_messages(run_id, seq)`, `shipyard_contexts(label)` unique.
 
 ---
 
 ## 7. Telemetry & Tracing
 
-LangSmith integration via environment variables:
-- `LANGCHAIN_TRACING_V2=true` enables automatic tracing of all LLM calls and tool invocations
-- `LANGCHAIN_API_KEY` for authentication
-- `LANGCHAIN_PROJECT=shipyard` for project organization
+LangSmith integration via environment variables (supports both modern `LANGSMITH_*` and legacy `LANGCHAIN_*` prefixes):
+
+| Env Var (modern) | Env Var (legacy) | Purpose |
+|------------------|------------------|---------|
+| `LANGSMITH_TRACING=true` | `LANGCHAIN_TRACING_V2=true` | Enable tracing |
+| `LANGSMITH_API_KEY` | `LANGCHAIN_API_KEY` | Authentication |
+| `LANGSMITH_PROJECT` | `LANGCHAIN_PROJECT` | Project name (default: `shipyard`) |
 
 Every node transition, tool call, and LLM invocation is traced automatically via LangGraph's built-in LangSmith integration.
 
+### Public Trace Links
+
+After each run completes, the loop resolves a **public share link** so traces are accessible without LangSmith workspace auth:
+
+1. `readRunSharedLink(runId)` — reuse existing public link if already shared
+2. `shareRun(runId)` — create new public link (if 404 on step 1)
+3. Retry up to 5 times with exponential backoff (handles transient 404s while LangSmith finalizes the run)
+4. Falls back to private `smith.langchain.com` URL if sharing fails
+
+### Cost Tracking
+
+Per-run estimated cost accumulated via tool call hooks:
+
+| Model | Input (per M tokens) | Output (per M tokens) |
+|-------|---------------------|----------------------|
+| claude-opus-4-6 | $15.00 | $75.00 |
+| claude-sonnet-4-5-20250929 | $3.00 | $15.00 |
+
+Cost is reported in the final summary and stored in state as `estimatedCost`.
+
 ---
 
-## 8. Package Structure
+## 8. Error Recovery & File Rollback
+
+When verification fails and the review node decides to retry:
+
+1. **Snapshot**: Execute node serializes file overlay snapshots into state (`fileOverlaySnapshots` as JSON)
+2. **Rollback**: Error recovery node parses snapshots, rolls back all touched files to pre-edit state
+3. **Clean retry**: Re-enters planning with clean filesystem, avoiding cascading errors from partial edits
+
+Retry logic: `retryCount < maxRetries - 1` (fixed off-by-one). Default `maxRetries = 3` allows 2 retries before escalation.
+
+---
+
+## 9. Package Structure
 
 ```
 shipyard/
   src/
     index.ts                    # Server entry (port 4200)
-    app.ts                      # Express app factory
+    app.ts                      # Express app + auth + rate limiter + error handler
     config/
-      env.ts                    # Environment configuration
-      model-policy.ts           # Opus/Sonnet routing
+      env.ts                    # Environment configuration (incl. SHIPYARD_API_KEY)
+      client.ts                 # Anthropic SDK client (OAuth token from Keychain)
+      model-policy.ts           # Opus/Sonnet routing + cost estimation
     graph/
-      state.ts                  # ShipyardState Annotation
+      state.ts                  # ShipyardState Annotation (incl. fileOverlaySnapshots, estimatedCost)
       builder.ts                # createShipyardGraph()
       edges.ts                  # Conditional routing
       nodes/
         plan.ts                 # Opus: decompose instruction
-        execute.ts              # Sonnet: tool calls
+        execute.ts              # Sonnet: tool calls + overlay snapshot serialization
         verify.ts               # tsc + test
-        review.ts               # Opus: quality gate
-        error-recovery.ts       # Retry or abort
-        report.ts               # Summarize results
+        review.ts               # Opus: quality gate (retry off-by-one fixed)
+        error-recovery.ts       # Retry with file rollback, or abort
+        report.ts               # Summarize results (incl. estimated cost)
+        coordinate.ts           # Multi-agent coordination node
     tools/
       index.ts                  # Tool registry + dispatch
-      edit-file.ts              # 4-tier surgical edit
+      edit-file.ts              # 4-tier surgical edit (+ empty guard)
+      hooks.ts                  # Tool call hooks (cost accumulation)
       read-file.ts, write-file.ts, bash.ts, grep.ts, glob.ts, ls.ts
       spawn-agent.ts, ask-user.ts, inject-context.ts
     server/
-      routes.ts                 # REST endpoints
-      ws.ts                     # WebSocket handler
+      routes.ts                 # REST endpoints (pagination, context CRUD, validation)
+      ws.ts                     # WebSocket handler + heartbeat
     runtime/
-      loop.ts                   # Instruction queue + dispatch
+      loop.ts                   # Instruction queue + dispatch + public trace resolution
       persistence.ts            # DB CRUD
-      langsmith.ts              # Tracing helpers
+      langsmith.ts              # Tracing + public share links
     multi-agent/
       supervisor.ts             # Task decomposition
       worker.ts                 # Isolated sub-graph
@@ -234,6 +302,17 @@ shipyard/
     context/
       store.ts                  # Context registry
       injector.ts               # System prompt builder
+  scripts/
+    bench.sh                    # Benchmark harness (portable, awk fallback)
+    migrations/
+      001-init.sql              # DDL for shipyard_runs, shipyard_messages, shipyard_contexts
   test/
-    edit-file.test.ts           # 9 tests covering all 4 tiers + edge cases
+    edit-file.test.ts           # 11 tests: all 4 tiers + empty guard + edge cases
+    bash-safety.test.ts         # Dangerous command blocking (rm -rf, wget|sh, etc.)
+    langsmith.test.ts           # 18 tests: env helpers, tracing, public URL resolution
+    routes.test.ts              # REST endpoint tests (health, run, pagination, context CRUD)
+    ws.test.ts                  # WebSocket tests (connect, status, submit, invalid JSON)
+    context-store.test.ts       # Context store unit tests
+    multi-agent.test.ts         # Multi-agent supervisor tests
+    tool-registry.test.ts       # Tool registry tests
 ```
