@@ -107,6 +107,12 @@ export const ShipyardState = Annotation.Root({
   traceUrl: Annotation<string | null>,
   runStartedAt: Annotation<number>,
 
+  // File overlay snapshots for rollback on retry (JSON-serialized Map<path, content>)
+  fileOverlaySnapshots: Annotation<string | null>,
+
+  // Cost tracking
+  estimatedCost: Annotation<number | null>,
+
   // Multi-agent outputs (Phase 6)
   workerResults: Annotation<Record<string, unknown>[]>,
 

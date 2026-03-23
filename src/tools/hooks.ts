@@ -93,6 +93,35 @@ export function createRecordingHooks(
 }
 
 // ---------------------------------------------------------------------------
+// Built-in hooks: cost accumulation
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a hook that accumulates estimated cost for LLM-backed tool calls.
+ * `costRef` is mutated in place: { value: number }.
+ */
+export function createCostHook(
+  costRef: { value: number },
+  costFn: (model: string, input: number, output: number) => number,
+  model: string,
+): Required<ToolHooks> {
+  return {
+    onBeforeToolCall: [],
+    onAfterToolCall: [
+      (ctx) => {
+        // Only accumulate for tool calls that report token usage
+        const usage = ctx.tool_result['tokenUsage'] as
+          | { input: number; output: number }
+          | undefined;
+        if (usage) {
+          costRef.value += costFn(model, usage.input, usage.output);
+        }
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Built-in hooks: logging
 // ---------------------------------------------------------------------------
 

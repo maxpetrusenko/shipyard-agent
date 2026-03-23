@@ -6,14 +6,8 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { getModelConfig } from '../../config/model-policy.js';
+import { getClient, wrapSystemPrompt } from '../../config/client.js';
 import type { ShipyardStateType, ReviewDecision, LLMMessage } from '../state.js';
-
-let client: Anthropic | null = null;
-
-function getClient(): Anthropic {
-  if (!client) client = new Anthropic();
-  return client;
-}
 
 const REVIEW_SYSTEM = `You are the Shipyard quality reviewer (Opus). You evaluate the work done by the coding agent.
 
@@ -101,7 +95,7 @@ export async function reviewNode(
     model: config.model,
     max_tokens: config.maxTokens,
     temperature: config.temperature,
-    system: REVIEW_SYSTEM,
+    system: wrapSystemPrompt(REVIEW_SYSTEM),
     messages: [{ role: 'user', content: reviewPrompt }],
   });
 
@@ -133,8 +127,8 @@ export async function reviewNode(
     // Parse failed, default to escalate
   }
 
-  // Enforce retry limits
-  if (decision === 'retry' && state.retryCount >= state.maxRetries) {
+  // Enforce retry limits (retryCount incremented below; check >= maxRetries - 1)
+  if (decision === 'retry' && state.retryCount >= state.maxRetries - 1) {
     decision = 'escalate';
     feedback = `Max retries (${state.maxRetries}) exceeded. ${feedback ?? ''}`;
   }

@@ -3,6 +3,16 @@
  */
 
 import type { ShipyardStateType } from './state.js';
+import { shouldCoordinate } from './nodes/coordinate.js';
+
+/**
+ * After plan: route to coordinate (multi-agent) or execute (single-agent).
+ */
+export function afterPlan(
+  state: ShipyardStateType,
+): 'coordinate' | 'execute' {
+  return shouldCoordinate(state) ? 'coordinate' : 'execute';
+}
 
 /**
  * After review: route based on decision.

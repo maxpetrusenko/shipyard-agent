@@ -22,12 +22,24 @@ import { verifyNode } from './nodes/verify.js';
 import { reviewNode } from './nodes/review.js';
 import { errorRecoveryNode } from './nodes/error-recovery.js';
 import { reportNode } from './nodes/report.js';
-import { afterReview, afterErrorRecovery } from './edges.js';
+import { coordinateNode } from './nodes/coordinate.js';
+import { afterPlan, afterReview, afterErrorRecovery } from './edges.js';
 
 // ---------------------------------------------------------------------------
 // Graph construction
 // ---------------------------------------------------------------------------
 
+/**
+ * Flow:
+ *   START -> plan ──┬── execute -> verify -> review
+ *                   │                          ├─ continue -> execute
+ *                   │                          ├─ done -> report -> END
+ *                   │                          ├─ retry -> plan
+ *                   │                          └─ escalate -> error_recovery
+ *                   │                                          ├─ plan (retry)
+ *                   │                                          └─ report (fatal) -> END
+ *                   └── coordinate -> verify -> review (multi-agent path)
+ */
 export interface CreateShipyardGraphOptions {
   checkpointer?: BaseCheckpointSaver;
 }
@@ -36,15 +48,24 @@ export function createShipyardGraph(opts?: CreateShipyardGraphOptions) {
   const graph = new StateGraph(ShipyardState)
     .addNode('plan', planNode)
     .addNode('execute', executeNode)
+    .addNode('coordinate', coordinateNode)
     .addNode('verify', verifyNode)
     .addNode('review', reviewNode)
     .addNode('error_recovery', errorRecoveryNode)
     .addNode('report', reportNode);
 
-  // Linear chain: START -> plan -> execute -> verify -> review
+  // START -> plan
   graph.addEdge(START, 'plan');
-  graph.addEdge('plan', 'execute');
+
+  // Conditional: after plan -> coordinate (multi-agent) or execute (single)
+  graph.addConditionalEdges('plan', afterPlan, {
+    coordinate: 'coordinate',
+    execute: 'execute',
+  });
+
+  // Both execute and coordinate flow into verify
   graph.addEdge('execute', 'verify');
+  graph.addEdge('coordinate', 'verify');
   graph.addEdge('verify', 'review');
 
   // Conditional: after review

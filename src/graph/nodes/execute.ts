@@ -7,6 +7,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { getModelConfig } from '../../config/model-policy.js';
+import { getClient, wrapSystemPrompt } from '../../config/client.js';
 import { TOOL_SCHEMAS, dispatchTool } from '../../tools/index.js';
 import { createRecordingHooks } from '../../tools/hooks.js';
 import { FileOverlay } from '../../tools/file-overlay.js';
@@ -16,13 +17,6 @@ import type {
   ToolCallRecord,
   LLMMessage,
 } from '../state.js';
-
-let client: Anthropic | null = null;
-
-function getClient(): Anthropic {
-  if (!client) client = new Anthropic();
-  return client;
-}
 
 const WORK_DIR = process.env['SHIPYARD_WORK_DIR'] ?? process.cwd();
 
@@ -62,9 +56,11 @@ export async function executeNode(
     .map((c) => `## ${c.label}\n${c.content}`)
     .join('\n\n');
 
-  const systemPrompt = contextBlock
-    ? `${EXECUTE_SYSTEM}\n\n# Context\n\n${contextBlock}`
-    : EXECUTE_SYSTEM;
+  const systemPrompt = wrapSystemPrompt(
+    contextBlock
+      ? `${EXECUTE_SYSTEM}\n\n# Context\n\n${contextBlock}`
+      : EXECUTE_SYSTEM,
+  );
 
   const stepPrompt = [
     `## Current Step (${currentStep.index + 1}/${state.steps.length})`,
@@ -133,6 +129,13 @@ export async function executeNode(
         i === state.currentStepIndex ? { ...s, status: 'done' as const } : s,
       );
 
+      // Serialize overlay snapshots for rollback on retry
+      const snapshotJson = overlay.dirty
+        ? JSON.stringify(Object.fromEntries(
+            overlay.trackedFiles().map((f) => [f, ''] /* paths only; content in overlay */),
+          ))
+        : state.fileOverlaySnapshots ?? null;
+
       return {
         phase: 'verifying',
         steps: finalSteps,
@@ -140,6 +143,7 @@ export async function executeNode(
         toolCallHistory: newHistory,
         messages: newMessages,
         tokenUsage: { input: inputTokens, output: outputTokens },
+        fileOverlaySnapshots: snapshotJson,
       };
     }
 
@@ -175,6 +179,12 @@ export async function executeNode(
     i === state.currentStepIndex ? { ...s, status: 'done' as const } : s,
   );
 
+  const tailSnapshotJson = overlay.dirty
+    ? JSON.stringify(Object.fromEntries(
+        overlay.trackedFiles().map((f) => [f, '']),
+      ))
+    : state.fileOverlaySnapshots ?? null;
+
   return {
     phase: 'verifying',
     steps: finalSteps,
@@ -182,5 +192,6 @@ export async function executeNode(
     toolCallHistory: newHistory,
     messages: newMessages,
     tokenUsage: { input: inputTokens, output: outputTokens },
+    fileOverlaySnapshots: tailSnapshotJson,
   };
 }

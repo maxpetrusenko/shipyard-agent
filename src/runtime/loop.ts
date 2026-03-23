@@ -8,6 +8,9 @@
 import { v4 as uuid } from 'uuid';
 import { createShipyardGraph } from '../graph/builder.js';
 import { ContextStore } from '../context/store.js';
+import { buildTraceUrl } from './langsmith.js';
+import { createRun as persistRun } from './persistence.js';
+import type { Pool } from 'pg';
 import type { ShipyardStateType, ContextEntry } from '../graph/state.js';
 
 // ---------------------------------------------------------------------------
@@ -47,6 +50,12 @@ export class InstructionLoop {
   private contextStore = new ContextStore();
   private runs: Map<string, RunResult> = new Map();
   private listeners: Set<StateListener> = new Set();
+  private pool: Pool | null = null;
+
+  /** Set a pg Pool for optional run persistence. */
+  setPool(pool: Pool): void {
+    this.pool = pool;
+  }
 
   /** Add a state change listener (for WebSocket broadcasting). */
   onStateChange(fn: StateListener): () => void {
@@ -98,9 +107,25 @@ export class InstructionLoop {
     return this.runs.get(id);
   }
 
+  /** Remove a context by label. */
+  removeContext(label: string): boolean {
+    return this.contextStore.remove(label);
+  }
+
+  /** List all active contexts. */
+  getContexts(): Array<{ label: string; content: string; source: string }> {
+    return this.contextStore.getAll();
+  }
+
   /** Get all run results. */
   getAllRuns(): RunResult[] {
     return Array.from(this.runs.values());
+  }
+
+  /** Get paginated run results. */
+  getRunsPaginated(limit: number, offset: number): RunResult[] {
+    const all = Array.from(this.runs.values());
+    return all.slice(offset, offset + limit);
   }
 
   /** Get current queue status. */
@@ -155,6 +180,8 @@ export class InstructionLoop {
         tokenUsage: null,
         traceUrl: null,
         runStartedAt: startedAt,
+        fileOverlaySnapshots: null,
+        estimatedCost: null,
         workerResults: [],
         modelHint: 'opus',
       };
@@ -166,19 +193,25 @@ export class InstructionLoop {
       });
 
       const finalState = result as ShipyardStateType;
+      const traceUrl = buildTraceUrl(item.id);
       const runResult: RunResult = {
         runId: item.id,
         phase: finalState.phase,
         steps: finalState.steps,
         fileEdits: finalState.fileEdits,
         tokenUsage: finalState.tokenUsage,
-        traceUrl: finalState.traceUrl,
+        traceUrl: traceUrl ?? finalState.traceUrl,
         messages: finalState.messages,
         error: finalState.error,
         durationMs: Date.now() - startedAt,
       };
 
       this.runs.set(item.id, runResult);
+      if (this.pool) {
+        await persistRun(this.pool, runResult).catch((e) =>
+          console.error('[persistence] failed to save run:', e),
+        );
+      }
       this.broadcast(finalState);
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -194,6 +227,11 @@ export class InstructionLoop {
         durationMs: Date.now() - startedAt,
       };
       this.runs.set(item.id, runResult);
+      if (this.pool) {
+        await persistRun(this.pool, runResult).catch((e) =>
+          console.error('[persistence] failed to save error run:', e),
+        );
+      }
       this.broadcast({ phase: 'error', error: errorMsg });
     } finally {
       this.processing = false;

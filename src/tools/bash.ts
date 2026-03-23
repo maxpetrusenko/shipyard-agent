@@ -2,7 +2,7 @@
  * Execute a shell command with timeout.
  */
 
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 
 export interface BashParams {
   command: string;
@@ -22,13 +22,39 @@ const DEFAULT_TIMEOUT = 30_000;
 const MAX_TIMEOUT = 120_000;
 const MAX_OUTPUT = 100_000;
 
+/** Patterns that should never be run by the agent. */
+const BLOCKED_PATTERNS = [
+  /rm\s+-rf\s+\//,       // rm -rf /
+  /mkfs\./,              // filesystem format
+  /:(){ :|:& };:/,       // fork bomb
+  />\s*\/dev\/sd/,       // overwrite block device
+  /\|\s*sh\b/,           // pipe into sh
+  /\|\s*bash\b/,         // pipe into bash
+  /curl\b.*\|\s*sh/,     // curl pipe sh
+  /wget\b.*\|\s*sh/,     // wget pipe sh
+];
+
 export function runBash(params: BashParams): Promise<BashResult> {
   const { command, cwd } = params;
   const timeout = Math.min(params.timeout ?? DEFAULT_TIMEOUT, MAX_TIMEOUT);
 
+  // Reject obviously dangerous commands
+  for (const pattern of BLOCKED_PATTERNS) {
+    if (pattern.test(command)) {
+      return Promise.resolve({
+        success: false,
+        exit_code: 1,
+        stdout: '',
+        stderr: '',
+        message: `Blocked: command matches dangerous pattern ${pattern.source}`,
+      });
+    }
+  }
+
   return new Promise((resolve) => {
-    const child = exec(
-      command,
+    const child = execFile(
+      '/bin/sh',
+      ['-c', command],
       { timeout, maxBuffer: 10 * 1024 * 1024, cwd },
       (error, stdout, stderr) => {
         const truncatedStdout =

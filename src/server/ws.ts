@@ -7,8 +7,25 @@ import type { Server } from 'node:http';
 import type { InstructionLoop } from '../runtime/loop.js';
 import type { ShipyardStateType } from '../graph/state.js';
 
+/** Extended WebSocket with heartbeat tracking. */
+interface AliveWebSocket extends WebSocket {
+  isAlive?: boolean;
+}
+
 export function attachWebSocket(server: Server, loop: InstructionLoop): void {
   const wss = new WebSocketServer({ server, path: '/ws' });
+
+  // --- Heartbeat: 30s ping, kill dead connections ---
+  const heartbeatInterval = setInterval(() => {
+    for (const ws of wss.clients as Set<AliveWebSocket>) {
+      if (ws.isAlive === false) {
+        ws.terminate();
+        continue;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    }
+  }, 30_000);
 
   // Broadcast state changes to all connected clients
   const unsubscribe = loop.onStateChange((state: Partial<ShipyardStateType>) => {
@@ -20,7 +37,10 @@ export function attachWebSocket(server: Server, loop: InstructionLoop): void {
     }
   });
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws: AliveWebSocket) => {
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+
     // Send current status on connect
     ws.send(JSON.stringify({ type: 'status', data: loop.getStatus() }));
 
@@ -69,6 +89,7 @@ export function attachWebSocket(server: Server, loop: InstructionLoop): void {
 
   // Cleanup on server close
   server.on('close', () => {
+    clearInterval(heartbeatInterval);
     unsubscribe();
     wss.close();
   });

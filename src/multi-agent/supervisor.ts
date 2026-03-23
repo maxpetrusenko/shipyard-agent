@@ -7,13 +7,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { getModelConfig } from '../config/model-policy.js';
-
-let client: Anthropic | null = null;
-
-function getClient(): Anthropic {
-  if (!client) client = new Anthropic();
-  return client;
-}
+import { getClient, wrapSystemPrompt } from '../config/client.js';
 
 export interface SubTask {
   id: string;
@@ -42,7 +36,7 @@ export async function decomposeTask(
     model: config.model,
     max_tokens: config.maxTokens,
     temperature: config.temperature,
-    system: DECOMPOSE_SYSTEM,
+    system: wrapSystemPrompt(DECOMPOSE_SYSTEM),
     messages: [{ role: 'user', content: instruction }],
   });
 

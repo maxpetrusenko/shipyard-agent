@@ -161,6 +161,10 @@ export async function editFile(params: EditFileParams): Promise<EditFileResult> 
     return { success: false, tier: 1, message: 'old_string and new_string are identical' };
   }
 
+  if (!old_string || old_string.trim() === '') {
+    return { success: false, tier: 1, message: 'old_string cannot be empty' };
+  }
+
   let content: string;
   let fileExists = true;
   try {

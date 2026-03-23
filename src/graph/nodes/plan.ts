@@ -6,17 +6,9 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { getModelConfig } from '../../config/model-policy.js';
+import { getClient, wrapSystemPrompt } from '../../config/client.js';
 import { TOOL_SCHEMAS, dispatchTool } from '../../tools/index.js';
 import type { ShipyardStateType, PlanStep, LLMMessage } from '../state.js';
-
-let client: Anthropic | null = null;
-
-function getClient(): Anthropic {
-  if (!client) {
-    client = new Anthropic();
-  }
-  return client;
-}
 
 const WORK_DIR = process.env['SHIPYARD_WORK_DIR'] ?? process.cwd();
 
@@ -58,9 +50,11 @@ export async function planNode(
     .map((c) => `## ${c.label}\n${c.content}`)
     .join('\n\n');
 
-  const systemPrompt = contextBlock
-    ? `${PLAN_SYSTEM}\n\n# Injected Context\n\n${contextBlock}`
-    : PLAN_SYSTEM;
+  const systemPrompt = wrapSystemPrompt(
+    contextBlock
+      ? `${PLAN_SYSTEM}\n\n# Injected Context\n\n${contextBlock}`
+      : PLAN_SYSTEM,
+  );
 
   const messages: Anthropic.MessageParam[] = [
     { role: 'user', content: state.instruction },

@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_DIR="$(dirname "$SCRIPT_DIR")"
-TARGET="/Users/maxpetrusenko/Desktop/Gauntlet/ship-refactored"
+TARGET="${SHIPYARD_TARGET:-/Users/maxpetrusenko/Desktop/Gauntlet/ship-refactored}"
 PORT="${SHIPYARD_PORT:-4200}"
 BASE_URL="http://localhost:${PORT}/api"
 
@@ -50,8 +50,12 @@ if ! pnpm type-check > /dev/null 2>&1; then
 fi
 
 BASELINE_TEST_OUTPUT=$(pnpm test 2>&1 || true)
-BASELINE_TOTAL=$(echo "$BASELINE_TEST_OUTPUT" | grep -oE '[0-9]+ tests' | grep -oE '[0-9]+' || echo "0")
-BASELINE_PASSED=$(echo "$BASELINE_TEST_OUTPUT" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo "0")
+# Extract only the final summary line (e.g. "Tests  58 passed (721)")
+BASELINE_TOTAL=$(echo "$BASELINE_TEST_OUTPUT" | grep -oE 'Tests[[:space:]]+[0-9]+' | grep -oE '[0-9]+' | tail -1 || echo "0")
+BASELINE_PASSED=$(echo "$BASELINE_TEST_OUTPUT" | grep -oE '[0-9]+ passed' | tail -1 | grep -oE '[0-9]+' || echo "0")
+# Ensure single value
+BASELINE_TOTAL="${BASELINE_TOTAL:-0}"
+BASELINE_PASSED="${BASELINE_PASSED:-0}"
 
 echo "  Baseline: typecheck=${BASELINE_TYPECHECK}, tests=${BASELINE_TOTAL} total / ${BASELINE_PASSED} passed"
 
@@ -136,11 +140,11 @@ done
 END_TIME=$(date +%s)
 DURATION_MS=$(( (END_TIME - START_TIME) * 1000 ))
 
-# Extract run data
-TOKEN_INPUT=$(echo "$RUN_RESPONSE" | jq '.tokenUsage.input // 0')
-TOKEN_OUTPUT=$(echo "$RUN_RESPONSE" | jq '.tokenUsage.output // 0')
+# Extract run data (handle null tokenUsage gracefully)
+TOKEN_INPUT=$(echo "$RUN_RESPONSE" | jq 'if .tokenUsage then .tokenUsage.input // 0 else 0 end')
+TOKEN_OUTPUT=$(echo "$RUN_RESPONSE" | jq 'if .tokenUsage then .tokenUsage.output // 0 else 0 end')
 TRACE_URL=$(echo "$RUN_RESPONSE" | jq -r '.traceUrl // "none"')
-ERROR_MSG=$(echo "$RUN_RESPONSE" | jq -r '.error // null')
+ERROR_MSG=$(echo "$RUN_RESPONSE" | jq -r '.error // "null"')
 
 # Step 7: Run post-bench verification
 echo "[7/8] Running post-bench verification in ship-refactored..."
@@ -151,12 +155,17 @@ TC_OUTPUT=""
 if ! TC_OUTPUT=$(pnpm type-check 2>&1); then
   AFTER_TYPECHECK="fail"
 fi
-TC_ERRORS=$(echo "$TC_OUTPUT" | grep -c "error TS" || echo "0")
+# Count error TS occurrences; grep -c may return multi-line from recursive workspace
+TC_ERRORS=$(echo "$TC_OUTPUT" | grep "error TS" | wc -l | tr -d ' ')
+TC_ERRORS="${TC_ERRORS:-0}"
 
 AFTER_TEST_OUTPUT=$(pnpm test 2>&1 || true)
-AFTER_TOTAL=$(echo "$AFTER_TEST_OUTPUT" | grep -oE '[0-9]+ tests' | grep -oE '[0-9]+' || echo "0")
-AFTER_PASSED=$(echo "$AFTER_TEST_OUTPUT" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo "0")
-AFTER_FAILED=$(echo "$AFTER_TEST_OUTPUT" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo "0")
+AFTER_TOTAL=$(echo "$AFTER_TEST_OUTPUT" | grep -oE 'Tests[[:space:]]+[0-9]+' | grep -oE '[0-9]+' | tail -1 || echo "0")
+AFTER_PASSED=$(echo "$AFTER_TEST_OUTPUT" | grep -oE '[0-9]+ passed' | tail -1 | grep -oE '[0-9]+' || echo "0")
+AFTER_FAILED=$(echo "$AFTER_TEST_OUTPUT" | grep -oE '[0-9]+ failed' | tail -1 | grep -oE '[0-9]+' || echo "0")
+AFTER_TOTAL="${AFTER_TOTAL:-0}"
+AFTER_PASSED="${AFTER_PASSED:-0}"
+AFTER_FAILED="${AFTER_FAILED:-0}"
 
 # Step 8: Collect diff stats
 echo "[8/8] Collecting diff stats..."
@@ -166,9 +175,11 @@ FILES_CHANGED=$(echo "$DIFF_SHORTSTAT" | grep -oE '[0-9]+ file' | grep -oE '[0-9
 LINES_ADDED=$(echo "$DIFF_SHORTSTAT" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
 LINES_REMOVED=$(echo "$DIFF_SHORTSTAT" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo "0")
 
-# Estimate cost (Opus: $15/M input, $75/M output; Sonnet: $3/M input, $15/M output)
-# Rough average assuming mix
-COST=$(echo "scale=2; ($TOKEN_INPUT * 0.000009 + $TOKEN_OUTPUT * 0.000045)" | bc 2>/dev/null || echo "0")
+# Estimate cost (rough average of Opus + Sonnet mix)
+# Opus: $15/M input, $75/M output; Sonnet: $3/M input, $15/M output
+# Blended rate: ~$9/M input, ~$45/M output
+COST=$(echo "scale=2; ($TOKEN_INPUT * 0.000009 + $TOKEN_OUTPUT * 0.000045)" | bc 2>/dev/null || \
+  awk "BEGIN { printf \"%.2f\", ($TOKEN_INPUT * 0.000009 + $TOKEN_OUTPUT * 0.000045) }")
 
 # Write result JSON
 jq -n \

@@ -13,6 +13,9 @@ import { runBash } from './bash.js';
 import { grepSearch } from './grep.js';
 import { globSearch } from './glob.js';
 import { listDirectory } from './ls.js';
+import { spawnAgent } from './spawn-agent.js';
+import { askUser } from './ask-user.js';
+import { injectContext } from './inject-context.js';
 import type { ToolHooks } from './hooks.js';
 import { runBeforeHooks, runAfterHooks } from './hooks.js';
 import type { FileOverlay } from './file-overlay.js';
@@ -116,6 +119,44 @@ export const TOOL_SCHEMAS: Anthropic.Tool[] = [
       required: ['path'],
     },
   },
+  {
+    name: 'spawn_agent',
+    description:
+      'Spawn a sub-agent to handle an independent subtask in parallel. The sub-agent gets its own context and tool set. Use for decomposing complex tasks.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        task: { type: 'string', description: 'The subtask instruction for the sub-agent' },
+        role: { type: 'string', description: 'Specialist role (e.g. "frontend", "backend", "test")' },
+      },
+      required: ['task'],
+    },
+  },
+  {
+    name: 'ask_user',
+    description:
+      'Pause execution and ask the user a clarifying question. Use when the instruction is ambiguous or you need a decision.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        question: { type: 'string', description: 'The question to ask the user' },
+      },
+      required: ['question'],
+    },
+  },
+  {
+    name: 'inject_context',
+    description:
+      'Inject additional context into the current run. The context will be available in subsequent turns.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        label: { type: 'string', description: 'A short label for this context' },
+        content: { type: 'string', description: 'The context content to inject' },
+      },
+      required: ['label', 'content'],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -142,6 +183,12 @@ async function dispatchToolRaw(
       return globSearch(input as any) as any;
     case 'ls':
       return listDirectory(input as any) as any;
+    case 'spawn_agent':
+      return spawnAgent(input as any) as any;
+    case 'ask_user':
+      return askUser(input as any) as any;
+    case 'inject_context':
+      return injectContext(input as any) as any;
     default:
       return { success: false, message: `Unknown tool: ${name}` };
   }

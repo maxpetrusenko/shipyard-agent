@@ -174,6 +174,35 @@ describe('Error handling', () => {
     expect(content).toBe('bar');
   });
 
+  it('rejects empty old_string', async () => {
+    const fp = testFile('empty-guard.ts');
+    await writeFile(fp, 'some content');
+
+    const result = await editFile({
+      file_path: fp,
+      old_string: '',
+      new_string: 'replacement',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.tier).toBe(1);
+    expect(result.message).toContain('old_string cannot be empty');
+  });
+
+  it('rejects whitespace-only old_string', async () => {
+    const fp = testFile('ws-guard.ts');
+    await writeFile(fp, 'some content');
+
+    const result = await editFile({
+      file_path: fp,
+      old_string: '   \n  ',
+      new_string: 'replacement',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('old_string cannot be empty');
+  });
+
   it('creates parent dirs on tier-4 rewrite', async () => {
     const fp = join(TEST_DIR, 'deep', 'nested', 'file.ts');
 

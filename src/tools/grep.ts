@@ -2,7 +2,7 @@
  * Ripgrep-backed content search.
  */
 
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 
 export interface GrepParams {
   pattern: string;
@@ -21,15 +21,14 @@ export interface GrepResult {
 export function grepSearch(params: GrepParams): Promise<GrepResult> {
   const { pattern, path = '.', glob, max_results = 50 } = params;
 
-  const args = ['rg', '--line-number', '--no-heading', '--color=never'];
+  // Build args array — execFile passes each arg safely, no shell injection
+  const args = ['--line-number', '--no-heading', '--color=never'];
   if (glob) args.push('--glob', glob);
   args.push('-m', String(max_results));
   args.push('--', pattern, path);
 
-  const cmd = args.map((a) => (a.includes(' ') ? `'${a}'` : a)).join(' ');
-
   return new Promise((resolve) => {
-    exec(cmd, { timeout: 15_000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout) => {
+    execFile('rg', args, { timeout: 15_000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout) => {
       if (error && !stdout) {
         resolve({
           success: true,

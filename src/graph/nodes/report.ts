@@ -4,14 +4,8 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { getModelConfig } from '../../config/model-policy.js';
+import { getClient, wrapSystemPrompt } from '../../config/client.js';
 import type { ShipyardStateType, LLMMessage } from '../state.js';
-
-let client: Anthropic | null = null;
-
-function getClient(): Anthropic {
-  if (!client) client = new Anthropic();
-  return client;
-}
 
 const REPORT_SYSTEM = `Summarize the completed coding run. Include:
 1. What was done (files changed, edits made)
@@ -42,6 +36,7 @@ export async function reportNode(
       : '',
     '',
     `Token usage: ${state.tokenUsage?.input ?? 0} input / ${state.tokenUsage?.output ?? 0} output`,
+    state.estimatedCost != null ? `Estimated cost: $${state.estimatedCost.toFixed(4)}` : '',
     `Duration: ${Date.now() - state.runStartedAt}ms`,
   ]
     .filter(Boolean)
@@ -54,7 +49,7 @@ export async function reportNode(
     model: config.model,
     max_tokens: config.maxTokens,
     temperature: config.temperature,
-    system: REPORT_SYSTEM,
+    system: wrapSystemPrompt(REPORT_SYSTEM),
     messages: [{ role: 'user', content: summary }],
   });
 
