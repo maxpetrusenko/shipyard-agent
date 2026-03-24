@@ -8,6 +8,7 @@
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { createRoutes } from './server/routes.js';
+import { dashboardHandler } from './server/dashboard.js';
 import type { InstructionLoop } from './runtime/loop.js';
 
 // ---------------------------------------------------------------------------
@@ -78,6 +79,9 @@ export function createApp(loop: InstructionLoop): express.Application {
   const limiter = createRateLimiter(60_000);
   app.post('/api/run', limiter(10));
   app.use('/api', limiter(60));
+
+  // Visual dashboard at root
+  app.get('/', dashboardHandler(loop));
 
   app.use('/api', createRoutes(loop));
 
