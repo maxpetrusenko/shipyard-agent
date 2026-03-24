@@ -145,6 +145,81 @@ describe('InstructionLoop', () => {
       expect(run!.runId).toBe(id);
       expect(run!.phase).toBe('done');
     });
+
+    it('records debug metadata for graph runs', async () => {
+      const id = loop.submit('test instruction');
+      await new Promise((r) => setTimeout(r, 200));
+
+      const run = loop.getRun(id);
+      expect(run?.executionPath).toBe('graph');
+      expect(run?.queuedAt).toBeTruthy();
+      expect(run?.startedAt).toBeTruthy();
+      expect(run?.resolvedModels?.coding).toBeTruthy();
+    });
+
+    it('seeds the submitted prompt into in-progress code runs', () => {
+      const id = loop.submit('refactor small file', undefined, false, 'code');
+      const run = loop.getRun(id);
+      expect(run?.messages).toContainEqual({
+        role: 'user',
+        content: 'refactor small file',
+      });
+    });
+
+    it('retains the submitted prompt after graph completion', async () => {
+      const id = loop.submit('refactor small file', undefined, false, 'code');
+      await new Promise((r) => setTimeout(r, 200));
+
+      const run = loop.getRun(id);
+      expect(run?.messages).toContainEqual({
+        role: 'user',
+        content: 'refactor small file',
+      });
+      expect(run?.messages).toContainEqual({
+        role: 'assistant',
+        content: 'Done',
+      });
+    });
+
+    it('records local-shortcut metadata for trivial ask runs', () => {
+      const id = loop.submit('hi');
+      const run = loop.getRun(id);
+      expect(run?.executionPath).toBe('local-shortcut');
+      expect(run?.threadKind).toBe('ask');
+      expect(run?.queuedAt).toBeTruthy();
+      expect(run?.startedAt).toBeTruthy();
+      expect(run?.resolvedModels?.chat).toBeTruthy();
+    });
+
+    it('stores resolved OpenAI models for shortcut ask runs', () => {
+      const id = loop.submit('hi', undefined, false, 'chat', {
+        modelFamily: 'openai',
+      });
+      const run = loop.getRun(id);
+      expect(run?.executionPath).toBe('local-shortcut');
+      expect(run?.modelFamily).toBe('openai');
+      expect(run?.resolvedModels?.chat).toBe('gpt-5-mini');
+    });
+
+    it('lets ask follow-ups adopt fresh model settings', async () => {
+      const id = loop.submit('hi');
+      const firstRun = loop.getRun(id);
+      expect(firstRun?.executionPath).toBe('local-shortcut');
+
+      const ok = (loop.followUpAsk as unknown as (
+        runId: string,
+        instruction: string,
+        opts?: { modelFamily?: 'anthropic' | 'openai' },
+      ) => boolean)(id, 'what is recursion?', { modelFamily: 'openai' });
+
+      expect(ok).toBe(true);
+      await new Promise((r) => setTimeout(r, 200));
+
+      const run = loop.getRun(id);
+      expect(run?.phase).toBe('done');
+      expect(run?.modelFamily).toBe('openai');
+      expect(run?.resolvedModels?.chat).toBe('gpt-5-mini');
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -217,6 +292,13 @@ describe('InstructionLoop', () => {
       loop.injectContext({ label: 'test', content: 'data', source: 'user' });
       const contexts = loop.getContexts();
       expect(contexts.some((c) => c.label === 'test')).toBe(true);
+    });
+
+    it('does not auto-inject repo map during runs', async () => {
+      loop.submit('refactor small file', undefined, false, 'code');
+      await new Promise((r) => setTimeout(r, 200));
+
+      expect(loop.getContexts().some((c) => c.label === 'Repo Map')).toBe(false);
     });
 
     it('removes context by label', () => {

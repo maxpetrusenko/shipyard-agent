@@ -180,3 +180,9 @@ The hand-written portions were almost entirely operational: environment setup, s
 4. **Separate planning from execution**. Using Opus for planning/review and Sonnet for execution was the right split. Opus produces better plans and catches more issues in review. Sonnet is fast and cheap for mechanical tool use. Mixing both roles in one model led to worse outcomes than specialization.
 
 5. **Shell scripts need human attention**. AI-generated bash was the least reliable output. Variable quoting, pipe parsing, cross-platform date commands, and `set -euo pipefail` interactions all required hand-tuning. For operational scripts, expect 2-3 rounds of manual debugging.
+
+---
+
+## Related
+
+**Token and dollar totals** for the submission belong in **`docs/AI-COST.md`**: that file splits **Shipyard run usage** (Meter A) from **IDE / Claude Code development usage** (Meter B). This dev log is narrative only, not the cost ledger.

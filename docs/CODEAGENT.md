@@ -9,13 +9,13 @@
 ### Graph Topology
 
 ```
-START -> plan -> execute -> verify -> review
-                                       |-> continue -> execute (next step)
-                                       |-> done -> report -> END
-                                       |-> retry -> plan (with feedback)
-                                       |-> escalate -> error_recovery
-                                                        |-> plan (retry)
-                                                        |-> report (fatal) -> END
+START -> gate -> (chat END | plan -> execute -> verify -> review)
+                                              |-> continue -> execute (next step)
+                                              |-> done -> report -> END
+                                              |-> retry -> plan (with feedback)
+                                              |-> escalate -> error_recovery
+                                                               |-> plan (retry)
+                                                               |-> report (fatal) -> END
 ```
 
 ### Node Specifications
@@ -31,15 +31,35 @@ START -> plan -> execute -> verify -> review
 
 ### Model Routing
 
+Base defaults (overridden by `SHIPYARD_*_MODEL` env vars, then by UI/API):
+
 | Role | Model | Max Tokens | Temperature |
 |------|-------|-----------|-------------|
-| Planning | claude-opus-4-6 | 4096 | 0.3 |
+| Planning | claude-opus-4-6 | 16384 | 0.3 |
 | Coding | claude-sonnet-4-5-20250929 | 8192 | 0.2 |
-| Review | claude-opus-4-6 | 2048 | 0.2 |
+| Review | claude-opus-4-6 | 4096 | 0.2 |
 | Verification | claude-sonnet-4-5-20250929 | 2048 | 0.0 |
 | Summary | claude-sonnet-4-5-20250929 | 2048 | 0.3 |
+| Chat | claude-sonnet-4-5-20250929 | 2048 | 0.2 |
 
-**Rationale**: Opus excels at complex reasoning (planning, review). Sonnet is 4x cheaper and faster for mechanical work (coding, verification). This split optimizes cost without sacrificing quality on critical decisions.
+**Family presets** (when `modelFamily` is set and no per-role env override applies):
+
+| Family | Planning / review | Coding / verification / summary / chat |
+|--------|-------------------|-----------------------------------------|
+| `anthropic` | Sonnet 4.5 | Haiku 4.5 for coding; Sonnet elsewhere |
+| `openai` | `gpt-5.3-codex` for planning + review | `gpt-5-mini` for coding, verification, summary, chat |
+
+**Per-stage overrides**: `POST /api/run` and `POST /api/runs/:id/followup` accept `modelFamily` (`anthropic` \| `openai`) and `models` (map of stage → model id). WebSocket `submit` supports the same fields for new runs. The dashboard `/settings` page stores `{ family, models }` in `localStorage` (`shipyard_model_prefs`) and sends them on each turn, including Ask follow-ups. A single `model` / `modelOverride` applies to the whole run unless a stage-specific override exists.
+
+**Auto routing**: the gate no longer uses an LLM classifier. It checks local shortcuts first (math, greetings), routes obvious code requests to planning, and sends everything else straight to the chat model in one hop.
+
+**OpenAI**: models whose id starts with `gpt-` use the OpenAI SDK; Anthropic ids use Messages API.
+
+**Rationale**: Opus excels at complex reasoning (planning, review). Sonnet is cheaper and faster for mechanical work. Family presets and stage overrides let you trade quality vs cost without editing `.env` for every run.
+
+### Postgres persistence
+
+When `SHIPYARD_DB_URL` is set, runs are written to Postgres. The server ensures `token_input` and `token_output` exist on `shipyard_runs` before insert (same as migration `scripts/migrations/002-add-token-columns.sql`). File-based `results/<runId>.json` always runs as a fallback.
 
 ---
 
@@ -161,11 +181,20 @@ Supervisor (Opus)
 
 ## 5. Server & API
 
+### HTML Pages
+
+- `/` - marketing/landing page
+- `/dashboard` - primary chat workspace
+- `/runs` - refactoring-oriented run history (filters out pure ask-only chats by default)
+- `/settings` - model preference UI
+- `/benchmarks` - benchmark dashboard
+
 ### Endpoints (port 4200)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/run` | Submit instruction (max 100KB) |
+| POST | `/api/runs/:id/followup` | Queue another Ask message on the same thread, optionally with fresh model settings |
 | POST | `/api/inject` | Inject context mid-run (max 500KB) |
 | POST | `/api/cancel` | Cancel current run |
 | GET | `/api/status` | Queue status |
@@ -206,6 +235,8 @@ Messages (server -> client):
 - `{type: "submitted", runId: "..."}` -> run accepted
 - `{type: "status", data: {...}}` -> queue status
 
+Ask-mode follow-ups stay on the same `runId` and are processed FIFO. If a prior Ask reply is still running, new messages queue behind it instead of opening a fresh thread or failing. Each follow-up can also replace the active model family / per-stage overrides for the next interaction, so trace metadata stays aligned with the latest dashboard selection.
+
 ### WebSocket Heartbeat
 
 30-second ping/pong cycle. Server pings all clients every 30s; clients that don't respond with pong before the next ping are terminated. Interval cleaned up on server close.
@@ -238,12 +269,11 @@ Every node transition, tool call, and LLM invocation is traced automatically via
 
 ### Public Trace Links
 
-After each run completes, the loop resolves a **public share link** so traces are accessible without LangSmith workspace auth:
+After each run completes, the loop records a **private trace URL immediately** so the run is inspectable without extra wait:
 
-1. `readRunSharedLink(runId)` — reuse existing public link if already shared
-2. `shareRun(runId)` — create new public link (if 404 on step 1)
-3. Retry up to 5 times with exponential backoff (handles transient 404s while LangSmith finalizes the run)
-4. Falls back to private `smith.langchain.com` URL if sharing fails
+1. Build private `smith.langchain.com` URL synchronously
+2. Persist the run and return/broadcast completion immediately
+3. Resolve a public share link in the background when tracing is enabled
 
 **Live Trace Examples:**
 
@@ -264,6 +294,8 @@ Per-run estimated cost accumulated via tool call hooks:
 | claude-sonnet-4-5-20250929 | $3.00 | $15.00 |
 
 Cost is reported in the final summary and stored in state as `estimatedCost`.
+
+**Assignment reporting:** `tokenUsage` / `estimatedCost` on each **`/api/run`** reflect **what the Shipyard agent spent on that run** (Meter A). Cursor, Claude Code, and other **development** usage are tracked separately in **`docs/AI-COST.md`** (Meter B). Roll up bench JSON with `./scripts/aggregate-shipyard-results.sh`.
 
 ---
 

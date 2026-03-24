@@ -5,12 +5,35 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { getModelConfig } from '../../config/model-policy.js';
-import { getClient, wrapSystemPrompt } from '../../config/client.js';
+import {
+  getResolvedModelConfigFromState,
+  isOpenAiModelId,
+} from '../../config/model-policy.js';
+import { runOpenAiPlanLoop } from './plan-openai.js';
+import {
+  getClient,
+  wrapSystemPrompt,
+  withCachedTools,
+} from '../../config/client.js';
+import { WORK_DIR } from '../../config/work-dir.js';
+import { messagesCreate } from '../../config/messages-create.js';
+import {
+  dispatchAnthropicToolBlocks,
+  stripToolResultCacheControls,
+} from '../../llm/anthropic-tool-dispatch.js';
+import {
+  extractTextFromContentBlocks,
+  extractToolUseBlocks,
+} from '../../llm/anthropic-parse.js';
+import { TokenAccumulator } from '../../llm/token-usage.js';
 import { TOOL_SCHEMAS, dispatchTool } from '../../tools/index.js';
-import type { ShipyardStateType, PlanStep, LLMMessage } from '../state.js';
-
-const WORK_DIR = process.env['SHIPYARD_WORK_DIR'] ?? process.cwd();
+import { createPlanLiveHooks } from '../../tools/hooks.js';
+import {
+  buildContextBlock,
+  type ShipyardStateType,
+  type PlanStep,
+  type LLMMessage,
+} from '../state.js';
 
 const PLAN_SYSTEM = `You are Shipyard, an autonomous coding agent. You are in the PLANNING phase.
 
@@ -53,23 +76,61 @@ After exploration, output your plan as a JSON array wrapped in <plan> tags:
 ]
 </plan>
 
-Plans can be 1-30 steps depending on scope. A codebase-wide change may require many steps — that is expected and correct. Do NOT artificially limit the plan size.`;
+Plans can be 1-30 steps depending on scope. A codebase-wide change may require many steps — that is expected and correct. Do NOT artificially limit the plan size.
+
+## Codebase conventions
+- This codebase uses TypeScript with \`moduleResolution: "node16"\`. ALL imports MUST include the \`.js\` extension (e.g. \`import { foo } from './bar.js'\`), even for \`.ts\` source files.
+- Use vitest for testing. Import from 'vitest' not '@jest/globals'.`;
 
 export async function planNode(
   state: ShipyardStateType,
 ): Promise<Partial<ShipyardStateType>> {
-  const config = getModelConfig('planning');
+  const config = getResolvedModelConfigFromState('planning', state);
+
+  // Build context from injected contexts (separate cache breakpoint)
+  const contextBlock = buildContextBlock(state.contexts);
+
+  if (isOpenAiModelId(config.model)) {
+    const rawSystem = contextBlock
+      ? `${PLAN_SYSTEM}\n\n# Injected Context\n\n${contextBlock}`
+      : PLAN_SYSTEM;
+    let initialUserText = state.instruction;
+    if (state.reviewFeedback) {
+      initialUserText = `${state.instruction}\n\nPrevious attempt feedback: ${state.reviewFeedback}\n\nPlease revise your plan based on the feedback above.`;
+    }
+    const { steps, newMessages, inputTokens, outputTokens } =
+      await runOpenAiPlanLoop({
+        state,
+        config,
+        system: rawSystem,
+        initialUserText,
+      });
+    return {
+      phase: 'executing',
+      steps,
+      currentStepIndex: 0,
+      messages: newMessages,
+      tokenUsage: {
+        input: inputTokens,
+        output: outputTokens,
+        cacheRead: state.tokenUsage?.cacheRead ?? 0,
+        cacheCreation: state.tokenUsage?.cacheCreation ?? 0,
+      },
+      modelHint: 'sonnet',
+    };
+  }
+
   const anthropic = getClient();
 
-  // Build context from injected contexts
-  const contextBlock = state.contexts
-    .map((c) => `## ${c.label}\n${c.content}`)
-    .join('\n\n');
-
   const systemPrompt = wrapSystemPrompt(
-    contextBlock
-      ? `${PLAN_SYSTEM}\n\n# Injected Context\n\n${contextBlock}`
-      : PLAN_SYSTEM,
+    PLAN_SYSTEM,
+    contextBlock ? `# Injected Context\n\n${contextBlock}` : undefined,
+  );
+
+  const planTools = withCachedTools(
+    TOOL_SCHEMAS.filter((t) =>
+      ['read_file', 'grep', 'glob', 'ls', 'bash'].includes(t.name),
+    ),
   );
 
   const messages: Anthropic.MessageParam[] = [
@@ -89,38 +150,33 @@ export async function planNode(
   }
 
   const newMessages: LLMMessage[] = [...state.messages];
-  let inputTokens = state.tokenUsage?.input ?? 0;
-  let outputTokens = state.tokenUsage?.output ?? 0;
+  const tokens = new TokenAccumulator({
+    input: state.tokenUsage?.input,
+    output: state.tokenUsage?.output,
+    cacheRead: state.tokenUsage?.cacheRead,
+    cacheCreation: state.tokenUsage?.cacheCreation,
+  });
 
   // Agentic tool loop: let Opus explore the codebase
   let steps: PlanStep[] = [];
-  const maxToolRounds = 30;
+  const maxToolRounds = 15;
 
   for (let round = 0; round < maxToolRounds; round++) {
-    const response = await anthropic.messages.create({
+    const requestMessages = stripToolResultCacheControls(messages);
+    const response = await messagesCreate(anthropic, {
       model: config.model,
       max_tokens: config.maxTokens,
       temperature: config.temperature,
       system: systemPrompt,
-      tools: TOOL_SCHEMAS.filter((t) =>
-        ['read_file', 'grep', 'glob', 'ls', 'bash'].includes(t.name),
-      ),
-      messages,
-    });
+      tools: planTools,
+      messages: requestMessages,
+    }, { liveNode: 'plan' });
 
-    inputTokens += response.usage.input_tokens;
-    outputTokens += response.usage.output_tokens;
+    tokens.addAnthropicRound(response);
 
-    // Collect text + tool_use blocks
-    const textBlocks = response.content.filter(
-      (b): b is Anthropic.TextBlock => b.type === 'text',
-    );
-    const toolBlocks = response.content.filter(
-      (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
-    );
+    const fullText = extractTextFromContentBlocks(response.content);
+    const toolBlocks = extractToolUseBlocks(response.content);
 
-    // Check for plan in text
-    const fullText = textBlocks.map((b) => b.text).join('');
     const planMatch = fullText.match(/<plan>([\s\S]*?)<\/plan>/);
     if (planMatch) {
       try {
@@ -147,18 +203,10 @@ export async function planNode(
     if (toolBlocks.length > 0) {
       messages.push({ role: 'assistant', content: response.content });
 
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
-      for (const tb of toolBlocks) {
-        const result = await dispatchTool(
-          tb.name,
-          tb.input as Record<string, unknown>,
-        );
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: tb.id,
-          content: JSON.stringify(result).slice(0, 50_000),
-        });
-      }
+      const toolResults = await dispatchAnthropicToolBlocks(
+        toolBlocks,
+        (name, input) => dispatchTool(name, input, createPlanLiveHooks()),
+      );
       messages.push({ role: 'user', content: toolResults });
     } else {
       // No tools, no plan — break
@@ -184,7 +232,7 @@ export async function planNode(
     steps,
     currentStepIndex: 0,
     messages: newMessages,
-    tokenUsage: { input: inputTokens, output: outputTokens },
+    tokenUsage: tokens.snapshot(),
     modelHint: 'sonnet',
   };
 }

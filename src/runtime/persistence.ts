@@ -9,11 +9,37 @@
  * Postgres is an additive enhancement when a pool is provided.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import type { Pool } from 'pg';
 import type { RunResult } from './loop.js';
 import type { ContextEntry, LLMMessage } from '../graph/state.js';
+
+/** Ensures columns expected by createRun exist (older DBs may predate migration 002). */
+let pgSchemaReady: Promise<void> | null = null;
+
+export function ensureShipyardPgSchema(pool: Pool): Promise<void> {
+  if (!pgSchemaReady) {
+    pgSchemaReady = (async () => {
+      await pool.query(`
+        ALTER TABLE shipyard_runs
+          ADD COLUMN IF NOT EXISTS token_input INTEGER,
+          ADD COLUMN IF NOT EXISTS token_output INTEGER;
+      `);
+    })().catch((e) => {
+      pgSchemaReady = null;
+      throw e;
+    });
+  }
+  return pgSchemaReady;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -43,11 +69,23 @@ function serializeRun(result: RunResult): Record<string, unknown> {
     phase: result.phase,
     steps: result.steps,
     fileEdits: result.fileEdits,
+    toolCallHistory: result.toolCallHistory,
     tokenUsage: result.tokenUsage ?? null,
     traceUrl: result.traceUrl ?? null,
     messages: result.messages,
     error: result.error ?? null,
+    verificationResult: result.verificationResult ?? null,
+    reviewFeedback: result.reviewFeedback ?? null,
     durationMs: result.durationMs,
+    threadKind: result.threadKind ?? null,
+    runMode: result.runMode ?? null,
+    executionPath: result.executionPath ?? null,
+    queuedAt: result.queuedAt ?? null,
+    startedAt: result.startedAt ?? null,
+    modelOverride: result.modelOverride ?? null,
+    modelFamily: result.modelFamily ?? null,
+    modelOverrides: result.modelOverrides ?? null,
+    resolvedModels: result.resolvedModels ?? null,
     savedAt: new Date().toISOString(),
   };
 }
@@ -65,6 +103,22 @@ export function saveRunToFile(
   const filePath = join(dir, `${result.runId}.json`);
   writeFileSync(filePath, JSON.stringify(serializeRun(result), null, 2) + '\n');
   return filePath;
+}
+
+/** Remove `results/<runId>.json` if it exists. Returns whether a file was removed. */
+export function deleteRunFromFile(
+  runId: string,
+  dir: string = RESULTS_DIR,
+): boolean {
+  const filePath = join(dir, `${runId}.json`);
+  try {
+    if (!existsSync(filePath)) return false;
+    unlinkSync(filePath);
+    return true;
+  } catch (err) {
+    console.error('[persistence] delete file failed:', err);
+    return false;
+  }
 }
 
 /**
@@ -118,11 +172,54 @@ function parseRunFile(filePath: string): RunResult | null {
       phase: data['phase'] as RunResult['phase'],
       steps: (data['steps'] as RunResult['steps']) ?? [],
       fileEdits: (data['fileEdits'] as RunResult['fileEdits']) ?? [],
+      toolCallHistory: (data['toolCallHistory'] as RunResult['toolCallHistory']) ?? [],
       tokenUsage: (data['tokenUsage'] as RunResult['tokenUsage']) ?? null,
       traceUrl: (data['traceUrl'] as RunResult['traceUrl']) ?? null,
       messages: (data['messages'] as RunResult['messages']) ?? [],
       error: (data['error'] as RunResult['error']) ?? null,
+      verificationResult:
+        (data['verificationResult'] as RunResult['verificationResult']) ?? null,
+      reviewFeedback:
+        (data['reviewFeedback'] as RunResult['reviewFeedback']) ?? null,
       durationMs: typeof data['durationMs'] === 'number' ? data['durationMs'] : 0,
+      threadKind:
+        data['threadKind'] === 'ask' ||
+        data['threadKind'] === 'plan' ||
+        data['threadKind'] === 'agent'
+          ? (data['threadKind'] as RunResult['threadKind'])
+          : undefined,
+      runMode:
+        data['runMode'] === 'auto' ||
+        data['runMode'] === 'chat' ||
+        data['runMode'] === 'code'
+          ? (data['runMode'] as RunResult['runMode'])
+          : undefined,
+      executionPath:
+        data['executionPath'] === 'graph' ||
+        data['executionPath'] === 'local-shortcut'
+          ? (data['executionPath'] as RunResult['executionPath'])
+          : undefined,
+      queuedAt: typeof data['queuedAt'] === 'string' ? data['queuedAt'] : undefined,
+      startedAt: typeof data['startedAt'] === 'string' ? data['startedAt'] : undefined,
+      modelOverride:
+        typeof data['modelOverride'] === 'string'
+          ? data['modelOverride']
+          : null,
+      modelFamily:
+        data['modelFamily'] === 'anthropic' || data['modelFamily'] === 'openai'
+          ? (data['modelFamily'] as RunResult['modelFamily'])
+          : null,
+      modelOverrides:
+        data['modelOverrides'] &&
+        typeof data['modelOverrides'] === 'object'
+          ? (data['modelOverrides'] as RunResult['modelOverrides'])
+          : null,
+      resolvedModels:
+        data['resolvedModels'] &&
+        typeof data['resolvedModels'] === 'object'
+          ? (data['resolvedModels'] as RunResult['resolvedModels'])
+          : null,
+      savedAt: typeof data['savedAt'] === 'string' ? data['savedAt'] : undefined,
     };
   } catch {
     // Corrupt / unreadable file — skip silently
@@ -142,6 +239,7 @@ export async function createRun(
   pool: Pool,
   run: RunResult,
 ): Promise<void> {
+  await ensureShipyardPgSchema(pool);
   const instruction =
     run.messages.find((m) => m.role === 'user')?.content ?? '';
   const status =
@@ -196,6 +294,64 @@ export async function listRuns(
     [limit],
   );
   return rows as Record<string, unknown>[];
+}
+
+/** Delete run row (cascades to shipyard_messages). Returns number of rows deleted. */
+export async function deleteRunFromPg(
+  pool: Pool,
+  runId: string,
+): Promise<number> {
+  const r = await pool.query('DELETE FROM shipyard_runs WHERE id = $1', [runId]);
+  return r.rowCount ?? 0;
+}
+
+/** Build a RunResult for listing when the run exists only in Postgres (not in memory / JSON files). */
+export function pgRowToRunSummary(row: Record<string, unknown>): RunResult {
+  const instruction = String(row['instruction'] ?? '');
+  const ti = row['token_input'];
+  const to = row['token_output'];
+  const tokenUsage =
+    ti != null && to != null
+      ? { input: Number(ti), output: Number(to) }
+      : null;
+  const steps = parsePgJsonb(row['steps'], [] as RunResult['steps']);
+  const fileEdits = parsePgJsonb(row['file_edits'], [] as RunResult['fileEdits']);
+  const created = row['created_at'];
+  const savedAt =
+    created instanceof Date
+      ? created.toISOString()
+      : typeof created === 'string'
+        ? created
+        : undefined;
+  return {
+    runId: String(row['id'] ?? ''),
+    phase: (row['phase'] as RunResult['phase']) ?? 'idle',
+    steps,
+    fileEdits,
+    toolCallHistory: [],
+    tokenUsage,
+    traceUrl: (row['trace_url'] as string) ?? null,
+    messages: [{ role: 'user', content: instruction }],
+    error: (row['error'] as string) ?? null,
+    verificationResult: null,
+    reviewFeedback: null,
+    durationMs: Number(row['duration_ms'] ?? 0),
+    savedAt,
+  };
+}
+
+function parsePgJsonb<T>(v: unknown, fallback: T): T {
+  if (v == null) return fallback;
+  if (Array.isArray(v)) return v as T;
+  if (typeof v === 'object') return v as T;
+  if (typeof v === 'string') {
+    try {
+      return JSON.parse(v) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
 }
 
 // ---------------------------------------------------------------------------

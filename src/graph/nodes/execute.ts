@@ -6,19 +6,37 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { getModelConfig } from '../../config/model-policy.js';
-import { getClient, wrapSystemPrompt } from '../../config/client.js';
+import {
+  getResolvedModelConfigFromState,
+  isOpenAiModelId,
+} from '../../config/model-policy.js';
+import {
+  getClient,
+  wrapSystemPrompt,
+  withCachedTools,
+} from '../../config/client.js';
+import { WORK_DIR } from '../../config/work-dir.js';
+import { runOpenAiExecuteLoop } from './execute-openai.js';
+import { messagesCreate } from '../../config/messages-create.js';
+import {
+  dispatchAnthropicToolBlocks,
+  stripToolResultCacheControls,
+} from '../../llm/anthropic-tool-dispatch.js';
+import {
+  extractTextFromContentBlocks,
+  extractToolUseBlocks,
+} from '../../llm/anthropic-parse.js';
+import { TokenAccumulator } from '../../llm/token-usage.js';
 import { TOOL_SCHEMAS, dispatchTool } from '../../tools/index.js';
 import { createRecordingHooks } from '../../tools/hooks.js';
 import { FileOverlay } from '../../tools/file-overlay.js';
-import type {
-  ShipyardStateType,
-  FileEdit,
-  ToolCallRecord,
-  LLMMessage,
+import {
+  buildContextBlock,
+  type ShipyardStateType,
+  type FileEdit,
+  type ToolCallRecord,
+  type LLMMessage,
 } from '../state.js';
-
-const WORK_DIR = process.env['SHIPYARD_WORK_DIR'] ?? process.cwd();
 
 const EXECUTE_SYSTEM = `You are Shipyard, an autonomous coding agent. You are in the EXECUTION phase.
 
@@ -38,13 +56,16 @@ Rules:
 - Process ALL files listed for this step, not just the first one
 - When done with this step, say "STEP_COMPLETE" in your response
 - Do NOT say STEP_COMPLETE until you have addressed every file in the step's file list
-- If the step mentions multiple files, you must edit/verify each one before completing`;
+- If the step mentions multiple files, you must edit/verify each one before completing
+
+Codebase conventions:
+- This codebase uses TypeScript with moduleResolution "node16". ALL imports MUST include the .js extension (e.g. import { foo } from './bar.js'), even for .ts source files.
+- Use vitest for testing.`;
 
 export async function executeNode(
   state: ShipyardStateType,
 ): Promise<Partial<ShipyardStateType>> {
-  const config = getModelConfig('coding');
-  const anthropic = getClient();
+  const config = getResolvedModelConfigFromState('coding', state);
 
   const currentStep = state.steps[state.currentStepIndex];
   if (!currentStep) {
@@ -54,16 +75,12 @@ export async function executeNode(
     };
   }
 
-  // Build context
-  const contextBlock = state.contexts
-    .map((c) => `## ${c.label}\n${c.content}`)
-    .join('\n\n');
+  // Build context (separate cache breakpoint from static system prompt)
+  const contextBlock = buildContextBlock(state.contexts);
 
-  const systemPrompt = wrapSystemPrompt(
-    contextBlock
-      ? `${EXECUTE_SYSTEM}\n\n# Context\n\n${contextBlock}`
-      : EXECUTE_SYSTEM,
-  );
+  const contextSection = contextBlock
+    ? `# Context\n\n${contextBlock}`
+    : undefined;
 
   const stepPrompt = [
     `## Current Step (${currentStep.index + 1}/${state.steps.length})`,
@@ -81,47 +98,75 @@ export async function executeNode(
     .filter(Boolean)
     .join('\n');
 
-  const messages: Anthropic.MessageParam[] = [
-    { role: 'user', content: stepPrompt },
-  ];
-
-  let inputTokens = state.tokenUsage?.input ?? 0;
-  let outputTokens = state.tokenUsage?.output ?? 0;
+  const tokens = new TokenAccumulator({
+    input: state.tokenUsage?.input,
+    output: state.tokenUsage?.output,
+    cacheRead: state.tokenUsage?.cacheRead,
+    cacheCreation: state.tokenUsage?.cacheCreation,
+  });
   const newEdits: FileEdit[] = [...state.fileEdits];
   const newHistory: ToolCallRecord[] = [...state.toolCallHistory];
   const newMessages: LLMMessage[] = [...state.messages];
-  const maxToolRounds = 40;
+  const maxToolRounds = 25;
 
-  // Hook-based recording + file overlay for rollback
   const hooks = createRecordingHooks(newEdits, newHistory);
   const overlay = new FileOverlay();
 
-  // Mark step as in_progress
   const updatedSteps = state.steps.map((s, i) =>
     i === state.currentStepIndex ? { ...s, status: 'in_progress' as const } : s,
   );
 
+  if (isOpenAiModelId(config.model)) {
+    const rawSystem = contextBlock
+      ? `${EXECUTE_SYSTEM}\n\n# Context\n\n${contextBlock}`
+      : EXECUTE_SYSTEM;
+    const oa = await runOpenAiExecuteLoop({
+      state,
+      config,
+      system: rawSystem,
+      stepPrompt,
+      hooks,
+      overlay,
+      updatedSteps,
+    });
+    const tu = oa.tokenUsage;
+    return {
+      ...oa,
+      tokenUsage: tu
+        ? {
+            input: tu.input,
+            output: tu.output,
+            cacheRead: state.tokenUsage?.cacheRead ?? 0,
+            cacheCreation: state.tokenUsage?.cacheCreation ?? 0,
+          }
+        : oa.tokenUsage,
+    };
+  }
+
+  const anthropic = getClient();
+  const systemPrompt = wrapSystemPrompt(EXECUTE_SYSTEM, contextSection);
+
+  const cachedTools = withCachedTools(TOOL_SCHEMAS);
+
+  const messages: Anthropic.MessageParam[] = [
+    { role: 'user', content: stepPrompt },
+  ];
+
   for (let round = 0; round < maxToolRounds; round++) {
-    const response = await anthropic.messages.create({
+    const requestMessages = stripToolResultCacheControls(messages);
+    const response = await messagesCreate(anthropic, {
       model: config.model,
       max_tokens: config.maxTokens,
       temperature: config.temperature,
       system: systemPrompt,
-      tools: TOOL_SCHEMAS,
-      messages,
-    });
+      tools: cachedTools,
+      messages: requestMessages,
+    }, { liveNode: 'execute' });
 
-    inputTokens += response.usage.input_tokens;
-    outputTokens += response.usage.output_tokens;
+    tokens.addAnthropicRound(response);
 
-    const textBlocks = response.content.filter(
-      (b): b is Anthropic.TextBlock => b.type === 'text',
-    );
-    const toolBlocks = response.content.filter(
-      (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
-    );
-
-    const fullText = textBlocks.map((b) => b.text).join('');
+    const fullText = extractTextFromContentBlocks(response.content);
+    const toolBlocks = extractToolUseBlocks(response.content);
 
     // Check if step is complete:
     // - Explicit STEP_COMPLETE signal always means done
@@ -150,7 +195,7 @@ export async function executeNode(
         fileEdits: newEdits,
         toolCallHistory: newHistory,
         messages: newMessages,
-        tokenUsage: { input: inputTokens, output: outputTokens },
+        tokenUsage: tokens.snapshot(),
         fileOverlaySnapshots: snapshotJson,
       };
     }
@@ -159,21 +204,10 @@ export async function executeNode(
     if (toolBlocks.length > 0) {
       messages.push({ role: 'assistant', content: response.content });
 
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
-      for (const tb of toolBlocks) {
-        const result = await dispatchTool(
-          tb.name,
-          tb.input as Record<string, unknown>,
-          hooks,
-          overlay,
-        );
-
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: tb.id,
-          content: JSON.stringify(result).slice(0, 50_000),
-        });
-      }
+      const toolResults = await dispatchAnthropicToolBlocks(
+        toolBlocks,
+        (name, input) => dispatchTool(name, input, hooks, overlay),
+      );
       messages.push({ role: 'user', content: toolResults });
     } else {
       // No tools, not complete — something's wrong
@@ -199,7 +233,7 @@ export async function executeNode(
     fileEdits: newEdits,
     toolCallHistory: newHistory,
     messages: newMessages,
-    tokenUsage: { input: inputTokens, output: outputTokens },
+    tokenUsage: tokens.snapshot(),
     fileOverlaySnapshots: tailSnapshotJson,
   };
 }

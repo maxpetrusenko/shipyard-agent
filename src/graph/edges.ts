@@ -6,6 +6,13 @@ import type { ShipyardStateType } from './state.js';
 import { shouldCoordinate } from './nodes/coordinate.js';
 
 /**
+ * After gate: Q&A-only runs end here; otherwise continue to planning.
+ */
+export function afterGate(state: ShipyardStateType): 'plan' | 'end' {
+  return state.gateRoute === 'end' ? 'end' : 'plan';
+}
+
+/**
  * After plan: route to coordinate (multi-agent) or execute (single-agent).
  */
 export function afterPlan(

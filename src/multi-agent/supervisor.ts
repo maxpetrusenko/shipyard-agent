@@ -8,6 +8,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getModelConfig } from '../config/model-policy.js';
 import { getClient, wrapSystemPrompt } from '../config/client.js';
+import { messagesCreate } from '../config/messages-create.js';
 
 export interface SubTask {
   id: string;
@@ -32,13 +33,13 @@ export async function decomposeTask(
   const config = getModelConfig('planning');
   const anthropic = getClient();
 
-  const response = await anthropic.messages.create({
+  const response = await messagesCreate(anthropic, {
     model: config.model,
     max_tokens: config.maxTokens,
     temperature: config.temperature,
     system: wrapSystemPrompt(DECOMPOSE_SYSTEM),
     messages: [{ role: 'user', content: instruction }],
-  });
+  }, { liveNode: 'coordinate' });
 
   const text = response.content
     .filter((b): b is Anthropic.TextBlock => b.type === 'text')

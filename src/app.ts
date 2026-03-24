@@ -8,7 +8,12 @@
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { createRoutes } from './server/routes.js';
+import { heroHandler } from './server/hero.js';
 import { dashboardHandler } from './server/dashboard.js';
+import { benchmarksHandler } from './server/benchmarks.js';
+import { runsHandler } from './server/runs.js';
+import { settingsHandler } from './server/settings.js';
+import { createBenchmarkRoutes } from './server/benchmark-api.js';
 import type { InstructionLoop } from './runtime/loop.js';
 
 // ---------------------------------------------------------------------------
@@ -80,10 +85,15 @@ export function createApp(loop: InstructionLoop): express.Application {
   app.post('/api/run', limiter(10));
   app.use('/api', limiter(60));
 
-  // Visual dashboard at root
-  app.get('/', dashboardHandler(loop));
+  // Hero landing at root, dashboard at /dashboard
+  app.get('/', heroHandler());
+  app.get('/dashboard', dashboardHandler(loop));
+  app.get('/runs', runsHandler(loop));
+  app.get('/settings', settingsHandler());
+  app.get('/benchmarks', benchmarksHandler());
 
   app.use('/api', createRoutes(loop));
+  app.use('/api', createBenchmarkRoutes());
 
   // Global error handler
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

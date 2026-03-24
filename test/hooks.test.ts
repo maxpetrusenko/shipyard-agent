@@ -92,6 +92,28 @@ describe('createRecordingHooks', () => {
     expect(edits[0].timestamp).toBeGreaterThan(0);
   });
 
+  it('records write_file success as tier-4 file edit', async () => {
+    const edits: FileEdit[] = [];
+    const history: ToolCallRecord[] = [];
+    const hooks = createRecordingHooks(edits, history);
+
+    await runAfterHooks(hooks, {
+      tool_name: 'write_file',
+      tool_input: {
+        file_path: '/tmp/new.ts',
+        content: 'line1\nline2',
+      },
+      tool_result: { success: true, message: 'ok' },
+      duration_ms: 8,
+    });
+
+    expect(edits).toHaveLength(1);
+    expect(edits[0].file_path).toBe('/tmp/new.ts');
+    expect(edits[0].tier).toBe(4);
+    expect(edits[0].old_string).toBe('');
+    expect(edits[0].new_string).toBe('line1\nline2');
+  });
+
   it('does not record edit_file on failure', async () => {
     const edits: FileEdit[] = [];
     const history: ToolCallRecord[] = [];

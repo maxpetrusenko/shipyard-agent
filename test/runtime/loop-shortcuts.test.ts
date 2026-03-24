@@ -1,0 +1,210 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+let releaseGraph: (() => void) | null = null;
+
+vi.mock('../../src/graph/builder.js', () => ({
+  createShipyardGraph: () => ({
+    stream: async (state: Record<string, unknown>) => ({
+      async *[Symbol.asyncIterator]() {
+        await new Promise<void>((resolve) => {
+          releaseGraph = resolve;
+        });
+        const priorMessages =
+          ((state.messages as Array<{ role: string; content: string }> | undefined) ?? []);
+        const currentInstruction = String(state.instruction ?? '');
+        const lastUser = [...priorMessages].reverse().find((msg) => msg.role === 'user');
+        const withCurrentUser =
+          lastUser && lastUser.content === currentInstruction
+            ? priorMessages
+            : [...priorMessages, { role: 'user', content: currentInstruction }];
+        yield {
+          report: {
+            ...state,
+            phase: 'done',
+            steps: [],
+            fileEdits: [],
+            toolCallHistory: [],
+            tokenUsage: { input: 1, output: 1 },
+            traceUrl: null,
+            messages: [
+              ...withCurrentUser,
+              { role: 'assistant', content: `Done: ${currentInstruction}` },
+            ],
+            error: null,
+          },
+        };
+      },
+    }),
+  }),
+}));
+
+vi.mock('../../src/runtime/langsmith.js', () => ({
+  isTracingEnabled: () => false,
+  canTrace: () => false,
+  buildTraceUrl: () => null,
+  resolveLangSmithRunUrl: async () => null,
+  getLangSmithApiKey: () => null,
+  getTraceProject: () => 'shipyard',
+}));
+
+vi.mock('../../src/runtime/persistence.js', () => ({
+  createRun: async () => {},
+  saveRunToFile: () => {},
+  loadRunsFromFiles: () => [],
+  loadRunFromFile: () => null,
+  listRuns: async () => [],
+  pgRowToRunSummary: () => null,
+}));
+
+import { InstructionLoop } from '../../src/runtime/loop.js';
+
+async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error('waitFor timeout');
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+describe('InstructionLoop local chat shortcuts', () => {
+  let loop: InstructionLoop;
+
+  beforeEach(() => {
+    releaseGraph = null;
+    loop = new InstructionLoop();
+  });
+
+  it('completes trivial hi immediately even while another run is active', async () => {
+    const blockingId = loop.submit('implement auth', undefined, false, 'code');
+    await waitFor(() => loop.getStatus().processing && loop.getStatus().currentRunId === blockingId);
+
+    const hiId = loop.submit('hi');
+    await waitFor(() => !!loop.getRun(hiId));
+
+    const hiRun = loop.getRun(hiId);
+    expect(hiRun?.phase).toBe('done');
+    expect(hiRun?.threadKind).toBe('ask');
+    expect(hiRun?.messages.at(-1)?.content).toContain('Hi');
+    expect(loop.getStatus().currentRunId).toBe(blockingId);
+
+    releaseGraph?.();
+    await waitFor(() => loop.getRun(blockingId)?.phase === 'done');
+  });
+
+  it('completes simple comparison questions immediately even while another run is active', async () => {
+    const blockingId = loop.submit('implement auth', undefined, false, 'code');
+    await waitFor(() => loop.getStatus().processing && loop.getStatus().currentRunId === blockingId);
+
+    const mathId = loop.submit('2=2?');
+    await waitFor(() => !!loop.getRun(mathId));
+
+    const mathRun = loop.getRun(mathId);
+    expect(mathRun?.phase).toBe('done');
+    expect(mathRun?.threadKind).toBe('ask');
+    expect(mathRun?.messages.at(-1)?.content).toContain('Answer: true');
+    expect(loop.getStatus().currentRunId).toBe(blockingId);
+
+    releaseGraph?.();
+    await waitFor(() => loop.getRun(blockingId)?.phase === 'done');
+  });
+
+  it('completes trivial hi follow-up immediately even while another run is active', async () => {
+    const askId = loop.submit('hi', undefined, false, 'chat');
+    await waitFor(() => loop.getRun(askId)?.phase === 'done');
+
+    const blockingId = loop.submit('implement auth', undefined, false, 'code');
+    await waitFor(() => loop.getStatus().processing && loop.getStatus().currentRunId === blockingId);
+
+    const ok = loop.followUpAsk(askId, 'hi');
+    expect(ok).toBe(true);
+    await waitFor(() => (loop.getRun(askId)?.messages.length ?? 0) >= 4);
+
+    const askRun = loop.getRun(askId);
+    expect(askRun?.phase).toBe('done');
+    expect(askRun?.messages.at(-1)?.content).toContain('Hi');
+    expect(loop.getStatus().currentRunId).toBe(blockingId);
+
+    releaseGraph?.();
+    await waitFor(() => loop.getRun(blockingId)?.phase === 'done');
+  });
+
+  it('queues ask follow-ups while another run is active', async () => {
+    const askId = loop.submit('hi', undefined, false, 'chat');
+    await waitFor(() => loop.getRun(askId)?.phase === 'done');
+
+    const blockingId = loop.submit('implement auth', undefined, false, 'code');
+    await waitFor(() => loop.getStatus().processing && loop.getStatus().currentRunId === blockingId);
+
+    const ok = loop.followUpAsk(askId, 'what is recursion?');
+    expect(ok).toBe(true);
+    expect(loop.getStatus().queueLength).toBe(1);
+
+    releaseGraph?.();
+    await waitFor(() => loop.getRun(blockingId)?.phase === 'done');
+    await waitFor(() => loop.getStatus().processing && loop.getStatus().currentRunId === askId);
+
+    releaseGraph?.();
+    await waitFor(() => loop.getRun(askId)?.phase === 'done');
+
+    const askRun = loop.getRun(askId);
+    expect(askRun?.threadKind).toBe('ask');
+    expect(askRun?.messages.at(-2)?.content).toBe('what is recursion?');
+    expect(askRun?.messages.at(-1)?.content).toContain('Done: what is recursion?');
+  });
+
+  it('queues multiple follow-up asks on the same thread', async () => {
+    const askId = loop.submit('hi', undefined, false, 'chat');
+    await waitFor(() => loop.getRun(askId)?.phase === 'done');
+
+    const ok1 = loop.followUpAsk(askId, 'what is recursion?');
+    expect(ok1).toBe(true);
+    await waitFor(() => loop.getStatus().processing && loop.getStatus().currentRunId === askId);
+
+    const ok2 = loop.followUpAsk(askId, 'and memoization?');
+    expect(ok2).toBe(true);
+    expect(loop.getStatus().queueLength).toBe(1);
+
+    releaseGraph?.();
+    await waitFor(() =>
+      loop.getStatus().processing &&
+      loop.getStatus().queueLength === 0 &&
+      (loop.getRun(askId)?.messages ?? []).some((m) => m.content === 'Done: what is recursion?'),
+    );
+
+    releaseGraph?.();
+    await waitFor(() => !loop.getStatus().processing && loop.getRun(askId)?.phase === 'done');
+
+    const askRun = loop.getRun(askId);
+    expect(askRun?.threadKind).toBe('ask');
+    expect(askRun?.messages.map((m) => m.content)).toEqual([
+      'hi',
+      'Hi. How can I help?',
+      'what is recursion?',
+      'Done: what is recursion?',
+      'and memoization?',
+      'Done: and memoization?',
+    ]);
+  });
+
+  it('queues code follow-ups on the same agent thread', async () => {
+    const runId = loop.submit('implement auth', undefined, false, 'code');
+    await waitFor(() => loop.getStatus().processing && loop.getStatus().currentRunId === runId);
+
+    const ok = loop.followUpThread(runId, 'refactor small file');
+    expect(ok).toBe(true);
+    expect(loop.getStatus().queueLength).toBe(1);
+
+    releaseGraph?.();
+    await waitFor(() => loop.getStatus().processing && loop.getStatus().queueLength === 0);
+
+    releaseGraph?.();
+    await waitFor(() => !loop.getStatus().processing && loop.getRun(runId)?.phase === 'done');
+
+    const run = loop.getRun(runId);
+    expect(run?.threadKind).toBe('agent');
+    expect(run?.messages.map((m) => m.content)).toContain('refactor small file');
+    expect(run?.messages.at(-1)?.content).toBe('Done: refactor small file');
+  });
+});

@@ -37,6 +37,22 @@ export function attachWebSocket(server: Server, loop: InstructionLoop): void {
     }
   });
 
+  const unsubLiveFeed = loop.onLiveFeed((event) => {
+    let msg: string;
+    if (event.type === 'file_edit') {
+      msg = JSON.stringify({ type: 'file_edit', data: event.edit });
+    } else if (event.type === 'text_chunk') {
+      msg = JSON.stringify({ type: 'text_chunk', data: { node: event.node, text: event.text } });
+    } else {
+      msg = JSON.stringify({ type: 'tool_activity', data: event });
+    }
+    for (const client of wss.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(msg);
+      }
+    }
+  });
+
   wss.on('connection', (ws: AliveWebSocket) => {
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
@@ -50,14 +66,56 @@ export function attachWebSocket(server: Server, loop: InstructionLoop): void {
           type: string;
           instruction?: string;
           context?: { label: string; content: string; source?: string };
+          runMode?: 'auto' | 'chat' | 'code';
+          uiMode?: 'ask' | 'plan' | 'agent';
+          confirmPlan?: boolean;
+          model?: string;
+          modelFamily?: 'anthropic' | 'openai';
+          models?: Record<string, string>;
         };
 
         switch (msg.type) {
           case 'submit': {
             if (msg.instruction) {
-              const id = loop.submit(msg.instruction);
+              let mode: 'auto' | 'chat' | 'code' = msg.runMode ?? 'auto';
+              let confirm = !!msg.confirmPlan;
+              if (msg.uiMode === 'ask') {
+                mode = 'chat';
+                confirm = false;
+              } else if (msg.uiMode === 'plan') {
+                mode = 'code';
+                confirm = true;
+              } else if (msg.uiMode === 'agent') {
+                mode = 'auto';
+                confirm = false;
+              }
+              const fam =
+                msg.modelFamily === 'anthropic' || msg.modelFamily === 'openai'
+                  ? msg.modelFamily
+                  : undefined;
+              const id = loop.submit(
+                msg.instruction,
+                undefined,
+                confirm,
+                mode,
+                {
+                  modelOverride: msg.model?.trim() || undefined,
+                  modelFamily: fam,
+                  modelOverrides: msg.models,
+                },
+              );
               ws.send(JSON.stringify({ type: 'submitted', runId: id }));
             }
+            break;
+          }
+          case 'pause_agent': {
+            loop.requestPause();
+            ws.send(JSON.stringify({ type: 'pause_result', ok: true }));
+            break;
+          }
+          case 'resume_agent': {
+            loop.resumeFromPause();
+            ws.send(JSON.stringify({ type: 'resume_result', ok: true }));
             break;
           }
           case 'inject': {
@@ -91,6 +149,7 @@ export function attachWebSocket(server: Server, loop: InstructionLoop): void {
   server.on('close', () => {
     clearInterval(heartbeatInterval);
     unsubscribe();
+    unsubLiveFeed();
     wss.close();
   });
 }

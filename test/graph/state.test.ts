@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ShipyardState,
+  buildContextBlock,
   type ShipyardStateType,
   type ShipyardPhase,
   type PlanStep,
@@ -160,6 +161,23 @@ describe('ContextEntry', () => {
   });
 });
 
+describe('buildContextBlock', () => {
+  it('returns empty string for no contexts', () => {
+    expect(buildContextBlock([])).toBe('');
+  });
+
+  it('joins labeled sections with blank lines', () => {
+    const out = buildContextBlock([
+      { label: 'A', content: 'one', source: 'user' },
+      { label: 'B', content: 'two', source: 'system' },
+    ]);
+    expect(out).toContain('## A');
+    expect(out).toContain('one');
+    expect(out).toContain('## B');
+    expect(out).toContain('two');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // LLMMessage
 // ---------------------------------------------------------------------------
@@ -212,6 +230,11 @@ describe('ShipyardState', () => {
       'runStartedAt',
       'workerResults',
       'modelHint',
+      'runMode',
+      'gateRoute',
+      'modelOverride',
+      'modelFamily',
+      'modelOverrides',
     ];
     // If any of these didn't exist on the type, TS would error at compile time.
     // At runtime, just verify the array is populated.
@@ -249,6 +272,11 @@ describe('default state values', () => {
       estimatedCost: null,
       workerResults: [],
       modelHint: null,
+      runMode: 'auto',
+      gateRoute: 'plan',
+      modelOverride: null,
+      modelFamily: null,
+      modelOverrides: null,
     };
 
     expect(state.runId).toBe('test-123');

@@ -5,8 +5,16 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { getModelConfig } from '../../config/model-policy.js';
+import {
+  getResolvedModelConfigFromState,
+  isOpenAiModelId,
+} from '../../config/model-policy.js';
 import { getClient, wrapSystemPrompt } from '../../config/client.js';
+import {
+  messagesCreate,
+  extractCacheMetrics,
+} from '../../config/messages-create.js';
+import { completeTextForRole } from '../../llm/complete-text.js';
 import type { ShipyardStateType, ReviewDecision, LLMMessage } from '../state.js';
 
 const REVIEW_SYSTEM = `You are the Shipyard quality reviewer (Opus). You evaluate the work done by the coding agent.
@@ -40,8 +48,7 @@ Respond with a JSON object:
 export async function reviewNode(
   state: ShipyardStateType,
 ): Promise<Partial<ShipyardStateType>> {
-  const config = getModelConfig('review');
-  const anthropic = getClient();
+  const config = getResolvedModelConfigFromState('review', state);
 
   const hasMoreSteps = state.currentStepIndex < state.steps.length - 1;
   const verPassed = state.verificationResult?.passed ?? false;
@@ -106,22 +113,40 @@ export async function reviewNode(
 
   let inputTokens = state.tokenUsage?.input ?? 0;
   let outputTokens = state.tokenUsage?.output ?? 0;
+  let cacheReadTokens = state.tokenUsage?.cacheRead ?? 0;
+  let cacheCreationTokens = state.tokenUsage?.cacheCreation ?? 0;
 
-  const response = await anthropic.messages.create({
-    model: config.model,
-    max_tokens: config.maxTokens,
-    temperature: config.temperature,
-    system: wrapSystemPrompt(REVIEW_SYSTEM),
-    messages: [{ role: 'user', content: reviewPrompt }],
-  });
+  let text: string;
+  if (isOpenAiModelId(config.model)) {
+    const r = await completeTextForRole(state, 'review', REVIEW_SYSTEM, [
+      { role: 'user', content: reviewPrompt },
+    ], { liveNode: 'review' });
+    inputTokens += r.inputTokens;
+    outputTokens += r.outputTokens;
+    cacheReadTokens += r.cacheRead;
+    cacheCreationTokens += r.cacheCreation;
+    text = r.text;
+  } else {
+    const anthropic = getClient();
+    const response = await messagesCreate(anthropic, {
+      model: config.model,
+      max_tokens: config.maxTokens,
+      temperature: config.temperature,
+      system: wrapSystemPrompt(REVIEW_SYSTEM),
+      messages: [{ role: 'user', content: reviewPrompt }],
+    }, { liveNode: 'review' });
 
-  inputTokens += response.usage.input_tokens;
-  outputTokens += response.usage.output_tokens;
+    inputTokens += response.usage.input_tokens;
+    outputTokens += response.usage.output_tokens;
+    const rcm = extractCacheMetrics(response);
+    cacheReadTokens += rcm.cacheRead;
+    cacheCreationTokens += rcm.cacheCreation;
 
-  const text = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('');
+    text = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('');
+  }
 
   // Parse decision
   let decision: ReviewDecision = 'escalate';
@@ -167,7 +192,12 @@ export async function reviewNode(
     reviewDecision: decision,
     reviewFeedback: feedback,
     messages: newMessages,
-    tokenUsage: { input: inputTokens, output: outputTokens },
+    tokenUsage: {
+      input: inputTokens,
+      output: outputTokens,
+      cacheRead: cacheReadTokens,
+      cacheCreation: cacheCreationTokens,
+    },
     retryCount: decision === 'retry' ? state.retryCount + 1 : state.retryCount,
     currentStepIndex:
       decision === 'continue'

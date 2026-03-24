@@ -4,7 +4,7 @@
  * Wires nodes + conditional edges into a compiled LangGraph StateGraph.
  *
  * Flow:
- *   START -> plan -> execute -> verify -> review
+ *   START -> gate -> (end | plan) -> execute -> verify -> review
  *                                          ├─ continue -> execute
  *                                          ├─ done -> report -> END
  *                                          ├─ retry -> plan
@@ -23,7 +23,8 @@ import { reviewNode } from './nodes/review.js';
 import { errorRecoveryNode } from './nodes/error-recovery.js';
 import { reportNode } from './nodes/report.js';
 import { coordinateNode } from './nodes/coordinate.js';
-import { afterPlan, afterReview, afterErrorRecovery } from './edges.js';
+import { afterGate, afterPlan, afterReview, afterErrorRecovery } from './edges.js';
+import { gateNode } from './nodes/gate.js';
 
 // ---------------------------------------------------------------------------
 // Graph construction
@@ -31,7 +32,8 @@ import { afterPlan, afterReview, afterErrorRecovery } from './edges.js';
 
 /**
  * Flow:
- *   START -> plan ──┬── execute -> verify -> review
+ *   START -> gate ─ plan ──┬── execute -> verify -> review
+ *        └ end (Q&A only)
  *                   │                          ├─ continue -> execute
  *                   │                          ├─ done -> report -> END
  *                   │                          ├─ retry -> plan
@@ -46,6 +48,7 @@ export interface CreateShipyardGraphOptions {
 
 export function createShipyardGraph(opts?: CreateShipyardGraphOptions) {
   const graph = new StateGraph(ShipyardState)
+    .addNode('gate', gateNode)
     .addNode('plan', planNode)
     .addNode('execute', executeNode)
     .addNode('coordinate', coordinateNode)
@@ -54,8 +57,11 @@ export function createShipyardGraph(opts?: CreateShipyardGraphOptions) {
     .addNode('error_recovery', errorRecoveryNode)
     .addNode('report', reportNode);
 
-  // START -> plan
-  graph.addEdge(START, 'plan');
+  graph.addEdge(START, 'gate');
+  graph.addConditionalEdges('gate', afterGate, {
+    plan: 'plan',
+    end: END,
+  });
 
   // Conditional: after plan -> coordinate (multi-agent) or execute (single)
   graph.addConditionalEdges('plan', afterPlan, {

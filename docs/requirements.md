@@ -131,6 +131,8 @@ LangSmith tracing recommended for LangGraph. If using a different framework, pro
 
 ### AI Cost Analysis (Required)
 
+**Ledger template (two meters):** Use **`docs/AI-COST.md`** so **Shipyard `/api/run` spend** (agent product) is not mixed with **Cursor / Claude Code / IDE** spend (building the repo).
+
 **Development and Testing Costs:**
 - Claude API costs (input and output token breakdown)
 - Number of agent invocations during development

@@ -8,6 +8,8 @@ export interface BashParams {
   command: string;
   timeout?: number;
   cwd?: string;
+  /** When aborted (e.g. Stop), sends SIGTERM to the child shell. */
+  signal?: AbortSignal | null;
 }
 
 export interface BashResult {
@@ -52,11 +54,19 @@ export function runBash(params: BashParams): Promise<BashResult> {
   }
 
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: BashResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
     const child = execFile(
       '/bin/sh',
       ['-c', command],
       { timeout, maxBuffer: 10 * 1024 * 1024, cwd },
       (error, stdout, stderr) => {
+        if (settled) return;
         const truncatedStdout =
           stdout.length > MAX_OUTPUT
             ? stdout.slice(0, MAX_OUTPUT) + '\n... (truncated)'
@@ -68,7 +78,7 @@ export function runBash(params: BashParams): Promise<BashResult> {
 
         if (error) {
           const killed = (error as NodeJS.ErrnoException & { killed?: boolean }).killed;
-          resolve({
+          finish({
             success: false,
             exit_code: error.code as unknown as number ?? 1,
             stdout: truncatedStdout,
@@ -78,7 +88,7 @@ export function runBash(params: BashParams): Promise<BashResult> {
           return;
         }
 
-        resolve({
+        finish({
           success: true,
           exit_code: child.exitCode ?? 0,
           stdout: truncatedStdout,
@@ -86,5 +96,29 @@ export function runBash(params: BashParams): Promise<BashResult> {
         });
       },
     );
+
+    const sig = params.signal;
+    if (!sig) return;
+
+    const onAbort = () => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* ignore */
+      }
+      finish({
+        success: false,
+        exit_code: 1,
+        stdout: '',
+        stderr: '',
+        message: 'Run cancelled by user',
+      });
+    };
+
+    if (sig.aborted) {
+      onAbort();
+      return;
+    }
+    sig.addEventListener('abort', onAbort, { once: true });
   });
 }

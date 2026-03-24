@@ -59,6 +59,13 @@ pnpm build
 pnpm start
 ```
 
+## Web UI
+
+- `/dashboard` — chat-style workspace for ask, plan, and agent runs
+- `/runs` — `Refactoring Runs` view; defaults to repo-touching/code-oriented history and hides pure ask chats
+- `/settings` — model family and per-stage model preferences
+- `/benchmarks` — benchmark summaries and trend charts
+
 ## Configuration
 
 All env vars are documented in `.env.example`. Copy it and fill in your values.
@@ -111,6 +118,27 @@ Get full state for a specific run.
 
 ```bash
 curl http://localhost:4200/api/runs/<run-id>
+```
+
+### `POST /api/runs/:id/followup`
+
+Append a message to an Ask thread. Follow-ups are queued in-order on the same thread, so you can keep sending asks while another run is still executing. You can also pass fresh `model`, `modelFamily`, and `models` fields if the next turn should use updated model settings.
+
+```bash
+curl -X POST http://localhost:4200/api/runs/<run-id>/followup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instruction": "and now explain the tradeoff",
+    "modelFamily": "openai"
+  }'
+```
+
+### `DELETE /api/runs/:id`
+
+Remove a run from memory, `results/<id>.json`, and Postgres (if configured). Returns `409` if that run is still executing (stop it first).
+
+```bash
+curl -X DELETE http://localhost:4200/api/runs/<run-id>
 ```
 
 ### `GET /api/runs`

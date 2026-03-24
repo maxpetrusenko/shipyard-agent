@@ -13,13 +13,13 @@ importers:
         version: 0.52.0
       '@langchain/core':
         specifier: ^1.1.32
-        version: 1.1.35(ws@8.20.0)
+        version: 1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0)
       '@langchain/langgraph':
         specifier: ^1.2.2
-        version: 1.2.5(@langchain/core@1.1.35(ws@8.20.0))(zod@3.25.76)
+        version: 1.2.5(@langchain/core@1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0))(zod@3.25.76)
       '@langchain/langgraph-checkpoint-postgres':
         specifier: ^1.0.1
-        version: 1.0.1(@langchain/core@1.1.35(ws@8.20.0))(@langchain/langgraph-checkpoint@1.0.1(@langchain/core@1.1.35(ws@8.20.0)))
+        version: 1.0.1(@langchain/core@1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0))(@langchain/langgraph-checkpoint@1.0.1(@langchain/core@1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0)))
       dotenv:
         specifier: ^17.3.1
         version: 17.3.1
@@ -34,7 +34,10 @@ importers:
         version: 1.0.16
       langsmith:
         specifier: ^0.5.10
-        version: 0.5.12(ws@8.20.0)
+        version: 0.5.12(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0)
+      openai:
+        specifier: ^5.23.2
+        version: 5.23.2(ws@8.20.0)(zod@3.25.76)
       pg:
         specifier: ^8.13.1
         version: 8.20.0
@@ -909,6 +912,18 @@ packages:
     resolution: {integrity: sha512-oVlzkg3ENAhCk2zdv7IJwd/QUD4z2RxRwpkcGY8psCVcCYZNq4wYnVWALHM+brtuJjePWiYF/ClmuDr8Ch5+kg==}
     engines: {node: '>= 0.8'}
 
+  openai@5.23.2:
+    resolution: {integrity: sha512-MQBzmTulj+MM5O8SKEk/gL8a7s5mktS9zUtAkU257WjvobGc9nKcBuVwjyEEcb9SI8a8Y2G/mzn3vm9n1Jlleg==}
+    hasBin: true
+    peerDependencies:
+      ws: ^8.18.0
+      zod: ^3.23.8
+    peerDependenciesMeta:
+      ws:
+        optional: true
+      zod:
+        optional: true
+
   p-finally@1.0.0:
     resolution: {integrity: sha512-LICb2p9CB7FS+0eR1oqWnHhp0FljGLZCWBE9aix0Uye9W8LTQPwMTYVGWQWIw9RdQiDg4+epXQODwIYJtSJaow==}
     engines: {node: '>=4'}
@@ -1375,7 +1390,7 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
-  '@langchain/core@1.1.35(ws@8.20.0)':
+  '@langchain/core@1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0)':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@standard-schema/spec': 1.1.0
@@ -1383,7 +1398,7 @@ snapshots:
       camelcase: 6.3.0
       decamelize: 1.2.0
       js-tiktoken: 1.0.21
-      langsmith: 0.5.12(ws@8.20.0)
+      langsmith: 0.5.12(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0)
       mustache: 4.2.0
       p-queue: 6.6.2
       uuid: 11.1.0
@@ -1395,33 +1410,33 @@ snapshots:
       - openai
       - ws
 
-  '@langchain/langgraph-checkpoint-postgres@1.0.1(@langchain/core@1.1.35(ws@8.20.0))(@langchain/langgraph-checkpoint@1.0.1(@langchain/core@1.1.35(ws@8.20.0)))':
+  '@langchain/langgraph-checkpoint-postgres@1.0.1(@langchain/core@1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0))(@langchain/langgraph-checkpoint@1.0.1(@langchain/core@1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0)))':
     dependencies:
-      '@langchain/core': 1.1.35(ws@8.20.0)
-      '@langchain/langgraph-checkpoint': 1.0.1(@langchain/core@1.1.35(ws@8.20.0))
+      '@langchain/core': 1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0)
+      '@langchain/langgraph-checkpoint': 1.0.1(@langchain/core@1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0))
       pg: 8.20.0
     transitivePeerDependencies:
       - pg-native
 
-  '@langchain/langgraph-checkpoint@1.0.1(@langchain/core@1.1.35(ws@8.20.0))':
+  '@langchain/langgraph-checkpoint@1.0.1(@langchain/core@1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0))':
     dependencies:
-      '@langchain/core': 1.1.35(ws@8.20.0)
+      '@langchain/core': 1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0)
       uuid: 10.0.0
 
-  '@langchain/langgraph-sdk@1.8.0(@langchain/core@1.1.35(ws@8.20.0))':
+  '@langchain/langgraph-sdk@1.8.0(@langchain/core@1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0))':
     dependencies:
       '@types/json-schema': 7.0.15
       p-queue: 9.1.0
       p-retry: 7.1.1
       uuid: 13.0.0
     optionalDependencies:
-      '@langchain/core': 1.1.35(ws@8.20.0)
+      '@langchain/core': 1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0)
 
-  '@langchain/langgraph@1.2.5(@langchain/core@1.1.35(ws@8.20.0))(zod@3.25.76)':
+  '@langchain/langgraph@1.2.5(@langchain/core@1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0))(zod@3.25.76)':
     dependencies:
-      '@langchain/core': 1.1.35(ws@8.20.0)
-      '@langchain/langgraph-checkpoint': 1.0.1(@langchain/core@1.1.35(ws@8.20.0))
-      '@langchain/langgraph-sdk': 1.8.0(@langchain/core@1.1.35(ws@8.20.0))
+      '@langchain/core': 1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0)
+      '@langchain/langgraph-checkpoint': 1.0.1(@langchain/core@1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0))
+      '@langchain/langgraph-sdk': 1.8.0(@langchain/core@1.1.35(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0))
       '@standard-schema/spec': 1.1.0
       uuid: 10.0.0
       zod: 3.25.76
@@ -1901,7 +1916,7 @@ snapshots:
     dependencies:
       base64-js: 1.5.1
 
-  langsmith@0.5.12(ws@8.20.0):
+  langsmith@0.5.12(openai@5.23.2(ws@8.20.0)(zod@3.25.76))(ws@8.20.0):
     dependencies:
       '@types/uuid': 10.0.0
       chalk: 5.6.2
@@ -1910,6 +1925,7 @@ snapshots:
       semver: 7.7.4
       uuid: 10.0.0
     optionalDependencies:
+      openai: 5.23.2(ws@8.20.0)(zod@3.25.76)
       ws: 8.20.0
 
   lightningcss-android-arm64@1.32.0:
@@ -2005,6 +2021,11 @@ snapshots:
   on-finished@2.4.1:
     dependencies:
       ee-first: 1.1.1
+
+  openai@5.23.2(ws@8.20.0)(zod@3.25.76):
+    optionalDependencies:
+      ws: 8.20.0
+      zod: 3.25.76
 
   p-finally@1.0.0: {}
 

@@ -96,6 +96,179 @@ describe('POST /run validation', () => {
     const body = await res.json() as { runId: string };
     expect(body.runId).toBeTruthy();
   });
+
+  it('returns immediate ask result for trivial hi', async () => {
+    const res = await fetch(`${baseUrl}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'hi', uiMode: 'ask' }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      runId: string;
+      phase?: string;
+      threadKind?: string;
+      messages?: Array<{ role: string; content: string }>;
+    };
+    expect(body.runId).toBeTruthy();
+    expect(body.phase).toBe('done');
+    expect(body.threadKind).toBe('ask');
+    expect(body.messages?.at(-1)?.role).toBe('assistant');
+  });
+
+  it('keeps agent ui mode on auto so simple asks do not enter planning', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const res = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: '2=2?', uiMode: 'agent' }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      runId: string;
+      runMode?: string;
+      phase?: string;
+      threadKind?: string;
+      messages?: Array<{ role: string; content: string }>;
+    };
+    expect(body.runId).toBeTruthy();
+    expect(body.runMode).toBe('auto');
+    expect(body.phase).toBe('done');
+    expect(body.threadKind).toBe('ask');
+    expect(body.messages?.at(-1)?.content).toContain('Answer: true');
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+});
+
+describe('POST /runs/:id/followup', () => {
+  it('returns immediate ask follow-up result for trivial hi', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const createRes = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'hi', uiMode: 'ask' }),
+    });
+    expect(createRes.status).toBe(200);
+    const created = await createRes.json() as { runId: string };
+
+    const res = await fetch(`${baseUrl2}/runs/${created.runId}/followup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'hi' }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      runId: string;
+      queued: boolean;
+      phase?: string;
+      messages?: Array<{ role: string; content: string }>;
+    };
+    expect(body.runId).toBe(created.runId);
+    expect(body.queued).toBe(true);
+    expect(body.phase).toBe('done');
+    expect(body.messages?.length).toBeGreaterThanOrEqual(4);
+    expect(body.messages?.at(-1)?.role).toBe('assistant');
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+
+  it('accepts fresh model settings on ask follow-ups', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const createRes = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'hi', uiMode: 'ask' }),
+    });
+    expect(createRes.status).toBe(200);
+    const created = await createRes.json() as { runId: string };
+
+    const res = await fetch(`${baseUrl2}/runs/${created.runId}/followup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'hi',
+        modelFamily: 'openai',
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const debugRes = await fetch(`${baseUrl2}/runs/${created.runId}/debug`);
+    expect(debugRes.status).toBe(200);
+    const debugBody = await debugRes.json() as {
+      modelFamily: string | null;
+      resolvedModels: Record<string, string>;
+    };
+    expect(debugBody.modelFamily).toBe('openai');
+    expect(debugBody.resolvedModels.chat).toBe('gpt-5-mini');
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+
+  it('queues code follow-ups on the same run id', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const createRes = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'implement auth', uiMode: 'agent' }),
+    });
+    expect(createRes.status).toBe(200);
+    const created = await createRes.json() as { runId: string };
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const res = await fetch(`${baseUrl2}/runs/${created.runId}/followup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'refactor small file' }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { runId: string; queued: boolean };
+    expect(body.runId).toBe(created.runId);
+    expect(body.queued).toBe(true);
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -108,6 +281,113 @@ describe('GET /runs/:id', () => {
     expect(res.status).toBe(404);
     const body = await res.json() as { error: string };
     expect(body.error).toContain('Run not found');
+  });
+
+  it('returns a debug snapshot with local trace fallback', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const createRes = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'hi', uiMode: 'ask' }),
+    });
+    expect(createRes.status).toBe(200);
+    const created = await createRes.json() as { runId: string };
+
+    const res = await fetch(`${baseUrl2}/runs/${created.runId}/debug`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      runId: string;
+      executionPath: string;
+      openTraceUrl: string;
+      localTraceUrl: string;
+      primaryModel: string | null;
+    };
+    expect(body.runId).toBe(created.runId);
+    expect(body.executionPath).toBe('local-shortcut');
+    expect(body.localTraceUrl).toBe(`/api/runs/${created.runId}/debug`);
+    expect(body.openTraceUrl).toBe(body.localTraceUrl);
+    expect(body.primaryModel).toBeNull();
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+});
+
+describe('DELETE /runs/:id', () => {
+  it('deletes an existing run', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const createRes = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'hi', uiMode: 'ask' }),
+    });
+    const created = await createRes.json() as { runId: string };
+
+    const deleteRes = await fetch(`${baseUrl2}/runs/${created.runId}`, {
+      method: 'DELETE',
+    });
+    expect(deleteRes.status).toBe(200);
+
+    const getRes = await fetch(`${baseUrl2}/runs/${created.runId}`);
+    expect(getRes.status).toBe(404);
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+
+  it('returns 409 when deleting the active run', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const runId = loop2.submit('hi', undefined, false, 'chat');
+    const loopHack = loop2 as unknown as {
+      processing: boolean;
+      currentRunId: string | null;
+    };
+    loopHack.processing = true;
+    loopHack.currentRunId = runId;
+
+    const deleteRes = await fetch(`${baseUrl2}/runs/${runId}`, {
+      method: 'DELETE',
+    });
+    expect(deleteRes.status).toBe(409);
+    const body = await deleteRes.json() as { error: string };
+    expect(body.error).toContain('active');
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+
+  it('returns 404 when run does not exist', async () => {
+    const del = await fetch(`${baseUrl}/runs/definitely-missing-run-id-xyz`, {
+      method: 'DELETE',
+    });
+    expect(del.status).toBe(404);
   });
 });
 

@@ -8,14 +8,30 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { getModelConfig } from '../config/model-policy.js';
-import { getClient, wrapSystemPrompt } from '../config/client.js';
+import {
+  getClient,
+  wrapSystemPrompt,
+  withCachedTools,
+} from '../config/client.js';
+import { WORK_DIR } from '../config/work-dir.js';
+import { messagesCreate } from '../config/messages-create.js';
+import {
+  dispatchAnthropicToolBlocks,
+  stripToolResultCacheControls,
+} from '../llm/anthropic-tool-dispatch.js';
+import {
+  extractTextFromContentBlocks,
+  extractToolUseBlocks,
+} from '../llm/anthropic-parse.js';
+import { TokenAccumulator } from '../llm/token-usage.js';
 import { TOOL_SCHEMAS, dispatchTool } from '../tools/index.js';
 import { createRecordingHooks } from '../tools/hooks.js';
 import { FileOverlay } from '../tools/file-overlay.js';
-import type {
-  FileEdit,
-  ToolCallRecord,
-  ContextEntry,
+import {
+  buildContextBlock,
+  type FileEdit,
+  type ToolCallRecord,
+  type ContextEntry,
 } from '../graph/state.js';
 
 // ---------------------------------------------------------------------------
@@ -27,7 +43,12 @@ export interface WorkerResult {
   phase: 'done' | 'error';
   fileEdits: FileEdit[];
   toolCallHistory: ToolCallRecord[];
-  tokenUsage: { input: number; output: number } | null;
+  tokenUsage: {
+    input: number;
+    output: number;
+    cacheRead?: number;
+    cacheCreation?: number;
+  } | null;
   error: string | null;
   durationMs: number;
 }
@@ -35,8 +56,6 @@ export interface WorkerResult {
 // ---------------------------------------------------------------------------
 // System prompt
 // ---------------------------------------------------------------------------
-
-const WORK_DIR = process.env['SHIPYARD_WORK_DIR'] ?? process.cwd();
 
 const WORKER_SYSTEM = `You are Shipyard Worker, an autonomous coding agent executing a single subtask.
 
@@ -81,15 +100,12 @@ export async function runWorker(
   const config = getModelConfig('coding');
   const anthropic = getClient();
 
-  // Build context block
-  const contextBlock = contexts
-    .map((c) => `## ${c.label}\n${c.content}`)
-    .join('\n\n');
+  // Build context block (separate cache breakpoint)
+  const contextBlock = buildContextBlock(contexts);
 
   const systemPrompt = wrapSystemPrompt(
-    contextBlock
-      ? `${WORKER_SYSTEM}\n\n# Context\n\n${contextBlock}`
-      : WORKER_SYSTEM,
+    WORKER_SYSTEM,
+    contextBlock ? `# Context\n\n${contextBlock}` : undefined,
   );
 
   // Isolated state per worker
@@ -98,8 +114,9 @@ export async function runWorker(
   const hooks = createRecordingHooks(fileEdits, toolCallHistory);
   const overlay = new FileOverlay();
 
-  let inputTokens = 0;
-  let outputTokens = 0;
+  const tokens = new TokenAccumulator();
+
+  const cachedTools = withCachedTools(TOOL_SCHEMAS);
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -110,26 +127,20 @@ export async function runWorker(
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const response = await anthropic.messages.create({
+      const requestMessages = stripToolResultCacheControls(messages);
+      const response = await messagesCreate(anthropic, {
         model: config.model,
         max_tokens: config.maxTokens,
         temperature: config.temperature,
         system: systemPrompt,
-        tools: TOOL_SCHEMAS,
-        messages,
-      });
+        tools: cachedTools,
+        messages: requestMessages,
+      }, { liveNode: 'worker' });
 
-      inputTokens += response.usage.input_tokens;
-      outputTokens += response.usage.output_tokens;
+      tokens.addAnthropicRound(response);
 
-      const textBlocks = response.content.filter(
-        (b): b is Anthropic.TextBlock => b.type === 'text',
-      );
-      const toolBlocks = response.content.filter(
-        (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
-      );
-
-      const fullText = textBlocks.map((b) => b.text).join('');
+      const fullText = extractTextFromContentBlocks(response.content);
+      const toolBlocks = extractToolUseBlocks(response.content);
 
       // Check completion signals
       if (
@@ -142,7 +153,7 @@ export async function runWorker(
           phase: fullText.includes('SUBTASK_BLOCKED') ? 'error' : 'done',
           fileEdits,
           toolCallHistory,
-          tokenUsage: { input: inputTokens, output: outputTokens },
+          tokenUsage: tokens.snapshot(),
           error: fullText.includes('SUBTASK_BLOCKED')
             ? fullText.split('SUBTASK_BLOCKED:')[1]?.trim() ?? 'blocked'
             : null,
@@ -154,21 +165,10 @@ export async function runWorker(
       if (toolBlocks.length > 0) {
         messages.push({ role: 'assistant', content: response.content });
 
-        const toolResults: Anthropic.ToolResultBlockParam[] = [];
-        for (const tb of toolBlocks) {
-          const result = await dispatchTool(
-            tb.name,
-            tb.input as Record<string, unknown>,
-            hooks,
-            overlay,
-          );
-
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: tb.id,
-            content: JSON.stringify(result).slice(0, 50_000),
-          });
-        }
+        const toolResults = await dispatchAnthropicToolBlocks(
+          toolBlocks,
+          (name, input) => dispatchTool(name, input, hooks, overlay),
+        );
         messages.push({ role: 'user', content: toolResults });
       } else {
         // No tools, not complete — break to avoid spinning
@@ -182,7 +182,7 @@ export async function runWorker(
       phase: 'done',
       fileEdits,
       toolCallHistory,
-      tokenUsage: { input: inputTokens, output: outputTokens },
+      tokenUsage: tokens.snapshot(),
       error: null,
       durationMs: Date.now() - startedAt,
     };
@@ -197,7 +197,7 @@ export async function runWorker(
       phase: 'error',
       fileEdits: [],
       toolCallHistory,
-      tokenUsage: { input: inputTokens, output: outputTokens },
+      tokenUsage: tokens.snapshot(),
       error: err instanceof Error ? err.message : String(err),
       durationMs: Date.now() - startedAt,
     };

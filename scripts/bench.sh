@@ -183,6 +183,42 @@ FILES_CHANGED=$(echo "$DIFF_SHORTSTAT" | grep -oE '[0-9]+ file' | grep -oE '[0-9
 LINES_ADDED=$(echo "$DIFF_SHORTSTAT" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
 LINES_REMOVED=$(echo "$DIFF_SHORTSTAT" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo "0")
 
+# ── Build size ──────────────────────────────────────────────
+echo "📦 Measuring build size..."
+BUILD_SIZE="N/A"
+NODE_MODULES_SIZE="N/A"
+if command -v du &>/dev/null; then
+  NODE_MODULES_SIZE=$(du -sh "${TARGET}/node_modules" 2>/dev/null | cut -f1 || echo "N/A")
+fi
+# Try building and measure output
+if [ -f "${TARGET}/package.json" ]; then
+  cd "$TARGET"
+  pnpm build --filter='./shared' --filter='./api' 2>/dev/null
+  BUILD_SIZE=$(du -sh "${TARGET}/*/dist" 2>/dev/null | tail -1 | cut -f1 || echo "N/A")
+  cd - >/dev/null
+fi
+
+# ── Security audit ──────────────────────────────────────────
+echo "🔒 Running security audit..."
+AUDIT_VULNS=0
+AUDIT_OUTPUT=""
+if command -v pnpm &>/dev/null; then
+  cd "$TARGET"
+  AUDIT_OUTPUT=$(pnpm audit --json 2>/dev/null || echo '{}')
+  AUDIT_VULNS=$(echo "$AUDIT_OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('metadata',{}).get('vulnerabilities',{}).get('total',0))" 2>/dev/null || echo "0")
+  cd - >/dev/null
+fi
+
+# ── Edit tier distribution ──────────────────────────────────
+echo "📊 Analyzing edit tiers..."
+TIER1=0; TIER2=0; TIER3=0; TIER4=0
+if [ -f "${RESULTS_DIR}/${RUN_ID}.json" ]; then
+  TIER1=$(python3 -c "import json; d=json.load(open('${RESULTS_DIR}/${RUN_ID}.json')); print(sum(1 for e in d.get('fileEdits',[]) if e.get('tier')==1))" 2>/dev/null || echo "0")
+  TIER2=$(python3 -c "import json; d=json.load(open('${RESULTS_DIR}/${RUN_ID}.json')); print(sum(1 for e in d.get('fileEdits',[]) if e.get('tier')==2))" 2>/dev/null || echo "0")
+  TIER3=$(python3 -c "import json; d=json.load(open('${RESULTS_DIR}/${RUN_ID}.json')); print(sum(1 for e in d.get('fileEdits',[]) if e.get('tier')==3))" 2>/dev/null || echo "0")
+  TIER4=$(python3 -c "import json; d=json.load(open('${RESULTS_DIR}/${RUN_ID}.json')); print(sum(1 for e in d.get('fileEdits',[]) if e.get('tier')==4))" 2>/dev/null || echo "0")
+fi
+
 # Sanitize ALL numeric variables before jq (prevent empty/multiline breakage)
 TOKEN_INPUT=$(sanitize_int "$TOKEN_INPUT")
 TOKEN_OUTPUT=$(sanitize_int "$TOKEN_OUTPUT")
@@ -196,12 +232,19 @@ BASELINE_PASSED=$(sanitize_int "$BASELINE_PASSED")
 AFTER_TOTAL=$(sanitize_int "$AFTER_TOTAL")
 AFTER_PASSED=$(sanitize_int "$AFTER_PASSED")
 AFTER_FAILED=$(sanitize_int "$AFTER_FAILED")
+AUDIT_VULNS=$(sanitize_int "$AUDIT_VULNS")
+TIER1=$(sanitize_int "$TIER1")
+TIER2=$(sanitize_int "$TIER2")
+TIER3=$(sanitize_int "$TIER3")
+TIER4=$(sanitize_int "$TIER4")
 
 # Sanitize string vars (ensure non-empty)
 PHASE="${PHASE:-unknown}"
 TRACE_URL="${TRACE_URL:-none}"
 ERROR_MSG="${ERROR_MSG:-null}"
 DIFF_STAT="${DIFF_STAT:-}"
+BUILD_SIZE="${BUILD_SIZE:-N/A}"
+NODE_MODULES_SIZE="${NODE_MODULES_SIZE:-N/A}"
 
 # Estimate cost (rough average of Opus + Sonnet mix)
 # Opus: $15/M input, $75/M output; Sonnet: $3/M input, $15/M output
@@ -234,6 +277,13 @@ JQ_ERR=$(jq -n \
   --argjson afterFailed "$AFTER_FAILED" \
   --arg error "$ERROR_MSG" \
   --arg diffStat "$DIFF_STAT" \
+  --arg buildSize "$BUILD_SIZE" \
+  --arg nodeModulesSize "$NODE_MODULES_SIZE" \
+  --argjson auditVulns "$AUDIT_VULNS" \
+  --argjson tier1 "$TIER1" \
+  --argjson tier2 "$TIER2" \
+  --argjson tier3 "$TIER3" \
+  --argjson tier4 "$TIER4" \
   '{
     benchId: $benchId,
     instruction: $instruction,
@@ -252,6 +302,10 @@ JQ_ERR=$(jq -n \
       before: { total: $baselineTotal, passed: $baselinePassed },
       after: { total: $afterTotal, passed: $afterPassed, failed: $afterFailed }
     },
+    buildSize: $buildSize,
+    nodeModulesSize: $nodeModulesSize,
+    securityAudit: { vulnerabilities: $auditVulns },
+    editTiers: { tier1: $tier1, tier2: $tier2, tier3: $tier3, tier4: $tier4 },
     error: $error,
     diffStat: $diffStat
   }' > "$RESULT_FILE" 2>&1)

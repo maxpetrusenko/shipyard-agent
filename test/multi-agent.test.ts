@@ -250,6 +250,8 @@ describe('shouldCoordinate', () => {
     estimatedCost: null,
     workerResults: [],
     modelHint: 'opus',
+    runMode: 'auto',
+    gateRoute: 'plan',
   };
 
   it('returns false for single-step plans', () => {

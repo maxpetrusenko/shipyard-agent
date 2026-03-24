@@ -13,10 +13,13 @@ import { Annotation } from '@langchain/langgraph';
 
 export type ShipyardPhase =
   | 'idle'
+  | 'routing'
   | 'planning'
   | 'executing'
   | 'verifying'
   | 'reviewing'
+  | 'awaiting_confirmation'
+  | 'paused'
   | 'done'
   | 'error';
 
@@ -56,6 +59,11 @@ export interface ContextEntry {
   label: string;
   content: string;
   source: 'user' | 'tool' | 'system';
+}
+
+/** Markdown-ish block for injected contexts (shared by plan/execute/worker). */
+export function buildContextBlock(contexts: ContextEntry[]): string {
+  return contexts.map((c) => `## ${c.label}\n${c.content}`).join('\n\n');
 }
 
 export interface LLMMessage {
@@ -103,7 +111,12 @@ export const ShipyardState = Annotation.Root({
   maxRetries: Annotation<number>,
 
   // Telemetry
-  tokenUsage: Annotation<{ input: number; output: number } | null>,
+  tokenUsage: Annotation<{
+    input: number;
+    output: number;
+    cacheRead?: number;
+    cacheCreation?: number;
+  } | null>,
   traceUrl: Annotation<string | null>,
   runStartedAt: Annotation<number>,
 
@@ -118,6 +131,21 @@ export const ShipyardState = Annotation.Root({
 
   // Model routing hint
   modelHint: Annotation<'opus' | 'sonnet' | null>,
+
+  /** How to interpret the instruction at the entry gate. */
+  runMode: Annotation<'auto' | 'chat' | 'code'>,
+
+  /** Set by gateNode: continue to plan or finish run (Q&A only). */
+  gateRoute: Annotation<'plan' | 'end'>,
+
+  /** Per-run model override for the coding/execution role (legacy single field). */
+  modelOverride: Annotation<string | null>,
+
+  /** anthropic | openai presets for per-stage defaults (see model-policy). */
+  modelFamily: Annotation<'anthropic' | 'openai' | null>,
+
+  /** Per-stage model id overrides (planning, coding, review, summary, intent, chat, …). */
+  modelOverrides: Annotation<Record<string, string> | null>,
 });
 
 /** Inferred state type from the annotation. */

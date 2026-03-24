@@ -3,8 +3,16 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { getModelConfig } from '../../config/model-policy.js';
+import {
+  getResolvedModelConfigFromState,
+  isOpenAiModelId,
+} from '../../config/model-policy.js';
 import { getClient, wrapSystemPrompt } from '../../config/client.js';
+import {
+  messagesCreate,
+  extractCacheMetrics,
+} from '../../config/messages-create.js';
+import { completeTextForRole } from '../../llm/complete-text.js';
 import type { ShipyardStateType, LLMMessage } from '../state.js';
 
 const REPORT_SYSTEM = `Summarize the completed coding run. Include:
@@ -17,8 +25,7 @@ Be concise. Use bullet points.`;
 export async function reportNode(
   state: ShipyardStateType,
 ): Promise<Partial<ShipyardStateType>> {
-  const config = getModelConfig('summary');
-  const anthropic = getClient();
+  const config = getResolvedModelConfigFromState('summary', state);
 
   const summary = [
     `Instruction: ${state.instruction}`,
@@ -44,22 +51,40 @@ export async function reportNode(
 
   let inputTokens = state.tokenUsage?.input ?? 0;
   let outputTokens = state.tokenUsage?.output ?? 0;
+  let cacheReadTokens = state.tokenUsage?.cacheRead ?? 0;
+  let cacheCreationTokens = state.tokenUsage?.cacheCreation ?? 0;
 
-  const response = await anthropic.messages.create({
-    model: config.model,
-    max_tokens: config.maxTokens,
-    temperature: config.temperature,
-    system: wrapSystemPrompt(REPORT_SYSTEM),
-    messages: [{ role: 'user', content: summary }],
-  });
+  let text: string;
+  if (isOpenAiModelId(config.model)) {
+    const r = await completeTextForRole(state, 'summary', REPORT_SYSTEM, [
+      { role: 'user', content: summary },
+    ], { liveNode: 'report' });
+    inputTokens += r.inputTokens;
+    outputTokens += r.outputTokens;
+    cacheReadTokens += r.cacheRead;
+    cacheCreationTokens += r.cacheCreation;
+    text = r.text;
+  } else {
+    const anthropic = getClient();
+    const response = await messagesCreate(anthropic, {
+      model: config.model,
+      max_tokens: config.maxTokens,
+      temperature: config.temperature,
+      system: wrapSystemPrompt(REPORT_SYSTEM),
+      messages: [{ role: 'user', content: summary }],
+    }, { liveNode: 'report' });
 
-  inputTokens += response.usage.input_tokens;
-  outputTokens += response.usage.output_tokens;
+    inputTokens += response.usage.input_tokens;
+    outputTokens += response.usage.output_tokens;
+    const rcm = extractCacheMetrics(response);
+    cacheReadTokens += rcm.cacheRead;
+    cacheCreationTokens += rcm.cacheCreation;
 
-  const text = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('');
+    text = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('');
+  }
 
   const newMessages: LLMMessage[] = [
     ...state.messages,
@@ -69,6 +94,11 @@ export async function reportNode(
   return {
     phase: 'done',
     messages: newMessages,
-    tokenUsage: { input: inputTokens, output: outputTokens },
+    tokenUsage: {
+      input: inputTokens,
+      output: outputTokens,
+      cacheRead: cacheReadTokens,
+      cacheCreation: cacheCreationTokens,
+    },
   };
 }

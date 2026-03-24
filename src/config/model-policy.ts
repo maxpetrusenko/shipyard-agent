@@ -11,6 +11,19 @@ export interface ModelConfig {
   temperature: number;
 }
 
+/** Models that require temperature=1 (extended thinking). */
+const TEMP_1_ONLY_MODELS = new Set([
+  'claude-opus-4-6',
+]);
+
+/** Clamp temperature to 1 for models that require it. */
+function clampTemp(config: ModelConfig): ModelConfig {
+  if (TEMP_1_ONLY_MODELS.has(config.model) && config.temperature !== 1) {
+    return { ...config, temperature: 1 };
+  }
+  return config;
+}
+
 export const MODEL_CONFIGS = {
   planning: {
     model: 'claude-opus-4-6',
@@ -37,12 +50,38 @@ export const MODEL_CONFIGS = {
     maxTokens: 2048,
     temperature: 0.3,
   },
+  /** CHAT vs CODE routing in auto mode (keep tiny). */
+  intent: {
+    model: 'claude-3-5-haiku-20241022',
+    maxTokens: 16,
+    temperature: 0,
+  },
+  /** Direct Q&A replies (no tools). */
+  chat: {
+    model: 'claude-sonnet-4-5-20250929',
+    maxTokens: 2048,
+    temperature: 0.2,
+  },
 } as const satisfies Record<string, ModelConfig>;
 
 export type ModelRole = keyof typeof MODEL_CONFIGS;
 
+/** Optional per-role model id (e.g. Haiku for cheap smoke tests). Unset = use table defaults. */
+const MODEL_ENV_KEYS: Record<ModelRole, string> = {
+  planning: 'SHIPYARD_PLANNING_MODEL',
+  coding: 'SHIPYARD_CODING_MODEL',
+  review: 'SHIPYARD_REVIEW_MODEL',
+  verification: 'SHIPYARD_VERIFICATION_MODEL',
+  summary: 'SHIPYARD_SUMMARY_MODEL',
+  intent: 'SHIPYARD_INTENT_MODEL',
+  chat: 'SHIPYARD_CHAT_MODEL',
+};
+
 export function getModelConfig(role: ModelRole): ModelConfig {
-  return MODEL_CONFIGS[role];
+  const base = MODEL_CONFIGS[role];
+  const fromEnv = process.env[MODEL_ENV_KEYS[role]]?.trim();
+  if (!fromEnv) return clampTemp(base);
+  return clampTemp({ ...base, model: fromEnv });
 }
 
 // ---------------------------------------------------------------------------
@@ -51,20 +90,158 @@ export function getModelConfig(role: ModelRole): ModelConfig {
 
 /** Per-token cost rates by model (input/output in USD). */
 const COST_RATES: Record<string, { input: number; output: number }> = {
-  'claude-opus-4-6':             { input: 15 / 1_000_000, output: 75 / 1_000_000 },
-  'claude-sonnet-4-5-20250929':  { input: 3 / 1_000_000,  output: 15 / 1_000_000 },
+  'claude-opus-4-6': { input: 15 / 1_000_000, output: 75 / 1_000_000 },
+  'claude-sonnet-4-5-20250929': { input: 3 / 1_000_000, output: 15 / 1_000_000 },
+  'claude-haiku-4-5-20251001': { input: 1 / 1_000_000, output: 5 / 1_000_000 },
+  'claude-haiku-4-5': { input: 1 / 1_000_000, output: 5 / 1_000_000 },
+  'claude-3-5-haiku-20241022': { input: 1 / 1_000_000, output: 5 / 1_000_000 },
+  /** OpenAI (platform pricing, per 1M tokens). */
+  'gpt-5.1-codex': { input: 1.25 / 1_000_000, output: 10 / 1_000_000 },
+  'gpt-5.3-codex': { input: 1.25 / 1_000_000, output: 10 / 1_000_000 },
+  'gpt-5-mini': { input: 0.25 / 1_000_000, output: 2 / 1_000_000 },
 };
+
+/** Provider family presets (per-stage model ids). */
+export type ModelFamily = 'anthropic' | 'openai';
+
+const FAMILY_DEFAULT_MODELS: Record<
+  ModelFamily,
+  Record<ModelRole, string>
+> = {
+  anthropic: {
+    planning: 'claude-sonnet-4-5-20250929',
+    coding: 'claude-haiku-4-5',
+    review: 'claude-sonnet-4-5-20250929',
+    verification: 'claude-sonnet-4-5-20250929',
+    summary: 'claude-sonnet-4-5-20250929',
+    intent: 'claude-haiku-4-5',
+    chat: 'claude-sonnet-4-5-20250929',
+  },
+  openai: {
+    planning: 'gpt-5.3-codex',
+    coding: 'gpt-5-mini',
+    review: 'gpt-5.3-codex',
+    verification: 'gpt-5-mini',
+    summary: 'gpt-5-mini',
+    intent: 'gpt-5-mini',
+    chat: 'gpt-5-mini',
+  },
+};
+
+export interface ModelResolutionOpts {
+  /** When set, overrides env defaults for every stage unless a per-stage override exists. */
+  modelFamily?: ModelFamily | null;
+  /** Per-stage model id overrides (from API or settings UI). */
+  modelOverrides?: Partial<Record<ModelRole, string>> | null;
+  /** Single per-run model override applied when no per-stage override exists. */
+  legacyCodingOverride?: string | null;
+}
+
+/**
+ * Effective model config for a role: per-stage override, single run override,
+ * then env `SHIPYARD_*_MODEL`, then family preset, then table default.
+ */
+export function getResolvedModelConfig(
+  role: ModelRole,
+  opts: ModelResolutionOpts,
+): ModelConfig {
+  const base = MODEL_CONFIGS[role];
+  const stageOverride = opts.modelOverrides?.[role]?.trim();
+  if (stageOverride) {
+    return clampTemp({ ...base, model: stageOverride });
+  }
+  if (opts.legacyCodingOverride?.trim()) {
+    return clampTemp({ ...base, model: opts.legacyCodingOverride.trim() });
+  }
+  const fromEnv = process.env[MODEL_ENV_KEYS[role]]?.trim();
+  if (fromEnv) {
+    return clampTemp({ ...base, model: fromEnv });
+  }
+  if (opts.modelFamily === 'anthropic' || opts.modelFamily === 'openai') {
+    return clampTemp({ ...base, model: FAMILY_DEFAULT_MODELS[opts.modelFamily][role] });
+  }
+  return getModelConfig(role);
+}
+
+/** Shorthand for graph nodes that have full state. */
+export function getResolvedModelConfigFromState(
+  role: ModelRole,
+  state: {
+    modelFamily?: ModelFamily | null;
+    modelOverrides?: Partial<Record<ModelRole, string>> | Record<string, string> | null;
+    modelOverride?: string | null;
+  },
+): ModelConfig {
+  return getResolvedModelConfig(role, {
+    modelFamily: state.modelFamily ?? null,
+    modelOverrides:
+      (state.modelOverrides as Partial<Record<ModelRole, string>> | null) ??
+      null,
+    legacyCodingOverride: state.modelOverride ?? null,
+  });
+}
+
+/** True when the execute node should use the OpenAI SDK (Chat Completions + tools). */
+export function isOpenAiModelId(model: string): boolean {
+  return model.trim().toLowerCase().startsWith('gpt-');
+}
+
+/** Model presets available in the dashboard model selector. */
+export const MODEL_PRESETS = [
+  { id: 'default', label: 'Default (Sonnet 4.5)', model: null },
+  { id: 'haiku', label: 'Haiku 4.5 (fast/cheap)', model: 'claude-haiku-4-5' },
+  { id: 'sonnet', label: 'Sonnet 4.5', model: 'claude-sonnet-4-5-20250929' },
+  { id: 'opus', label: 'Opus 4.6 (best)', model: 'claude-opus-4-6' },
+  {
+    id: 'gpt-5.1-codex',
+    label: 'GPT-5.1 Codex (OpenAI)',
+    model: 'gpt-5.1-codex',
+  },
+  {
+    id: 'gpt-5-mini',
+    label: 'GPT-5 Mini (OpenAI)',
+    model: 'gpt-5-mini',
+  },
+] as const;
+
+/** All model ids selectable in Settings (per-stage overrides). */
+export const MODEL_CATALOG: { id: string; label: string }[] = [
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+  { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
+  { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+  { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
+  { id: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' },
+  { id: 'gpt-5-mini', label: 'GPT-5 Mini' },
+];
 
 /**
  * Estimate USD cost for a given model + token counts.
+ *
+ * When cache metrics are provided, applies Anthropic's cache pricing:
+ * - Cache reads: 10% of base input price (90% discount)
+ * - Cache writes: 125% of base input price (25% premium)
+ * - Uncached input: full base input price
+ *
+ * `inputTokens` from the API represents non-cache-read tokens.
+ * `cacheRead` tokens are charged at the discounted rate.
+ *
  * Returns 0 for unknown models.
  */
 export function estimateCost(
   model: string,
   inputTokens: number,
   outputTokens: number,
+  cacheRead = 0,
+  cacheCreation = 0,
 ): number {
   const rate = COST_RATES[model];
   if (!rate) return 0;
-  return inputTokens * rate.input + outputTokens * rate.output;
+
+  const uncachedInput = inputTokens - cacheCreation;
+  const inputCost =
+    uncachedInput * rate.input +
+    cacheCreation * rate.input * 1.25 +
+    cacheRead * rate.input * 0.1;
+
+  return inputCost + outputTokens * rate.output;
 }

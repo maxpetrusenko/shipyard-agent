@@ -148,6 +148,37 @@ describe('timeout', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Abort signal (Stop run)
+// ---------------------------------------------------------------------------
+
+describe('abort signal', () => {
+  it('returns immediately when signal is already aborted', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const result = await runBash({
+      command: 'sleep 20',
+      timeout: 60_000,
+      signal: ac.signal,
+    });
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('Run cancelled by user');
+  });
+
+  it('stops a long sleep when signal aborts', async () => {
+    const ac = new AbortController();
+    const p = runBash({
+      command: 'sleep 20',
+      timeout: 60_000,
+      signal: ac.signal,
+    });
+    setTimeout(() => ac.abort(), 80);
+    const result = await p;
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('Run cancelled by user');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Output truncation
 // ---------------------------------------------------------------------------
 
