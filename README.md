@@ -63,7 +63,6 @@ pnpm start
 
 - `/dashboard` — chat-style workspace for ask, plan, and agent runs
 - `/runs` — `Refactoring Runs` view; defaults to repo-touching/code-oriented history and hides pure ask chats
-- `/settings` — model family and per-stage model preferences
 - `/benchmarks` — benchmark summaries and trend charts
 
 ## Configuration
@@ -122,14 +121,14 @@ curl http://localhost:4200/api/runs/<run-id>
 
 ### `POST /api/runs/:id/followup`
 
-Append a message to an Ask thread. Follow-ups are queued in-order on the same thread, so you can keep sending asks while another run is still executing. You can also pass fresh `model`, `modelFamily`, and `models` fields if the next turn should use updated model settings.
+Append a message to an Ask thread. Follow-ups are queued in-order on the same thread, so you can keep sending asks while another run is still executing. Passing any model selection fields replaces the prior thread selection. Send `"model": null` to clear a stale whole-run override and fall back to the default provider routing.
 
 ```bash
 curl -X POST http://localhost:4200/api/runs/<run-id>/followup \
   -H "Content-Type: application/json" \
   -d '{
     "instruction": "and now explain the tradeoff",
-    "modelFamily": "openai"
+    "model": null
   }'
 ```
 
@@ -194,8 +193,10 @@ Authorization: Bearer <your-key>
 
 ### Rate Limiting
 
-- `POST /api/run`: 10 requests/minute per IP
-- All other endpoints: 60 requests/minute per IP
+- `POST /api/run`: 30 requests/minute per IP
+- `POST /api/runs/:id/followup`: 120 requests/minute per IP
+- Other write endpoints (`inject`, `cancel`, `confirm`, `resume`, deletes`) use their own scoped buckets
+- Read endpoints are not throttled so dashboard polling/history browsing do not block sends
 
 ## Benchmarks
 

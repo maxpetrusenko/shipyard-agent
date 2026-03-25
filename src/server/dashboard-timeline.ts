@@ -22,6 +22,64 @@ function mkFileEdit(ts, path, tier, oldStr, newStr) { return mkEntry('file_edit'
 function mkVerification(ts, passed, errCount, tcOut, testOut) { return mkEntry('verification', ts, { passed: passed, errCount: errCount, tcOut: tcOut, testOut: testOut }); }
 function mkReview(ts, decision, feedback) { return mkEntry('review', ts, { decision: decision, feedback: feedback }); }
 function mkPhase(ts, phase) { return mkEntry('phase', ts, { phase: phase }); }
+function isTimelineMessage(entry) { return entry && (entry.type === 'user_msg' || entry.type === 'asst_msg'); }
+function normalizeRunMessages(messages) {
+  var out = [];
+  var list = Array.isArray(messages) ? messages : [];
+  for (var i = 0; i < list.length; i++) {
+    var msg = list[i];
+    if (!msg || (msg.role !== 'user' && msg.role !== 'assistant')) continue;
+    out.push({ role: msg.role, content: msg.content || '' });
+  }
+  return out;
+}
+function messageEntryFromRunMessage(msg, ts) {
+  return msg.role === 'user' ? mkUserMsg(ts, msg.content) : mkAsstMsg(ts, msg.content);
+}
+function lastUserMessageIndex(messages) {
+  for (var i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return i;
+  }
+  return -1;
+}
+function seedTimelineFromMessages(runId, messages) {
+  var normalized = normalizeRunMessages(messages);
+  if (!normalized.length) return;
+  if (!timelineMap[runId]) timelineMap[runId] = [];
+  var tl = timelineMap[runId];
+  for (var i = 0; i < tl.length; i++) {
+    if (isTimelineMessage(tl[i])) return;
+  }
+  var seedUntil = lastUserMessageIndex(normalized);
+  if (seedUntil < 0) seedUntil = normalized.length - 1;
+  var seed = [];
+  for (var j = 0; j <= seedUntil; j++) {
+    seed.push(messageEntryFromRunMessage(normalized[j], Date.now() - (seedUntil - j + 1)));
+  }
+  if (seed.length) tl.unshift.apply(tl, seed);
+}
+function appendTrailingMessages(runId, messages) {
+  var normalized = normalizeRunMessages(messages);
+  if (!normalized.length) return;
+  if (!timelineMap[runId]) timelineMap[runId] = [];
+  var tl = timelineMap[runId];
+  var existingCount = 0;
+  for (var i = 0; i < tl.length; i++) {
+    if (isTimelineMessage(tl[i])) existingCount++;
+  }
+  for (var j = existingCount; j < normalized.length; j++) {
+    tl.push(messageEntryFromRunMessage(normalized[j], Date.now() + j));
+  }
+}
+function syncTimelineFromRun(runId, run) {
+  if (!runId || !run) return;
+  if (!timelineMap[runId] || !timelineMap[runId].length) {
+    timelineMap[runId] = buildTimeline(run);
+    return;
+  }
+  seedTimelineFromMessages(runId, run.messages);
+  appendTrailingMessages(runId, run.messages);
+}
 
 // Clear live timeline so buildTimeline reconstructs from full persisted data
 function clearRunTimeline(runId) {
@@ -41,16 +99,19 @@ function buildTimeline(r) {
   var tools = r.toolCallHistory || [];
   var dur = r.durationMs || 0;
   var base = r.savedAt ? new Date(r.savedAt).getTime() - dur : Date.now() - dur;
-  var totalEvents = msgs.length + edits.length + tools.length;
+  var msgList = normalizeRunMessages(msgs);
+  var latestUserIdx = lastUserMessageIndex(msgList);
+  var leadMsgs = latestUserIdx >= 0 ? msgList.slice(0, latestUserIdx + 1) : msgList.slice();
+  var trailingMsgs = latestUserIdx >= 0 ? msgList.slice(latestUserIdx + 1) : [];
+  var totalEvents = leadMsgs.length + trailingMsgs.length + edits.length + tools.length;
   var step = totalEvents > 1 ? dur / totalEvents : 0;
   var tIdx = 0;
 
-  // Messages first
-  for (var i = 0; i < msgs.length; i++) {
-    var m = msgs[i];
+  // Earlier turns + latest user turn first
+  for (var i = 0; i < leadMsgs.length; i++) {
+    var m = leadMsgs[i];
     var ts = base + (tIdx++ * step);
-    if (m.role === 'user') entries.push(mkUserMsg(ts, m.content));
-    else if (m.role === 'assistant') entries.push(mkAsstMsg(ts, m.content));
+    entries.push(messageEntryFromRunMessage(m, ts));
   }
 
   // Tool calls
@@ -68,6 +129,13 @@ function buildTimeline(r) {
     var ed = edits[k];
     var tsE = base + (tIdx++ * step);
     entries.push(mkFileEdit(tsE, ed.file_path, ed.tier, ed.old_string, ed.new_string));
+  }
+
+  // Assistant/result messages after live work for the latest turn
+  for (var mIdx = 0; mIdx < trailingMsgs.length; mIdx++) {
+    var msg = trailingMsgs[mIdx];
+    var tsM = base + (tIdx++ * step);
+    entries.push(messageEntryFromRunMessage(msg, tsM));
   }
 
   // Verification

@@ -3,6 +3,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { ensureEnvLoaded } from './bootstrap-env.js';
 
 export interface ShipyardEnv {
   ANTHROPIC_API_KEY: string;
@@ -16,6 +17,7 @@ export interface ShipyardEnv {
 }
 
 export function loadEnv(): ShipyardEnv {
+  ensureEnvLoaded();
   const key = process.env['ANTHROPIC_API_KEY'];
   const authToken = process.env['ANTHROPIC_AUTH_TOKEN'];
   if (!key && !authToken) {

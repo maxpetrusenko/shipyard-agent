@@ -12,14 +12,8 @@ export const RUN_DEBUG_STYLES = `
 .dbg-v{font-size:12px;color:var(--text);line-height:1.45;word-break:break-word}
 .dbg-v code{font-size:11px}
 .dbg-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
-.dbg-section{margin-top:14px}
-.dbg-section:first-child{margin-top:0}
-.dbg-sec-title{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
-.dbg-models{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.dbg-model{padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);background:rgba(6,10,18,.9)}
-.dbg-model-name{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}
 .dbg-empty{padding:20px;border:1px dashed var(--border-bright);border-radius:var(--radius);color:var(--dim);text-align:center}
-@media(max-width:760px){.dbg-grid,.dbg-models{grid-template-columns:1fr}.dbg-modal{padding:12px}}
+@media(max-width:760px){.dbg-grid{grid-template-columns:1fr}.dbg-modal{padding:12px}}
 `;
 
 export function getRunDebugModalHtml(): string {
@@ -64,13 +58,6 @@ function dbgCode(v) {
 function dbgRow(k, v) {
   return '<div class="dbg-row"><div class="dbg-k">' + dbgEsc(k) + '</div><div class="dbg-v">' + v + '</div></div>';
 }
-function dbgModelsHtml(models) {
-  var keys = Object.keys(models || {});
-  if (!keys.length) return '<div class="dbg-empty">No model data</div>';
-  return '<div class="dbg-models">' + keys.map(function(key){
-    return '<div class="dbg-model"><div class="dbg-model-name">' + dbgEsc(key) + '</div><div class="dbg-v">' + dbgCode(models[key]) + '</div></div>';
-  }).join('') + '</div>';
-}
 function renderRunDebug(snapshot) {
   var external = snapshot.traceUrl ? dbgCode(snapshot.traceUrl) : '<span style="color:var(--dim)">external trace missing</span>';
   var primaryModel = snapshot.primaryModel ? dbgCode(snapshot.primaryModel) : '<span style="color:var(--dim)">no model used</span>';
@@ -106,12 +93,10 @@ function renderRunDebug(snapshot) {
   html += dbgRow('External trace', external);
   html += dbgRow('Local trace', dbgCode(snapshot.localTraceUrl));
   html += dbgRow('Run model override', snapshot.modelOverride ? dbgCode(snapshot.modelOverride) : '<span style="color:var(--dim)">none</span>');
-  html += dbgRow('Model family', dbgEsc(snapshot.modelFamily || '—'));
   html += dbgRow('Counts', 'messages ' + dbgNum(snapshot.messageCount) + '<br>tools ' + dbgNum(snapshot.toolCallCount) + '<br>edits ' + dbgNum(snapshot.fileEditCount) + '<br>steps ' + dbgNum(snapshot.stepCount));
   html += dbgRow('Instruction', snapshot.instruction ? dbgEsc(snapshot.instruction) : '<span style="color:var(--dim)">empty</span>');
   html += dbgRow('Error', snapshot.error ? dbgEsc(snapshot.error) : '<span style="color:var(--dim)">none</span>');
   html += '</div>';
-  html += '<div class="dbg-section"><div class="dbg-sec-title">Resolved models</div>' + dbgModelsHtml(snapshot.resolvedModels) + '</div>';
   return html;
 }
 function setRunDebugBody(html) {

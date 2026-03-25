@@ -5,10 +5,12 @@
  * or OPENAI_PROJECT, OPENAI_ORGANIZATION or OPENAI_ORG_ID, OPENAI_BASE_URL.
  */
 import OpenAI from 'openai';
+import { ensureEnvLoaded } from './bootstrap-env.js';
 
 let _client: OpenAI | null = null;
 
 export function getOpenAIClient(): OpenAI {
+  ensureEnvLoaded();
   if (_client) return _client;
 
   const apiKey = process.env['OPENAI_API_KEY']?.trim();
@@ -31,7 +33,7 @@ export function getOpenAIClient(): OpenAI {
     ...(organization ? { organization } : {}),
     ...(project ? { project } : {}),
     ...(baseURL ? { baseURL } : {}),
-    maxRetries: 8,
+    maxRetries: 0,
     timeout: 600_000,
   });
   return _client;

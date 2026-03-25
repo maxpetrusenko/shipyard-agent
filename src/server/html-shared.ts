@@ -1,8 +1,8 @@
 /**
- * Shared top navigation for dashboard / runs / settings / benchmarks pages.
+ * Shared top navigation for dashboard / runs / benchmarks pages.
  */
 
-export type NavPage = 'chat' | 'runs' | 'settings' | 'benchmarks';
+export type NavPage = 'chat' | 'runs' | 'benchmarks';
 
 export const NAV_STYLES = `
 .app-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:12px}
@@ -58,5 +58,5 @@ export const NAV_STYLES = `
 export function topNav(active: NavPage): string {
   const link = (page: NavPage, href: string, label: string) =>
     `<a href="${href}" class="${active === page ? 'active' : ''}" ${active === page ? 'aria-current="page"' : ''}>${label}</a>`;
-  return `<nav class="app-nav" aria-label="Site">${link('chat', '/dashboard', 'Chat')}${link('runs', '/runs', 'Runs')}${link('settings', '/settings', 'Settings')}${link('benchmarks', '/benchmarks', 'Benchmarks')}</nav>`;
+  return `<nav class="app-nav" aria-label="Site">${link('chat', '/dashboard', 'Chat')}${link('runs', '/runs', 'Runs')}${link('benchmarks', '/benchmarks', 'Benchmarks')}</nav>`;
 }

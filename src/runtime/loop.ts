@@ -5,7 +5,7 @@
  * Instructions arrive via REST or WebSocket.
  *
  * Persistence:
- *   - File-based (always-on): every completed run is saved to results/<runId>.json
+ *   - File-based (default outside tests): completed runs are saved to results/<runId>.json
  *   - Postgres (optional): set via setPool() for relational storage
  *   - On init: loads existing runs from results/ so history survives restarts
  */
@@ -35,6 +35,7 @@ import type {
   LLMMessage,
   PlanStep,
   VerificationResult,
+  ToolCallRecord,
 } from '../graph/state.js';
 import { setRunAbortSignal } from './run-signal.js';
 import {
@@ -77,6 +78,11 @@ export interface SubmitModelOptions {
   modelOverride?: string;
   modelFamily?: 'anthropic' | 'openai';
   modelOverrides?: Partial<Record<ModelRole, string>>;
+  /**
+   * When true, omitted model fields should clear prior thread-level selection
+   * instead of silently inheriting it.
+   */
+  replaceModelSelection?: boolean;
 }
 
 export type SubmitModelArg = string | SubmitModelOptions | undefined;
@@ -136,6 +142,27 @@ function buildLocalAskReply(instruction: string): string | null {
   return tryChatShortcut(instruction);
 }
 
+function toolRecordFromLiveFeed(
+  event: Extract<LiveFeedEvent, { type: 'tool' }>,
+): ToolCallRecord {
+  const toolInput: Record<string, unknown> =
+    event.tool_name === 'bash'
+      ? { command: event.detail }
+      : event.tool_name === 'ls'
+        ? { path: event.detail }
+        : event.file_path
+          ? { file_path: event.file_path, summary: event.detail }
+          : { summary: event.detail };
+
+  return {
+    tool_name: event.tool_name,
+    tool_input: toolInput,
+    tool_result: JSON.stringify({ success: event.ok }),
+    timestamp: event.timestamp,
+    duration_ms: 0,
+  };
+}
+
 const MODEL_ROLES = Object.keys(MODEL_CONFIGS) as ModelRole[];
 
 function resolveModelsForRun(opts: {
@@ -152,6 +179,14 @@ function resolveModelsForRun(opts: {
     }).model;
   }
   return resolved;
+}
+
+function preferNonEmptyArray<T>(
+  primary: T[] | null | undefined,
+  fallback: T[] | null | undefined,
+): T[] {
+  if (Array.isArray(primary) && primary.length > 0) return primary;
+  return Array.isArray(fallback) ? fallback : [];
 }
 
 function getRunStartPhase(
@@ -228,6 +263,26 @@ export class InstructionLoop {
   }
 
   private broadcastLiveFeed(event: LiveFeedEvent): void {
+    const runId = this.currentRunId;
+    if (runId) {
+      const current = this.runs.get(runId);
+      if (current) {
+        if (event.type === 'file_edit') {
+          this.runs.set(runId, {
+            ...current,
+            fileEdits: [...current.fileEdits, event.edit],
+          });
+        } else if (event.type === 'tool') {
+          this.runs.set(runId, {
+            ...current,
+            toolCallHistory: [
+              ...current.toolCallHistory,
+              toolRecordFromLiveFeed(event),
+            ],
+          });
+        }
+      }
+    }
     for (const fn of this.liveFeedListeners) {
       try {
         fn(event);
@@ -260,12 +315,14 @@ export class InstructionLoop {
     let modelOverride: string | undefined;
     let modelFamily: 'anthropic' | 'openai' | undefined;
     let modelOverrides: Partial<Record<ModelRole, string>> | undefined;
+    let replaceModelSelection = false;
     if (typeof modelArg === 'string') {
       modelOverride = modelArg.trim() || undefined;
     } else if (modelArg && typeof modelArg === 'object') {
       modelOverride = modelArg.modelOverride?.trim() || undefined;
       modelFamily = modelArg.modelFamily;
       modelOverrides = modelArg.modelOverrides;
+      replaceModelSelection = modelArg.replaceModelSelection === true;
     }
     if (
       (runMode ?? 'auto') !== 'code' &&
@@ -388,12 +445,14 @@ export class InstructionLoop {
     let modelOverride: string | undefined;
     let modelFamily: 'anthropic' | 'openai' | undefined;
     let modelOverrides: Partial<Record<ModelRole, string>> | undefined;
+    let replaceModelSelection = false;
     if (typeof modelArg === 'string') {
       modelOverride = modelArg.trim() || undefined;
     } else if (modelArg && typeof modelArg === 'object') {
       modelOverride = modelArg.modelOverride?.trim() || undefined;
       modelFamily = modelArg.modelFamily;
       modelOverrides = modelArg.modelOverrides;
+      replaceModelSelection = modelArg.replaceModelSelection === true;
     }
 
     let existing = this.runs.get(runId) ?? null;
@@ -406,9 +465,15 @@ export class InstructionLoop {
         : existing.runMode === 'code'
           ? 'agent'
           : 'ask');
-    const effectiveModelOverride = modelOverride ?? existing.modelOverride ?? undefined;
-    const effectiveModelFamily = modelFamily ?? existing.modelFamily ?? undefined;
-    const effectiveModelOverrides = modelOverrides ?? existing.modelOverrides ?? undefined;
+    const effectiveModelOverride = replaceModelSelection
+      ? modelOverride
+      : modelOverride ?? existing.modelOverride ?? undefined;
+    const effectiveModelFamily = replaceModelSelection
+      ? modelFamily
+      : modelFamily ?? existing.modelFamily ?? undefined;
+    const effectiveModelOverrides = replaceModelSelection
+      ? modelOverrides
+      : modelOverrides ?? existing.modelOverrides ?? undefined;
     const hasPendingForRun =
       this.currentRunId === runId ||
       this.queue.some((item) => item.id === runId && item.kind === 'followup');
@@ -599,14 +664,14 @@ export class InstructionLoop {
   }
 
   /**
-   * Persist a run result to file (always) and Postgres (if pool set).
+   * Persist a run result to file (when enabled) and Postgres (if pool set).
    * Never throws — logs errors and continues.
    */
   private persistRun(runResult: RunResult): void {
-    // Always save to file
+    // Save to file when runtime persistence is enabled
     try {
       const path = saveRunToFile(runResult);
-      console.log(`[persistence] saved ${runResult.runId} -> ${path}`);
+      if (path) console.log(`[persistence] saved ${runResult.runId} -> ${path}`);
     } catch (err) {
       console.error('[persistence] file save failed:', err);
     }
@@ -826,8 +891,12 @@ export class InstructionLoop {
         ...current,
         phase: state.phase ?? current.phase,
         steps: state.steps ?? current.steps,
-        fileEdits: state.fileEdits ?? current.fileEdits,
-        toolCallHistory: state.toolCallHistory ?? current.toolCallHistory,
+        fileEdits: Array.isArray(state.fileEdits)
+          ? preferNonEmptyArray(state.fileEdits, current.fileEdits)
+          : current.fileEdits,
+        toolCallHistory: Array.isArray(state.toolCallHistory)
+          ? preferNonEmptyArray(state.toolCallHistory, current.toolCallHistory)
+          : current.toolCallHistory,
         tokenUsage: state.tokenUsage ?? current.tokenUsage,
         error: state.error ?? current.error,
         verificationResult:
@@ -960,21 +1029,30 @@ export class InstructionLoop {
 
       const threadKind = this.resolveThreadKind(item, finalState!);
       const totalDuration = priorDuration + (Date.now() - startedAt);
+      const current = this.runs.get(item.id);
 
       if (this.cancelRequested) {
         const traceUrl = buildTraceUrl(item.id) ?? finalState.traceUrl ?? null;
         const runResult: RunResult = {
           runId: item.id,
           phase: 'error',
-          steps: finalState.steps ?? [],
-          fileEdits: finalState.fileEdits ?? [],
-          toolCallHistory: finalState.toolCallHistory ?? [],
-          tokenUsage: finalState.tokenUsage ?? null,
+          steps: preferNonEmptyArray(finalState.steps, current?.steps),
+          fileEdits: preferNonEmptyArray(finalState.fileEdits, current?.fileEdits),
+          toolCallHistory: preferNonEmptyArray(
+            finalState.toolCallHistory,
+            current?.toolCallHistory,
+          ),
+          tokenUsage: finalState.tokenUsage ?? current?.tokenUsage ?? null,
           traceUrl,
-          messages: ensureRunMessages(item.instruction, finalState.messages),
+          messages: ensureRunMessages(
+            item.instruction,
+            finalState.messages ?? current?.messages,
+          ),
           error: 'Run cancelled by user',
-          verificationResult: finalState.verificationResult ?? null,
-          reviewFeedback: finalState.reviewFeedback ?? null,
+          verificationResult:
+            finalState.verificationResult ?? current?.verificationResult ?? null,
+          reviewFeedback:
+            finalState.reviewFeedback ?? current?.reviewFeedback ?? null,
           durationMs: totalDuration,
           threadKind,
           runMode: item.runMode ?? 'auto',
@@ -995,20 +1073,29 @@ export class InstructionLoop {
           phase: 'error',
           error: 'Run cancelled by user',
         });
+        this.resolveTraceUrlInBackground(item.id);
       } else {
         const traceUrl = buildTraceUrl(item.id) ?? finalState.traceUrl ?? null;
         const runResult: RunResult = {
           runId: item.id,
           phase: finalState.phase,
-          steps: finalState.steps,
-          fileEdits: finalState.fileEdits,
-          toolCallHistory: finalState.toolCallHistory,
-          tokenUsage: finalState.tokenUsage,
+          steps: preferNonEmptyArray(finalState.steps, current?.steps),
+          fileEdits: preferNonEmptyArray(finalState.fileEdits, current?.fileEdits),
+          toolCallHistory: preferNonEmptyArray(
+            finalState.toolCallHistory,
+            current?.toolCallHistory,
+          ),
+          tokenUsage: finalState.tokenUsage ?? current?.tokenUsage ?? null,
           traceUrl: traceUrl ?? finalState.traceUrl,
-          messages: ensureRunMessages(item.instruction, finalState.messages),
+          messages: ensureRunMessages(
+            item.instruction,
+            finalState.messages ?? current?.messages,
+          ),
           error: finalState.error,
-          verificationResult: finalState.verificationResult ?? null,
-          reviewFeedback: finalState.reviewFeedback ?? null,
+          verificationResult:
+            finalState.verificationResult ?? current?.verificationResult ?? null,
+          reviewFeedback:
+            finalState.reviewFeedback ?? current?.reviewFeedback ?? null,
           durationMs: totalDuration,
           threadKind,
           runMode: item.runMode ?? 'auto',
@@ -1087,6 +1174,7 @@ export class InstructionLoop {
         verificationResult: runResult.verificationResult,
         reviewFeedback: runResult.reviewFeedback,
       });
+      this.resolveTraceUrlInBackground(item.id);
     } finally {
       setLiveFeedListener(null);
       unsubProgress();

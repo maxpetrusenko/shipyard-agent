@@ -12,7 +12,6 @@ import { heroHandler } from './server/hero.js';
 import { dashboardHandler } from './server/dashboard.js';
 import { benchmarksHandler } from './server/benchmarks.js';
 import { runsHandler } from './server/runs.js';
-import { settingsHandler } from './server/settings.js';
 import { createBenchmarkRoutes } from './server/benchmark-api.js';
 import type { InstructionLoop } from './runtime/loop.js';
 
@@ -28,14 +27,15 @@ interface RateBucket {
 function createRateLimiter(windowMs: number) {
   const buckets = new Map<string, RateBucket>();
 
-  return function rateLimit(limit: number) {
+  return function rateLimit(limit: number, scope = 'default') {
     return (req: Request, res: Response, next: NextFunction): void => {
       const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
+      const bucketKey = `${scope}:${ip}`;
       const now = Date.now();
-      let bucket = buckets.get(ip);
+      let bucket = buckets.get(bucketKey);
       if (!bucket || now >= bucket.resetAt) {
         bucket = { count: 0, resetAt: now + windowMs };
-        buckets.set(ip, bucket);
+        buckets.set(bucketKey, bucket);
       }
       bucket.count++;
       if (bucket.count > limit) {
@@ -80,16 +80,21 @@ export function createApp(loop: InstructionLoop): express.Application {
     });
   }
 
-  // Rate limiting: POST /run = 10/min, others = 60/min
+  // Rate limiting: scope writes; dashboard reads stay unthrottled.
   const limiter = createRateLimiter(60_000);
-  app.post('/api/run', limiter(10));
-  app.use('/api', limiter(60));
+  app.post('/api/run', limiter(30, 'run'));
+  app.post('/api/runs/:id/followup', limiter(120, 'followup'));
+  app.post('/api/inject', limiter(60, 'inject'));
+  app.post('/api/cancel', limiter(60, 'cancel'));
+  app.post('/api/runs/:id/confirm', limiter(30, 'confirm'));
+  app.post('/api/runs/:id/resume', limiter(30, 'resume'));
+  app.delete('/api/runs/:id', limiter(30, 'delete-run'));
+  app.delete('/api/contexts/:label', limiter(60, 'delete-context'));
 
   // Hero landing at root, dashboard at /dashboard
   app.get('/', heroHandler());
   app.get('/dashboard', dashboardHandler(loop));
   app.get('/runs', runsHandler(loop));
-  app.get('/settings', settingsHandler());
   app.get('/benchmarks', benchmarksHandler());
 
   app.use('/api', createRoutes(loop));

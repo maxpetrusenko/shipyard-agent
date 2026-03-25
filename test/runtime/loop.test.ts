@@ -9,6 +9,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { InstructionLoop } from '../../src/runtime/loop.js';
 
+let liveFeedListener:
+  | ((event: Record<string, unknown>) => void)
+  | null = null;
+let liveToolDetail: string | null = null;
+let streamDelayMs = 0;
+
 // ---------------------------------------------------------------------------
 // Mock the graph builder so processNext doesn't call Anthropic
 // ---------------------------------------------------------------------------
@@ -22,6 +28,7 @@ vi.mock('../../src/graph/builder.js', () => ({
         phase: 'done',
         steps: [{ index: 0, description: 'test', files: [], status: 'done' }],
         fileEdits: [],
+        toolCallHistory: [],
         tokenUsage: { input: 100, output: 50 },
         traceUrl: null,
         messages: [{ role: 'assistant', content: 'Done' }],
@@ -29,11 +36,31 @@ vi.mock('../../src/graph/builder.js', () => ({
       };
       return {
         async *[Symbol.asyncIterator]() {
+          if (liveToolDetail) {
+            liveFeedListener?.({
+              type: 'tool',
+              tool_name: 'bash',
+              ok: true,
+              detail: liveToolDetail,
+              timestamp: Date.now(),
+            });
+          }
+          if (streamDelayMs > 0) {
+            await new Promise((r) => setTimeout(r, streamDelayMs));
+          }
           yield { report: finalState };
         },
       };
     },
   }),
+}));
+
+vi.mock('../../src/tools/hooks.js', () => ({
+  setLiveFeedListener: (
+    fn: ((event: Record<string, unknown>) => void) | null,
+  ) => {
+    liveFeedListener = fn;
+  },
 }));
 
 vi.mock('../../src/runtime/langsmith.js', () => ({
@@ -61,6 +88,9 @@ describe('InstructionLoop', () => {
 
   beforeEach(() => {
     loop = new InstructionLoop();
+    liveFeedListener = null;
+    liveToolDetail = null;
+    streamDelayMs = 0;
   });
 
   // -------------------------------------------------------------------------
@@ -179,6 +209,35 @@ describe('InstructionLoop', () => {
         role: 'assistant',
         content: 'Done',
       });
+    });
+
+    it('persists live tool activity into completed runs', async () => {
+      liveToolDetail = 'ls src';
+
+      const id = loop.submit('refactor small file', undefined, false, 'code');
+      await new Promise((r) => setTimeout(r, 200));
+
+      const run = loop.getRun(id);
+      expect(run?.toolCallHistory).toHaveLength(1);
+      expect(run?.toolCallHistory[0]?.tool_name).toBe('bash');
+      expect(run?.toolCallHistory[0]?.tool_input).toEqual({ command: 'ls src' });
+    });
+
+    it('persists live tool activity when a run is cancelled mid-stream', async () => {
+      liveToolDetail = 'ls src';
+      streamDelayMs = 100;
+
+      const id = loop.submit('refactor small file', undefined, false, 'code');
+      await new Promise((r) => setTimeout(r, 20));
+      expect(loop.cancel()).toBe(true);
+      await new Promise((r) => setTimeout(r, 200));
+
+      const run = loop.getRun(id);
+      expect(run?.phase).toBe('error');
+      expect(run?.error).toBe('Run cancelled by user');
+      expect(run?.toolCallHistory).toHaveLength(1);
+      expect(run?.toolCallHistory[0]?.tool_name).toBe('bash');
+      expect(run?.toolCallHistory[0]?.tool_input).toEqual({ command: 'ls src' });
     });
 
     it('records local-shortcut metadata for trivial ask runs', () => {

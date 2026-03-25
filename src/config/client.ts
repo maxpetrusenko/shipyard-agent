@@ -13,6 +13,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { execSync } from 'node:child_process';
+import { ensureEnvLoaded } from './bootstrap-env.js';
 
 /** Required system prompt prefix for OAuth-authenticated requests. */
 const OAUTH_SYSTEM_PREFIX =
@@ -43,6 +44,7 @@ export function isOAuthMode(): boolean {
 }
 
 export function getClient(): Anthropic {
+  ensureEnvLoaded();
   if (_client) return _client;
 
   const apiKey = process.env['ANTHROPIC_API_KEY'];
@@ -51,7 +53,7 @@ export function getClient(): Anthropic {
 
   // Mode 1: standard API key (non-dummy, non-placeholder)
   const retryOpts = {
-    maxRetries: 8,
+    maxRetries: 0,
     timeout: 600_000,
   } as const;
 

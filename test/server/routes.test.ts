@@ -7,6 +7,8 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer, type Server } from 'node:http';
+import { readdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { createApp } from '../../src/app.js';
 import { InstructionLoop } from '../../src/runtime/loop.js';
 
@@ -83,6 +85,46 @@ describe('POST /run validation', () => {
     expect(body.runId).toBeTruthy();
   });
 
+  it('applies the composer model picker to the whole run', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const res = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'refactor small file',
+        uiMode: 'plan',
+        model: 'gpt-5-mini',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { runId: string };
+    expect(body.runId).toBeTruthy();
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    const debugRes = await fetch(`${baseUrl2}/runs/${body.runId}/debug`);
+    expect(debugRes.status).toBe(200);
+    const debugBody = await debugRes.json() as {
+      modelOverride: string | null;
+      resolvedModels: Record<string, string>;
+    };
+    expect(debugBody.modelOverride).toBe('gpt-5-mini');
+    expect(debugBody.resolvedModels.coding).toBe('gpt-5-mini');
+    expect(debugBody.resolvedModels.planning).toBe('gpt-5-mini');
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+
   it('accepts instruction with contexts', async () => {
     const res = await fetch(`${baseUrl}/run`, {
       method: 'POST',
@@ -114,6 +156,43 @@ describe('POST /run validation', () => {
     expect(body.phase).toBe('done');
     expect(body.threadKind).toBe('ask');
     expect(body.messages?.at(-1)?.role).toBe('assistant');
+  });
+
+  it('does not persist ask shortcuts into disk history while running vitest', async () => {
+    const prevVitest = process.env['VITEST'];
+    const resultsDir = join(process.cwd(), 'results');
+    const before = new Set(readdirSync(resultsDir).filter((name) => name.endsWith('.json')));
+    process.env['VITEST'] = 'true';
+
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    try {
+      const res = await fetch(`${baseUrl2}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction: 'hi', uiMode: 'ask' }),
+      });
+      expect(res.status).toBe(200);
+      const after = readdirSync(resultsDir).filter((name) => name.endsWith('.json'));
+      expect(after).toHaveLength(before.size);
+    } finally {
+      await new Promise<void>((resolve) => server2.close(() => resolve()));
+      const after = readdirSync(resultsDir).filter((name) => name.endsWith('.json'));
+      for (const name of after) {
+        if (!before.has(name)) rmSync(join(resultsDir, name), { force: true });
+      }
+      if (prevVitest === undefined) delete process.env['VITEST'];
+      else process.env['VITEST'] = prevVitest;
+    }
   });
 
   it('keeps agent ui mode on auto so simple asks do not enter planning', async () => {
@@ -193,7 +272,7 @@ describe('POST /runs/:id/followup', () => {
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });
 
-  it('accepts fresh model settings on ask follow-ups', async () => {
+  it('accepts a whole-run model override on ask follow-ups', async () => {
     const loop2 = new InstructionLoop();
     const app2 = createApp(loop2);
     const server2 = createServer(app2);
@@ -218,7 +297,7 @@ describe('POST /runs/:id/followup', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         instruction: 'hi',
-        modelFamily: 'openai',
+        model: 'gpt-5-mini',
       }),
     });
     expect(res.status).toBe(200);
@@ -226,11 +305,57 @@ describe('POST /runs/:id/followup', () => {
     const debugRes = await fetch(`${baseUrl2}/runs/${created.runId}/debug`);
     expect(debugRes.status).toBe(200);
     const debugBody = await debugRes.json() as {
-      modelFamily: string | null;
+      modelOverride: string | null;
       resolvedModels: Record<string, string>;
     };
-    expect(debugBody.modelFamily).toBe('openai');
+    expect(debugBody.modelOverride).toBe('gpt-5-mini');
     expect(debugBody.resolvedModels.chat).toBe('gpt-5-mini');
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+
+  it('clears a prior model override when follow-up sends model: null', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const createRes = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'hi',
+        uiMode: 'ask',
+        model: 'gpt-5-mini',
+      }),
+    });
+    expect(createRes.status).toBe(200);
+    const created = await createRes.json() as { runId: string };
+
+    const res = await fetch(`${baseUrl2}/runs/${created.runId}/followup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'hello again',
+        model: null,
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const debugRes = await fetch(`${baseUrl2}/runs/${created.runId}/debug`);
+    expect(debugRes.status).toBe(200);
+    const debugBody = await debugRes.json() as {
+      modelOverride: string | null;
+      resolvedModels: Record<string, string>;
+    };
+    expect(debugBody.modelOverride).toBeNull();
+    expect(debugBody.resolvedModels.chat).toBe('claude-sonnet-4-5-20250929');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });
@@ -319,6 +444,22 @@ describe('GET /runs/:id', () => {
     expect(body.primaryModel).toBeNull();
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+});
+
+describe('rate limiting', () => {
+  it('does not let dashboard read traffic block a new run submission', async () => {
+    for (let i = 0; i < 65; i += 1) {
+      const res = await fetch(`${baseUrl}/runs`);
+      expect(res.status).toBe(200);
+    }
+
+    const res = await fetch(`${baseUrl}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'hi' }),
+    });
+    expect(res.status).toBe(200);
   });
 });
 
@@ -527,12 +668,12 @@ describe('rate limiting', () => {
     expect(res.status).toBe(200);
   });
 
-  // Rate limit is 10/min for POST /run, 60/min for others.
+  // POST /run is scoped separately from read traffic.
   // We test that the mechanism exists and responds with 429 after exceeding.
   it('returns 429 after exceeding POST /run rate limit', async () => {
-    // Send 12 requests rapidly (limit is 10/min)
+    // Send 32 requests rapidly (limit is 30/min)
     const results: number[] = [];
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 32; i++) {
       const res = await fetch(`${baseUrl}/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

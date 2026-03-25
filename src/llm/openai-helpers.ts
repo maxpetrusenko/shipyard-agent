@@ -22,28 +22,34 @@ export function openAiChatUsesMaxCompletionTokens(model: string): boolean {
   );
 }
 
+function openAiChatOmitsTemperature(model: string): boolean {
+  return model.trim().toLowerCase().startsWith('gpt-5');
+}
+
 function normalizeOpenAiChatCompletionBody(
   body: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
 ): OpenAI.Chat.ChatCompletionCreateParamsNonStreaming {
   const model = typeof body.model === 'string' ? body.model : '';
-  if (!openAiChatUsesMaxCompletionTokens(model)) {
-    return body;
+  const next = {
+    ...(body as unknown as Record<string, unknown>),
+  } as Record<string, unknown>;
+
+  if (openAiChatUsesMaxCompletionTokens(model)) {
+    const maxTok = next['max_tokens'];
+    const maxComp = next['max_completion_tokens'];
+    if (typeof maxComp === 'number') {
+      delete next['max_tokens'];
+    } else if (typeof maxTok === 'number') {
+      delete next['max_tokens'];
+      next['max_completion_tokens'] = maxTok;
+    }
   }
-  const b = body as unknown as Record<string, unknown>;
-  const maxTok = b['max_tokens'];
-  const maxComp = b['max_completion_tokens'];
-  if (typeof maxComp === 'number') {
-    const next = { ...b };
-    delete next['max_tokens'];
-    return next as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming;
+
+  if (openAiChatOmitsTemperature(model)) {
+    delete next['temperature'];
   }
-  if (typeof maxTok === 'number') {
-    const next = { ...b };
-    delete next['max_tokens'];
-    next['max_completion_tokens'] = maxTok;
-    return next as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming;
-  }
-  return body;
+
+  return next as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming;
 }
 
 export async function chatCompletionCreateWithRetry(

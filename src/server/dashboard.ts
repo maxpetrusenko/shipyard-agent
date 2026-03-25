@@ -13,6 +13,7 @@ import {
   getRunDebugModalHtml,
   getRunDebugScript,
 } from './dashboard-debug.js';
+import { getDashboardPreferenceScript } from './dashboard-preferences.js';
 
 export function dashboardHandler(loop: InstructionLoop) {
   return async (_req: Request, res: Response) => {
@@ -238,7 +239,7 @@ ${RUN_DEBUG_STYLES}
           <option value="">Auto (classify)</option>
         </select>
       </label>
-      <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px" title="Optional per-run model override; stage-specific settings still live in Settings">
+      <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px" title="Optional whole-run model override. When set, this model is used for the run across planning, coding, review, and chat stages.">
         <span>Model</span>
         <select id="modelSel" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:5px 10px;font-size:11px;font-family:var(--mono);cursor:pointer;transition:border-color var(--transition)" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'">
           <option value="">(none)</option>
@@ -286,49 +287,76 @@ try {
 
 var threadExpand = {};
 
-var DASH_MODEL_KEY = 'shipyard_dashboard_coding_model';
-var DASH_MODE_KEY = 'shipyard_dashboard_mode';
+${getDashboardPreferenceScript()}
 
-function restoreDashboardModelSel() {
-  var sel = document.getElementById('modelSel');
-  if (!sel) return;
-  try {
-    var v = localStorage.getItem(DASH_MODEL_KEY);
-    if (v == null || v === '') return;
-    for (var oi = 0; oi < sel.options.length; oi++) {
-      if (sel.options[oi].value === v) { sel.value = v; break; }
-    }
-  } catch (e) {}
+function preferDefined(nextVal, prevVal) {
+  return nextVal !== undefined ? nextVal : prevVal;
 }
 
-function persistDashboardModelSel() {
-  var sel = document.getElementById('modelSel');
-  if (!sel) return;
-  try {
-    if (sel.value) localStorage.setItem(DASH_MODEL_KEY, sel.value);
-    else localStorage.removeItem(DASH_MODEL_KEY);
-  } catch (e) {}
+function preferRicherArray(nextVal, prevVal) {
+  if (Array.isArray(nextVal) && nextVal.length > 0) return nextVal;
+  if (Array.isArray(prevVal) && prevVal.length > 0) return prevVal;
+  if (Array.isArray(nextVal)) return nextVal;
+  return Array.isArray(prevVal) ? prevVal : [];
 }
 
-function restoreDashboardModeSel() {
-  var sel = document.getElementById('uiModeSel');
-  if (!sel) return;
-  try {
-    var v = localStorage.getItem(DASH_MODE_KEY);
-    if (v == null || v === '') return;
-    for (var oi = 0; oi < sel.options.length; oi++) {
-      if (sel.options[oi].value === v) { sel.value = v; break; }
-    }
-  } catch (e) {}
+function runInstruction(run) {
+  var msgs = Array.isArray(run && run.messages) ? run.messages : [];
+  return ((msgs.find(function(m){ return m.role === 'user'; }) || {}).content || run.instruction || '');
 }
 
-function persistDashboardModeSel() {
-  var sel = document.getElementById('uiModeSel');
-  if (!sel) return;
-  try {
-    if (sel.value) localStorage.setItem(DASH_MODE_KEY, sel.value);
-    else localStorage.removeItem(DASH_MODE_KEY);
-  } catch (e) {}
+function mergeRunRecord(prev, next) {
+  var prevRun = prev || {};
+  var nextRun = next || {};
+  return {
+    runId: preferDefined(nextRun.runId, prevRun.runId),
+    phase: preferDefined(nextRun.phase, prevRun.phase),
+    steps: preferRicherArray(nextRun.steps, prevRun.steps),
+    fileEdits: preferRicherArray(nextRun.fileEdits, prevRun.fileEdits),
+    toolCallHistory: preferRicherArray(nextRun.toolCallHistory, prevRun.toolCallHistory),
+    messages: preferRicherArray(nextRun.messages, prevRun.messages),
+    tokenUsage: preferDefined(nextRun.tokenUsage, prevRun.tokenUsage),
+    traceUrl: preferDefined(nextRun.traceUrl, prevRun.traceUrl),
+    error: preferDefined(nextRun.error, prevRun.error),
+    verificationResult: preferDefined(nextRun.verificationResult, prevRun.verificationResult),
+    reviewFeedback: preferDefined(nextRun.reviewFeedback, prevRun.reviewFeedback),
+    durationMs: preferDefined(nextRun.durationMs, prevRun.durationMs),
+    threadKind: preferDefined(nextRun.threadKind, prevRun.threadKind),
+    savedAt: preferDefined(nextRun.savedAt, prevRun.savedAt),
+    startedAt: preferDefined(nextRun.startedAt, prevRun.startedAt),
+    queuedAt: preferDefined(nextRun.queuedAt, prevRun.queuedAt),
+    executionPath: preferDefined(nextRun.executionPath, prevRun.executionPath),
+    runMode: preferDefined(nextRun.runMode, prevRun.runMode),
+    modelOverride: preferDefined(nextRun.modelOverride, prevRun.modelOverride),
+    modelFamily: preferDefined(nextRun.modelFamily, prevRun.modelFamily),
+    modelOverrides: preferDefined(nextRun.modelOverrides, prevRun.modelOverrides),
+    resolvedModels: preferDefined(nextRun.resolvedModels, prevRun.resolvedModels),
+    instruction: runInstruction({
+      instruction: preferDefined(nextRun.instruction, prevRun.instruction),
+      messages: preferRicherArray(nextRun.messages, prevRun.messages),
+    }),
+  };
+}
+
+function mergeRunIntoMap(run) {
+  if (!run || !run.runId) return null;
+  var merged = mergeRunRecord(runsMap[run.runId], run);
+  runsMap[run.runId] = merged;
+  if (typeof syncTimelineFromRun === 'function') syncTimelineFromRun(run.runId, merged);
+  return merged;
+}
+
+function refreshRunDetails(runId) {
+  if (!runId) return Promise.resolve();
+  return fetch('/api/runs/' + runId)
+    .then(function(res){ return res.json(); })
+    .then(function(run){
+      mergeRunIntoMap(run);
+      renderChatList();
+      if (selectedRunId === run.runId) renderChatThread();
+      syncComposerUi();
+    })
+    .catch(function(){});
 }
 
 for (var si = 0; si < SEED.length; si++) runsMap[SEED[si].runId] = SEED[si];
@@ -338,9 +366,7 @@ function refreshRunsFromApi() {
     .then(function(r){ return r.json(); })
     .then(function(list){
       for (var i = 0; i < list.length; i++) {
-        var row = list[i];
-        var ins = ((row.messages || []).find(function(m){ return m.role === 'user'; }) || {}).content || '';
-        runsMap[row.runId] = Object.assign({}, runsMap[row.runId] || {}, row, { instruction: ins });
+        mergeRunIntoMap(list[i]);
       }
       renderChatList();
       if (selectedRunId && runsMap[selectedRunId]) renderChatThread();
@@ -542,12 +568,7 @@ function selectChat(runId) {
   selectedRunId = runId;
   renderChatList();
   renderChatThread();
-  fetch('/api/runs/' + runId).then(function(res){ return res.json(); }).then(function(run){
-    runsMap[run.runId] = Object.assign({}, run, { instruction: ((run.messages||[]).find(function(m){ return m.role === 'user'; })||{}).content||'' });
-    renderChatList();
-    renderChatThread();
-    syncComposerUi();
-  }).catch(function(){});
+  void refreshRunDetails(runId);
 }
 
 function newChat() {
@@ -681,11 +702,11 @@ function stopRun() {
         .then(function (r2) { return r2.json(); })
         .then(function (list) {
           for (var i = 0; i < list.length; i++) {
-            var row = list[i];
-            runsMap[row.runId] = Object.assign({}, row, { instruction: ((row.messages || []).find(function (m) { return m.role === 'user'; }) || {}).content || '' });
+            mergeRunIntoMap(list[i]);
           }
           renderChatList();
           if (selectedRunId) renderChatThread();
+          if (selectedRunId) void refreshRunDetails(selectedRunId);
         })
         .catch(function () {});
     })
@@ -712,20 +733,8 @@ function submitRun() {
     var fuId = selectedRunId;
     var followupBody = { instruction: inst };
     var followupModelEl = document.getElementById('modelSel');
-    if (followupModelEl && followupModelEl.value) followupBody.model = followupModelEl.value;
-    try {
-      var followupRaw = localStorage.getItem('shipyard_model_prefs');
-      if (followupRaw) {
-        var followupPrefs = JSON.parse(followupRaw);
-        if (followupPrefs.family === 'openai' || followupPrefs.family === 'anthropic') {
-          followupBody.modelFamily = followupPrefs.family;
-        }
-        if (followupPrefs.models && typeof followupPrefs.models === 'object') {
-          var followupKeys = Object.keys(followupPrefs.models);
-          if (followupKeys.length) followupBody.models = followupPrefs.models;
-        }
-      }
-    } catch (e) {}
+    followupBody.model = '';
+    if (followupModelEl) followupBody.model = followupModelEl.value;
     fetch('/api/runs/' + fuId + '/followup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(followupBody) })
       .then(function(r){ return r.json(); })
       .then(function(d){
@@ -735,7 +744,8 @@ function submitRun() {
             var cur = runsMap[fuId] || { runId: fuId };
             curRunId = null;
             lastState = Object.assign({}, lastState, { runId: fuId, phase: 'done' });
-            runsMap[fuId] = Object.assign({}, cur, {
+            runsMap[fuId] = mergeRunRecord(cur, {
+              runId: fuId,
               phase: d.phase,
               threadKind: d.threadKind || cur.threadKind || 'ask',
               messages: d.messages,
@@ -744,6 +754,7 @@ function submitRun() {
               error: d.error !== undefined ? d.error : cur.error,
               verificationResult: d.verificationResult !== undefined ? d.verificationResult : cur.verificationResult,
               reviewFeedback: d.reviewFeedback !== undefined ? d.reviewFeedback : cur.reviewFeedback,
+              durationMs: cur.durationMs,
             });
           } else {
             var ex = runsMap[fuId] || { runId: fuId };
@@ -752,7 +763,8 @@ function submitRun() {
             prev.push({ role: 'user', content: inst });
             curRunId = fuId;
             lastState = Object.assign({}, lastState, { runId: fuId, phase: queuedPhase });
-            runsMap[fuId] = Object.assign({}, ex, { messages: prev, phase: queuedPhase });
+            runsMap[fuId] = mergeRunRecord(ex, { runId: fuId, messages: prev, phase: queuedPhase });
+            if (typeof syncTimelineFromRun === 'function') syncTimelineFromRun(fuId, runsMap[fuId]);
           }
           ta.value = '';
           renderChatList();
@@ -773,17 +785,6 @@ function submitRun() {
   if (mdEl && mdEl.value) body.model = mdEl.value;
   persistDashboardModeSel();
   persistDashboardModelSel();
-  try {
-    var raw = localStorage.getItem('shipyard_model_prefs');
-    if (raw) {
-      var mp = JSON.parse(raw);
-      if (mp.family === 'openai' || mp.family === 'anthropic') body.modelFamily = mp.family;
-      if (mp.models && typeof mp.models === 'object') {
-        var ks = Object.keys(mp.models);
-        if (ks.length) body.models = mp.models;
-      }
-    }
-  } catch (e) {}
   fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) })
     .then(function(r){ return r.json(); })
     .then(function(d){
@@ -794,7 +795,7 @@ function submitRun() {
         curRunId = d.runId;
         lastState = Object.assign({}, lastState, { runId: d.runId, phase: initPhase });
         var existing = runsMap[d.runId] || {};
-        runsMap[d.runId] = Object.assign({}, existing, {
+        runsMap[d.runId] = mergeRunRecord(existing, {
           runId: d.runId,
           phase: initPhase,
           threadKind: d.threadKind || existing.threadKind || ((d.runMode === 'chat' || d.phase === 'done') ? 'ask' : undefined),
@@ -807,6 +808,7 @@ function submitRun() {
           reviewFeedback: d.reviewFeedback !== undefined ? d.reviewFeedback : existing.reviewFeedback,
           savedAt: new Date().toISOString()
         });
+        if (typeof syncTimelineFromRun === 'function') syncTimelineFromRun(d.runId, runsMap[d.runId]);
         renderChatList();
         renderChatThread();
         ta.value = '';
@@ -868,16 +870,12 @@ function onStateUpdate(s) {
   if (s.runId && s.phase) pushPhaseEntry(s.runId, s.phase);
   if (s.runId && s.verificationResult) pushVerificationEntry(s.runId, s.verificationResult);
   if (s.runId && s.reviewFeedback) pushReviewEntry(s.runId, s.reviewFeedback);
-  // On completion, clear live timeline so buildTimeline reconstructs from full run data
-  if (s.runId && (s.phase === 'done' || s.phase === 'error')) {
-    console.log('[TL] run completed, clearing timeline for rebuild', s.runId.slice(0,8));
-    clearRunTimeline(s.runId);
-  }
   // Update run in map
   if (s.runId) {
     var existing = runsMap[s.runId];
     if (existing) {
-      runsMap[s.runId] = Object.assign({}, existing, {
+      runsMap[s.runId] = mergeRunRecord(existing, {
+        runId: s.runId,
         phase: s.phase || existing.phase,
         steps: s.steps || existing.steps,
         fileEdits: s.fileEdits || existing.fileEdits,
@@ -890,21 +888,10 @@ function onStateUpdate(s) {
         threadKind: s.threadKind || existing.threadKind,
       });
     } else {
-      fetch('/api/runs/' + s.runId).then(function(r){ return r.json(); }).then(function(run){
-        runsMap[run.runId] = Object.assign({}, run, { instruction: ((run.messages||[]).find(function(m){ return m.role==='user'; })||{}).content||'' });
-        renderChatList();
-        if (selectedRunId === run.runId) renderChatThread();
-        syncComposerUi();
-      }).catch(function(){});
+      void refreshRunDetails(s.runId);
     }
     if (existing && (s.phase === 'done' || s.phase === 'error')) {
-      fetch('/api/runs/' + s.runId).then(function(r){ return r.json(); }).then(function(run){
-        var prev = runsMap[run.runId] || {};
-        runsMap[run.runId] = Object.assign({}, prev, run, { instruction: ((run.messages||[]).find(function(m){ return m.role==='user'; })||{}).content||'' });
-        renderChatList();
-        if (selectedRunId === run.runId) renderChatThread();
-        syncComposerUi();
-      }).catch(function(){});
+      void refreshRunDetails(s.runId);
     }
     renderChatList();
     if (selectedRunId === s.runId) renderChatThread();

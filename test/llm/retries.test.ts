@@ -45,4 +45,27 @@ describe('LLM retry behavior', () => {
 
     expect(create).toHaveBeenCalledTimes(1);
   });
+
+  it('omits temperature for GPT-5 chat completion requests', async () => {
+    const create = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: 'ok' } }],
+      usage: undefined,
+    });
+    const client = {
+      chat: {
+        completions: {
+          create,
+        },
+      },
+    } as any;
+
+    await chatCompletionCreateWithRetry(client, {
+      model: 'gpt-5-mini',
+      temperature: 0.3,
+      messages: [{ role: 'user', content: 'hi' }],
+    } as any);
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('temperature');
+  });
 });

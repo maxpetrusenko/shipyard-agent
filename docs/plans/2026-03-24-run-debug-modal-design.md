@@ -16,7 +16,6 @@
 - Clicking `i` opens a modal, never direct-opens a trace URL.
 - The modal shows:
   - primary model / execution path
-  - resolved stage models
   - run id
   - phase
   - thread kind

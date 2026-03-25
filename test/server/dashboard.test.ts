@@ -30,6 +30,8 @@ describe('GET /dashboard', () => {
     const html = await res.text();
     expect(html).toContain('href="/runs"');
     expect(html).toContain('>Runs<');
+    expect(html).not.toContain('href="/settings"');
+    expect(html).not.toContain('>Settings<');
   });
 
   it('includes delete chat controls', async () => {
@@ -44,6 +46,22 @@ describe('GET /dashboard', () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('id="runDebugModal"');
+  });
+
+  it('keeps trace actions available even when only the local fallback exists', async () => {
+    const res = await fetch(`${baseUrl}/dashboard`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).not.toContain('if (hasExternalTrace) {');
+    expect(html).toContain('dbgEsc(snapshot.openTraceUrl)');
+  });
+
+  it('does not render resolved model details in the debug modal', async () => {
+    const res = await fetch(`${baseUrl}/dashboard`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).not.toContain('Resolved models');
+    expect(html).not.toContain('dbgModelsHtml(snapshot.resolvedModels)');
   });
 
   it('persists the selected mode across reloads', async () => {
@@ -70,12 +88,39 @@ describe('GET /dashboard', () => {
     expect(html).toContain('return uiEl.value === r.threadKind;');
   });
 
-  it('includes current model settings in ask follow-up requests', async () => {
+  it('uses only the composer model in follow-up requests', async () => {
     const res = await fetch(`${baseUrl}/dashboard`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("var followupBody = { instruction: inst }");
-    expect(html).toContain("followupBody.modelFamily = followupPrefs.family");
-    expect(html).toContain("followupBody.models = followupPrefs.models");
+    expect(html).toContain("followupBody.model = followupModelEl.value");
+    expect(html).not.toContain('shipyard_model_prefs');
+    expect(html).not.toContain('followupBody.models');
+  });
+
+  it('preserves richer run history when dashboard merges updates', async () => {
+    const res = await fetch(`${baseUrl}/dashboard`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('function mergeRunRecord(prev, next)');
+    expect(html).toContain("if (typeof syncTimelineFromRun === 'function') syncTimelineFromRun(run.runId, merged);");
+    expect(html).toContain('toolCallHistory: preferRicherArray(nextRun.toolCallHistory, prevRun.toolCallHistory)');
+    expect(html).toContain('fileEdits: preferRicherArray(nextRun.fileEdits, prevRun.fileEdits)');
+  });
+
+  it('re-fetches the selected run after stop so tool history survives cancel', async () => {
+    const res = await fetch(`${baseUrl}/dashboard`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("if (selectedRunId) void refreshRunDetails(selectedRunId);");
+  });
+
+  it('seeds the live timeline with the user turn and keeps it after completion', async () => {
+    const res = await fetch(`${baseUrl}/dashboard`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('function seedTimelineFromMessages(runId, messages)');
+    expect(html).toContain("if (typeof syncTimelineFromRun === 'function') syncTimelineFromRun(d.runId, runsMap[d.runId]);");
+    expect(html).not.toContain('clearRunTimeline(s.runId);');
   });
 });

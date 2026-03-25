@@ -40,6 +40,10 @@ function wrap(fn: (req: Request, res: Response, next: NextFunction) => Promise<v
   };
 }
 
+function hasOwn(obj: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 export function createRoutes(loop: InstructionLoop): Router {
   const router = Router();
   router.use(json({ limit: '1mb' }));
@@ -160,10 +164,11 @@ export function createRoutes(loop: InstructionLoop): Router {
 
   // POST /runs/:id/followup — continue an existing thread (same runId)
   router.post('/runs/:id/followup', wrap((req, res) => {
-    const { instruction, model, modelFamily, models } = req.body as {
+    const payload = (req.body ?? {}) as Record<string, unknown>;
+    const { instruction, model, modelFamily, models } = payload as {
       instruction?: string;
-      model?: string;
-      modelFamily?: string;
+      model?: string | null;
+      modelFamily?: string | null;
       models?: Partial<Record<ModelRole, string>>;
     };
     if (!instruction || typeof instruction !== 'string') {
@@ -180,10 +185,16 @@ export function createRoutes(loop: InstructionLoop): Router {
         : undefined;
     const modelOverrides =
       models && typeof models === 'object' ? models : undefined;
+    const replaceModelSelection =
+      hasOwn(payload, 'model') ||
+      hasOwn(payload, 'modelFamily') ||
+      hasOwn(payload, 'models');
     const ok = loop.followUpThread(req.params['id'] as string, instruction, {
-      modelOverride: model?.trim() || undefined,
+      modelOverride:
+        typeof model === 'string' ? model.trim() || undefined : undefined,
       modelFamily: fam,
       modelOverrides,
+      replaceModelSelection,
     });
     if (!ok) {
       res.status(400).json({

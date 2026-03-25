@@ -2,10 +2,12 @@
  * Shipyard persistence layer.
  *
  * Two backends:
- *   1. JSON file-based (always-on, zero-config) — writes to results/<runId>.json
+ *   1. JSON file-based (default in normal runtime) — writes to results/<runId>.json
  *   2. Postgres (optional, set via setPool) — full relational storage
  *
- * File-based persistence is the default and always runs.
+ * File-based persistence is the default for app/runtime usage and is disabled
+ * during vitest runs (or via SHIPYARD_DISABLE_FILE_PERSISTENCE=true) so tests
+ * do not pollute real dashboard history.
  * Postgres is an additive enhancement when a pool is provided.
  */
 
@@ -46,17 +48,27 @@ export function ensureShipyardPgSchema(pool: Pool): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /** Default results directory (project root / results) */
-const RESULTS_DIR = join(
+const DEFAULT_RESULTS_DIR = join(
   new URL('../../', import.meta.url).pathname,
   'results',
 );
 
+function getResultsDir(): string {
+  const override = process.env['SHIPYARD_RESULTS_DIR']?.trim();
+  return override || DEFAULT_RESULTS_DIR;
+}
+
+function isFilePersistenceEnabled(): boolean {
+  return process.env['SHIPYARD_DISABLE_FILE_PERSISTENCE'] !== 'true' &&
+    !process.env['VITEST'];
+}
+
 // ---------------------------------------------------------------------------
-// File-based persistence (always-on)
+// File-based persistence (default-on outside tests)
 // ---------------------------------------------------------------------------
 
 /** Ensure the results directory exists. */
-function ensureResultsDir(dir: string = RESULTS_DIR): void {
+function ensureResultsDir(dir: string = getResultsDir()): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
@@ -97,8 +109,9 @@ function serializeRun(result: RunResult): Record<string, unknown> {
  */
 export function saveRunToFile(
   result: RunResult,
-  dir: string = RESULTS_DIR,
-): string {
+  dir: string = getResultsDir(),
+): string | null {
+  if (!isFilePersistenceEnabled()) return null;
   ensureResultsDir(dir);
   const filePath = join(dir, `${result.runId}.json`);
   writeFileSync(filePath, JSON.stringify(serializeRun(result), null, 2) + '\n');
@@ -108,8 +121,9 @@ export function saveRunToFile(
 /** Remove `results/<runId>.json` if it exists. Returns whether a file was removed. */
 export function deleteRunFromFile(
   runId: string,
-  dir: string = RESULTS_DIR,
+  dir: string = getResultsDir(),
 ): boolean {
+  if (!isFilePersistenceEnabled()) return false;
   const filePath = join(dir, `${runId}.json`);
   try {
     if (!existsSync(filePath)) return false;
@@ -127,8 +141,9 @@ export function deleteRunFromFile(
  */
 export function loadRunFromFile(
   runId: string,
-  dir: string = RESULTS_DIR,
+  dir: string = getResultsDir(),
 ): RunResult | null {
+  if (!isFilePersistenceEnabled()) return null;
   const filePath = join(dir, `${runId}.json`);
   return parseRunFile(filePath);
 }
@@ -137,7 +152,8 @@ export function loadRunFromFile(
  * Load all RunResults from the results directory.
  * Skips files that don't parse as valid RunResults (e.g. bench results with different schema).
  */
-export function loadRunsFromFiles(dir: string = RESULTS_DIR): RunResult[] {
+export function loadRunsFromFiles(dir: string = getResultsDir()): RunResult[] {
+  if (!isFilePersistenceEnabled()) return [];
   if (!existsSync(dir)) return [];
 
   const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
