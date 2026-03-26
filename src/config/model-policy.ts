@@ -1,8 +1,7 @@
 /**
  * Model routing policy.
  *
- * Opus 4.6 for planning/review (higher reasoning).
- * Sonnet 4.6 for coding/verification (speed + cost).
+ * Defaults favor OpenAI so "Model: (none)" in chat still runs on OpenAI.
  */
 
 export interface ModelConfig {
@@ -26,39 +25,39 @@ function clampTemp(config: ModelConfig): ModelConfig {
 
 export const MODEL_CONFIGS = {
   planning: {
-    model: 'claude-opus-4-6',
+    model: 'gpt-5.3-codex',
     maxTokens: 16384,
     temperature: 0.3,
   },
   coding: {
-    model: 'claude-sonnet-4-5-20250929',
+    model: 'gpt-5-mini',
     maxTokens: 8192,
     temperature: 0.2,
   },
   review: {
-    model: 'claude-opus-4-6',
+    model: 'gpt-5.3-codex',
     maxTokens: 4096,
     temperature: 0.2,
   },
   verification: {
-    model: 'claude-sonnet-4-5-20250929',
+    model: 'gpt-5-mini',
     maxTokens: 2048,
     temperature: 0.0,
   },
   summary: {
-    model: 'claude-sonnet-4-5-20250929',
+    model: 'gpt-5-mini',
     maxTokens: 2048,
     temperature: 0.3,
   },
   /** CHAT vs CODE routing in auto mode (keep tiny). */
   intent: {
-    model: 'claude-3-5-haiku-20241022',
+    model: 'gpt-5-mini',
     maxTokens: 16,
     temperature: 0,
   },
   /** Direct Q&A replies (no tools). */
   chat: {
-    model: 'claude-sonnet-4-5-20250929',
+    model: 'gpt-5-mini',
     maxTokens: 2048,
     temperature: 0.2,
   },
@@ -186,12 +185,25 @@ export function isOpenAiModelId(model: string): boolean {
   return model.trim().toLowerCase().startsWith('gpt-');
 }
 
+/** Same-provider fallback model for transient provider-level issues (e.g. 429). */
+export function getRateLimitFallbackModel(
+  role: ModelRole,
+  currentModel: string,
+): string {
+  const model = currentModel.trim().toLowerCase();
+  if (isOpenAiModelId(currentModel)) {
+    if (model === 'gpt-5-mini') return 'gpt-5.1-codex';
+    if (model === 'gpt-5.1-codex') return 'gpt-5.3-codex';
+    return 'gpt-5.1-codex';
+  }
+  if (model.includes('haiku')) return 'claude-sonnet-4-5-20250929';
+  if (model.includes('sonnet')) return 'claude-opus-4-6';
+  return FAMILY_DEFAULT_MODELS.anthropic[role];
+}
+
 /** Model presets available in the dashboard model selector. */
 export const MODEL_PRESETS = [
-  { id: 'default', label: 'Default (Sonnet 4.5)', model: null },
-  { id: 'haiku', label: 'Haiku 4.5 (fast/cheap)', model: 'claude-haiku-4-5' },
-  { id: 'sonnet', label: 'Sonnet 4.5', model: 'claude-sonnet-4-5-20250929' },
-  { id: 'opus', label: 'Opus 4.6 (best)', model: 'claude-opus-4-6' },
+  { id: 'default', label: 'Default (GPT-5 Mini)', model: null },
   {
     id: 'gpt-5.1-codex',
     label: 'GPT-5.1 Codex (OpenAI)',
@@ -206,9 +218,6 @@ export const MODEL_PRESETS = [
 
 /** All model ids selectable in Settings (per-stage overrides). */
 export const MODEL_CATALOG: { id: string; label: string }[] = [
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-  { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
-  { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
   { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
   { id: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' },
   { id: 'gpt-5-mini', label: 'GPT-5 Mini' },

@@ -1,7 +1,7 @@
 /**
  * Shipyard server entry point.
  *
- * Autonomous coding agent powered by LangGraph + Anthropic.
+ * Autonomous coding agent powered by LangGraph.
  * Runs on port 4200 (configurable via SHIPYARD_PORT).
  */
 

@@ -4,10 +4,37 @@
 
 import { Router, json } from 'express';
 import type { Request, Response, NextFunction } from 'express';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { execSync } from 'node:child_process';
 import type { InstructionLoop } from '../runtime/loop.js';
 import type { ModelRole } from '../config/model-policy.js';
 import type { RunResult } from '../runtime/loop.js';
 import { buildRunDebugSnapshot } from './run-debug.js';
+import { WORK_DIR, setWorkDir } from '../config/work-dir.js';
+import { resetClient } from '../config/client.js';
+import { resetOpenAIClient } from '../config/openai-client.js';
+import {
+  createWorkspaceCheckpoint,
+  listWorkspaceCheckpoints,
+  rollbackWorkspaceCheckpoint,
+} from '../runtime/checkpoints.js';
+import {
+  cloneOrUpdateGithubRepo,
+  createInstallationTokenById,
+  githubAppConfigured,
+  githubCliAuthStatus,
+  listGithubReposForInstallation,
+} from './github-connect.js';
+import {
+  buildGithubInstallStartUrl,
+  clearSessionGithub,
+  getSessionGithubInstallationId,
+  getOrCreateOAuthSession,
+  githubAppSlug,
+  githubInstallConfigured,
+  setSessionGithubInstallation,
+} from './github-oauth.js';
 
 const MAX_INSTRUCTION_SIZE = 100 * 1024; // 100 KB
 const MAX_CONTEXT_SIZE = 500 * 1024;     // 500 KB
@@ -23,6 +50,7 @@ function immediateRunPayload(run: RunResult | undefined): Record<string, unknown
     error: run.error,
     verificationResult: run.verificationResult,
     reviewFeedback: run.reviewFeedback,
+    nextActions: run.nextActions ?? [],
   };
 }
 
@@ -44,9 +72,34 @@ function hasOwn(obj: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
+function installPopupHtml(ok: boolean, message: string): string {
+  const payload = JSON.stringify({
+    type: 'shipyard_github_install',
+    ok,
+    message,
+  }).replace(/</g, '\\u003c');
+  const title = ok ? 'GitHub connected' : 'GitHub connection failed';
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body style="font-family:ui-monospace,Menlo,monospace;padding:20px;background:#0b1020;color:#e2e8f0"><div>${title}. You can close this window.</div><script>try{if(window.opener&&!window.opener.closed){window.opener.postMessage(${payload}, window.location.origin);}}catch(e){}setTimeout(function(){window.close();},120);</script></body></html>`;
+}
+
 export function createRoutes(loop: InstructionLoop): Router {
   const router = Router();
   router.use(json({ limit: '1mb' }));
+
+  function currentRepoStatus(): { branch: string | null; remote: string | null } {
+    try {
+      const branch = execSync(`git -C "${WORK_DIR}" branch --show-current`, { encoding: 'utf-8' }).trim() || null;
+      const remote = execSync(`git -C "${WORK_DIR}" remote get-url origin`, { encoding: 'utf-8' }).trim() || null;
+      return { branch, remote };
+    } catch {
+      return { branch: null, remote: null };
+    }
+  }
+
+  function resolveGithubInstallation(req: Request, res: Response): number | null {
+    const session = getOrCreateOAuthSession(req, res);
+    return getSessionGithubInstallationId(session);
+  }
 
   // POST /run - Submit a new instruction
   router.post('/run', wrap((req, res) => {
@@ -310,6 +363,55 @@ export function createRoutes(loop: InstructionLoop): Router {
     res.json(loop.getContexts());
   }));
 
+  // GET /checkpoints - list latest workspace checkpoints
+  router.get('/checkpoints', wrap((req, res) => {
+    const limitRaw = parseInt(String(req.query['limit'] ?? '20'), 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 20;
+    res.json({ checkpoints: listWorkspaceCheckpoints(limit) });
+  }));
+
+  // POST /checkpoints - create checkpoint for latest edited run or explicit run
+  router.post('/checkpoints', wrap((req, res) => {
+    const { runId, label, filePaths } = (req.body ?? {}) as {
+      runId?: string;
+      label?: string;
+      filePaths?: string[];
+    };
+    const out = createWorkspaceCheckpoint({
+      run_id: runId,
+      label,
+      file_paths: Array.isArray(filePaths) ? filePaths : undefined,
+    });
+    if (!out.success) {
+      res.status(400).json(out);
+      return;
+    }
+    res.json(out);
+  }));
+
+  // POST /checkpoints/rollback - restore checkpoint
+  router.post('/checkpoints/rollback', wrap((req, res) => {
+    const { checkpointId, dryRun, filePaths } = (req.body ?? {}) as {
+      checkpointId?: string;
+      dryRun?: boolean;
+      filePaths?: string[];
+    };
+    if (!checkpointId || !checkpointId.trim()) {
+      res.status(400).json({ error: 'checkpointId is required' });
+      return;
+    }
+    const out = rollbackWorkspaceCheckpoint({
+      checkpoint_id: checkpointId.trim(),
+      dry_run: Boolean(dryRun),
+      file_paths: Array.isArray(filePaths) ? filePaths : undefined,
+    });
+    if (!out.success) {
+      res.status(400).json(out);
+      return;
+    }
+    res.json(out);
+  }));
+
   // DELETE /contexts/:label - Remove a context by label
   router.delete('/contexts/:label', wrap((req, res) => {
     const removed = loop.removeContext(req.params['label'] as string);
@@ -341,6 +443,155 @@ export function createRoutes(loop: InstructionLoop): Router {
       return;
     }
     res.json({ runId });
+  }));
+
+  // GET /github/install/start - start proper GitHub App installation flow
+  router.get('/github/install/start', wrap((req, res) => {
+    if (!githubInstallConfigured()) {
+      res.status(400).send(
+        installPopupHtml(
+          false,
+          'GitHub App install is not configured. Set GITHUB_APP_SLUG and GitHub App Setup URL.',
+        ),
+      );
+      return;
+    }
+    const session = getOrCreateOAuthSession(req, res);
+    const installUrl = buildGithubInstallStartUrl(session);
+    res.redirect(installUrl);
+  }));
+
+  // GET /github/install/callback - receives installation_id from GitHub App setup URL
+  router.get('/github/install/callback', wrap(async (req, res) => {
+    const session = getOrCreateOAuthSession(req, res);
+    const installationIdRaw = Number(String(req.query['installation_id'] ?? '0'));
+    const state = String(req.query['state'] ?? '');
+    if (!installationIdRaw) {
+      res.status(400).type('html').send(installPopupHtml(false, 'Missing installation_id in callback.'));
+      return;
+    }
+    if (session.pendingState && state && session.pendingState !== state) {
+      res.status(400).type('html').send(installPopupHtml(false, 'Invalid install state.'));
+      return;
+    }
+    session.pendingState = undefined;
+    setSessionGithubInstallation(session, installationIdRaw);
+
+    const appToken = await createInstallationTokenById(installationIdRaw);
+    if (!appToken) {
+      res.status(400).type('html').send(installPopupHtml(false, 'GitHub App installed, but token exchange failed. Check GITHUB_APP_CLIENT_ID (or GITHUB_APP_ID) / GITHUB_APP_PRIVATE_KEY.'));
+      return;
+    }
+    res.status(200).type('html').send(installPopupHtml(true, 'GitHub App installed.'));
+  }));
+
+  // POST /github/install/logout - clear current GitHub App install session
+  router.post('/github/install/logout', wrap((req, res) => {
+    const session = getOrCreateOAuthSession(req, res);
+    clearSessionGithub(session);
+    res.json({ ok: true });
+  }));
+
+  // GET /settings/status - active repo + provider key availability
+  router.get('/settings/status', wrap(async (req, res) => {
+    const repo = currentRepoStatus();
+    const session = getOrCreateOAuthSession(req, res);
+    const installationId = getSessionGithubInstallationId(session);
+    res.json({
+      workDir: WORK_DIR,
+      workDirExists: existsSync(WORK_DIR),
+      repoBranch: repo.branch,
+      repoRemote: repo.remote,
+      hasAnthropicApiKey: Boolean(process.env['ANTHROPIC_API_KEY'] || process.env['ANTHROPIC_AUTH_TOKEN']),
+      hasOpenAIApiKey: Boolean(process.env['OPENAI_API_KEY']),
+      ghAuthenticated: await githubCliAuthStatus(),
+      githubInstallConfigured: githubInstallConfigured(),
+      githubAppConfigured: githubAppConfigured(),
+      githubAppSlug: githubAppSlug() || null,
+      githubConnected: Boolean(installationId),
+      githubInstallationId: installationId,
+    });
+  }));
+
+  // POST /settings/model-keys - update in-memory provider keys for this server process
+  router.post('/settings/model-keys', wrap((req, res) => {
+    const { anthropicApiKey, anthropicAuthToken, openaiApiKey } = (req.body ?? {}) as {
+      anthropicApiKey?: string;
+      anthropicAuthToken?: string;
+      openaiApiKey?: string;
+    };
+
+    if (typeof anthropicApiKey === 'string') {
+      process.env['ANTHROPIC_API_KEY'] = anthropicApiKey.trim();
+      if (anthropicApiKey.trim()) {
+        delete process.env['ANTHROPIC_AUTH_TOKEN'];
+      }
+    }
+    if (typeof anthropicAuthToken === 'string') {
+      process.env['ANTHROPIC_AUTH_TOKEN'] = anthropicAuthToken.trim();
+      if (anthropicAuthToken.trim()) {
+        delete process.env['ANTHROPIC_API_KEY'];
+      }
+    }
+    if (typeof openaiApiKey === 'string') {
+      process.env['OPENAI_API_KEY'] = openaiApiKey.trim();
+    }
+
+    resetClient();
+    resetOpenAIClient();
+
+    res.json({
+      ok: true,
+      hasAnthropicApiKey: Boolean(process.env['ANTHROPIC_API_KEY'] || process.env['ANTHROPIC_AUTH_TOKEN']),
+      hasOpenAIApiKey: Boolean(process.env['OPENAI_API_KEY']),
+    });
+  }));
+
+  // POST /github/repos - list accessible repos for connected installation only
+  router.post('/github/repos', wrap(async (req, res) => {
+    const { query } = (req.body ?? {}) as { query?: string };
+    const installationId = resolveGithubInstallation(req, res);
+    if (!installationId) {
+      res.status(401).json({ error: 'Not connected to GitHub App. Click Connect GitHub first.' });
+      return;
+    }
+    const repos = await listGithubReposForInstallation(installationId, query);
+    res.json({ repos, authSource: 'installation' });
+  }));
+
+  // POST /github/connect - clone/pull a repo locally and switch active WORK_DIR (installation only)
+  router.post('/github/connect', wrap(async (req, res) => {
+    const { repoFullName } = (req.body ?? {}) as {
+      repoFullName?: string;
+    };
+    const installationId = resolveGithubInstallation(req, res);
+    if (!installationId) {
+      res.status(401).json({ error: 'Not connected to GitHub App. Click Connect GitHub first.' });
+      return;
+    }
+    if (!repoFullName || typeof repoFullName !== 'string' || !repoFullName.includes('/')) {
+      res.status(400).json({ error: 'repoFullName must be owner/repo' });
+      return;
+    }
+
+    const [owner, repo] = repoFullName.split('/', 2);
+    if (!owner || !repo) {
+      res.status(400).json({ error: 'repoFullName must be owner/repo' });
+      return;
+    }
+
+    const reposRoot = path.resolve(process.cwd(), 'Sessions', 'connected-repos');
+    const cloned = await cloneOrUpdateGithubRepo('', owner, repo, reposRoot, installationId);
+    setWorkDir(cloned.workDir);
+
+    res.json({
+      ok: true,
+      workDir: cloned.workDir,
+      branch: cloned.branch,
+      repoFullName: `${owner}/${repo}`,
+      githubInstallationId: installationId,
+      authSource: 'installation',
+    });
   }));
 
   // GET /health - Health check

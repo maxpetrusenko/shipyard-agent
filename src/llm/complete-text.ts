@@ -82,6 +82,15 @@ export async function completeTextForRole(
         { role: 'system', content: system },
         ...anthropicMessagesToOpenAi(messages),
       ],
+    }, {
+      traceName: opts?.liveNode ?? role,
+      traceMetadata: {
+        node: opts?.liveNode ?? null,
+        role,
+        provider: 'openai',
+        model: config.model,
+      },
+      traceTags: ['shipyard', 'openai', role],
     });
     const usage = completion.usage;
     const choice = completion.choices[0];
@@ -112,6 +121,16 @@ export async function completeTextForRole(
     temperature: config.temperature,
     system: wrapSystemPrompt(system),
     messages,
+  }, {
+    liveNode: opts?.liveNode,
+    traceName: opts?.liveNode ?? role,
+    traceMetadata: {
+      node: opts?.liveNode ?? null,
+      role,
+      provider: 'anthropic',
+      model: config.model,
+    },
+    traceTags: ['shipyard', 'anthropic', role],
   });
 
   const cm = extractCacheMetrics(response);

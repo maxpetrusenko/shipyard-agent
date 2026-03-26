@@ -27,6 +27,7 @@ import {
   tryArithmeticShortcut,
   tryChatShortcut,
 } from '../intent.js';
+import { tryCommandShortcut } from '../commands.js';
 
 const CHAT_SYSTEM = `You are Shipyard. The user is in Q&A mode: they are not asking you to modify the repository in this turn.
 
@@ -140,7 +141,12 @@ async function directChatResponse(
     temperature: config.temperature,
     system: wrapSystemPrompt(CHAT_SYSTEM),
     messages: history,
-  }, { liveNode: 'chat' });
+  }, {
+    liveNode: 'chat',
+    traceName: 'chat',
+    traceMetadata: { node: 'chat', provider: 'anthropic', model: config.model },
+    traceTags: ['shipyard', 'chat', 'anthropic'],
+  });
 
   const text = response.content
     .filter((b): b is Anthropic.TextBlock => b.type === 'text')
@@ -167,6 +173,27 @@ export async function gateNode(
 ): Promise<Partial<ShipyardStateType>> {
   const mode = state.runMode ?? 'auto';
   const baseTokens = state.tokenUsage ?? { input: 0, output: 0 };
+  const commandShortcut = await tryCommandShortcut(state.instruction);
+  if (commandShortcut !== null) {
+    const withUser = appendUserTurn(state.messages, state.instruction);
+    return {
+      gateRoute: 'end',
+      phase: 'done',
+      steps: [],
+      currentStepIndex: 0,
+      fileEdits: [],
+      toolCallHistory: [],
+      verificationResult: null,
+      reviewDecision: null,
+      reviewFeedback: null,
+      messages: [
+        ...withUser,
+        { role: 'assistant', content: commandShortcut },
+      ],
+      tokenUsage: baseTokens,
+      modelHint: 'sonnet',
+    };
+  }
 
   if (mode === 'code') {
     return {

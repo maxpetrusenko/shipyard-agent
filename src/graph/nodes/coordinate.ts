@@ -8,9 +8,10 @@
  * 4. Feeds merged edits + tool history back into state for verify
  */
 
-import { decomposeTask } from '../../multi-agent/supervisor.js';
+import { decomposeTask, type SubTask } from '../../multi-agent/supervisor.js';
 import { runWorker, type WorkerResult } from '../../multi-agent/worker.js';
 import { detectConflicts, mergeEdits } from '../../multi-agent/merge.js';
+import { deriveScopeConstraints } from '../guards.js';
 import type {
   ShipyardStateType,
   FileEdit,
@@ -27,7 +28,16 @@ import type {
  * Returns true if there are 2+ steps that don't share files.
  */
 export function shouldCoordinate(state: ShipyardStateType): boolean {
-  if (state.steps.length < 2) return false;
+  if (state.steps.length < 3) return false;
+  const uniquePlanned = new Set(
+    state.steps.flatMap((s) => s.files).filter((p) => p.trim().length > 0),
+  );
+  if (uniquePlanned.size < 3) return false;
+
+  const constraints = deriveScopeConstraints(state.instruction);
+  if (constraints.strictSingleFile || constraints.disallowUnrelatedFiles) {
+    return false;
+  }
 
   // Check for file independence between steps
   const allFiles = state.steps.map((s) => new Set(s.files));
@@ -58,7 +68,27 @@ export async function coordinateNode(
   const startTokens = state.tokenUsage ?? { input: 0, output: 0 };
 
   // 1. Decompose instruction into subtasks via supervisor LLM
-  const { subtasks, sequentialPairs } = await decomposeTask(state.instruction);
+  let subtasks: SubTask[];
+  let sequentialPairs: string[][];
+  try {
+    const decomposed = await decomposeTask(state.instruction, {
+      modelOverride: state.modelOverride ?? null,
+      modelFamily: state.modelFamily ?? null,
+      modelOverrides: state.modelOverrides ?? null,
+    });
+    subtasks = decomposed.subtasks;
+    sequentialPairs = decomposed.sequentialPairs;
+  } catch (err) {
+    newMessages.push({
+      role: 'assistant',
+      content: `[Coordinator] Subtask decomposition failed (${err instanceof Error ? err.message : String(err)}). Falling through to execute.`,
+    });
+    return {
+      phase: 'executing',
+      messages: newMessages,
+      workerResults: [],
+    };
+  }
 
   if (subtasks.length <= 1) {
     // Not worth parallelizing — fall through to normal execute
@@ -91,14 +121,22 @@ export async function coordinateNode(
   // 3. Dispatch independent workers (parallel via Promise.all)
   const parallelResults = await Promise.all(
     independent.map((task) =>
-      runWorker(task.id, task.description, state.contexts),
+      runWorker(task.id, task.description, state.contexts, {
+        modelOverride: state.modelOverride ?? null,
+        modelFamily: state.modelFamily ?? null,
+        modelOverrides: state.modelOverrides ?? null,
+      }),
     ),
   );
 
   // 4. Dispatch sequential workers one at a time
   const sequentialResults: WorkerResult[] = [];
   for (const task of sequential) {
-    const result = await runWorker(task.id, task.description, state.contexts);
+    const result = await runWorker(task.id, task.description, state.contexts, {
+      modelOverride: state.modelOverride ?? null,
+      modelFamily: state.modelFamily ?? null,
+      modelOverrides: state.modelOverrides ?? null,
+    });
     sequentialResults.push(result);
   }
 

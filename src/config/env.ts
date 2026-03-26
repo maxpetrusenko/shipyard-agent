@@ -2,11 +2,12 @@
  * Environment configuration.
  */
 
-import { execSync } from 'node:child_process';
 import { ensureEnvLoaded } from './bootstrap-env.js';
 
 export interface ShipyardEnv {
-  ANTHROPIC_API_KEY: string;
+  ANTHROPIC_API_KEY?: string;
+  ANTHROPIC_AUTH_TOKEN?: string;
+  OPENAI_API_KEY?: string;
   SHIPYARD_PORT: number;
   SHIPYARD_DB_URL: string;
   LANGCHAIN_TRACING_V2: boolean;
@@ -18,28 +19,11 @@ export interface ShipyardEnv {
 
 export function loadEnv(): ShipyardEnv {
   ensureEnvLoaded();
-  const key = process.env['ANTHROPIC_API_KEY'];
-  const authToken = process.env['ANTHROPIC_AUTH_TOKEN'];
-  if (!key && !authToken) {
-    // Check macOS Keychain as fallback (handled by client.ts)
-    try {
-      const raw = execSync(
-        "security find-generic-password -s 'Claude Code-credentials' -w",
-        { encoding: 'utf-8', timeout: 5000 },
-      ).trim();
-      const parsed = JSON.parse(raw);
-      if (!parsed?.claudeAiOauth?.accessToken) {
-        throw new Error('No access token in Keychain');
-      }
-    } catch {
-      throw new Error(
-        'No Anthropic credentials found. Set ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or log in with Claude Code.',
-      );
-    }
-  }
 
   return {
-    ANTHROPIC_API_KEY: key ?? 'oauth',
+    ANTHROPIC_API_KEY: process.env['ANTHROPIC_API_KEY']?.trim() || undefined,
+    ANTHROPIC_AUTH_TOKEN: process.env['ANTHROPIC_AUTH_TOKEN']?.trim() || undefined,
+    OPENAI_API_KEY: process.env['OPENAI_API_KEY']?.trim() || undefined,
     SHIPYARD_PORT: parseInt(process.env['SHIPYARD_PORT'] ?? '4200', 10),
     SHIPYARD_DB_URL:
       process.env['SHIPYARD_DB_URL'] ??

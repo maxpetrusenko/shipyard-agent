@@ -268,6 +268,7 @@ describe('shouldCoordinate', () => {
       steps: [
         { index: 0, description: 'step 1', files: ['/src/a.ts'], status: 'pending' as const },
         { index: 1, description: 'step 2', files: ['/src/b.ts'], status: 'pending' as const },
+        { index: 2, description: 'step 3', files: ['/src/c.ts'], status: 'pending' as const },
       ],
     };
     expect(shouldCoordinate(state)).toBe(true);
@@ -302,9 +303,23 @@ describe('shouldCoordinate', () => {
         { index: 0, description: 'step 1', files: ['/src/a.ts'], status: 'pending' as const },
         { index: 1, description: 'step 2', files: ['/src/b.ts'], status: 'pending' as const },
         { index: 2, description: 'step 3', files: ['/src/a.ts'], status: 'pending' as const },
+        { index: 3, description: 'step 4', files: ['/src/c.ts'], status: 'pending' as const },
       ],
     };
     // Steps 0 and 1 are independent, so should coordinate
     expect(shouldCoordinate(state)).toBe(true);
+  });
+
+  it('returns false for strict single-file instructions', () => {
+    const state = {
+      ...baseState,
+      instruction: 'Make exactly one file change and do not edit any other file.',
+      steps: [
+        { index: 0, description: 'step 1', files: ['/src/a.ts'], status: 'pending' as const },
+        { index: 1, description: 'step 2', files: ['/src/b.ts'], status: 'pending' as const },
+        { index: 2, description: 'step 3', files: ['/src/c.ts'], status: 'pending' as const },
+      ],
+    };
+    expect(shouldCoordinate(state)).toBe(false);
   });
 });

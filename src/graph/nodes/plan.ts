@@ -28,6 +28,7 @@ import {
 import { TokenAccumulator } from '../../llm/token-usage.js';
 import { TOOL_SCHEMAS, dispatchTool } from '../../tools/index.js';
 import { createPlanLiveHooks } from '../../tools/hooks.js';
+import { consumeLiveFollowups } from '../../runtime/live-followups.js';
 import {
   buildContextBlock,
   type ShipyardStateType,
@@ -78,9 +79,40 @@ After exploration, output your plan as a JSON array wrapped in <plan> tags:
 
 Plans can be 1-30 steps depending on scope. A codebase-wide change may require many steps — that is expected and correct. Do NOT artificially limit the plan size.
 
+Verification policy:
+- Do NOT create standalone steps that only run \`pnpm type-check\`, \`pnpm test\`, or other full verification commands.
+- The pipeline runs verification automatically after execution.
+- Only include a manual verification command step when the user explicitly asks for a specific diagnostic command output.
+
 ## Codebase conventions
 - This codebase uses TypeScript with \`moduleResolution: "node16"\`. ALL imports MUST include the \`.js\` extension (e.g. \`import { foo } from './bar.js'\`), even for \`.ts\` source files.
 - Use vitest for testing. Import from 'vitest' not '@jest/globals'.`;
+
+function isStandaloneVerificationStep(step: PlanStep): boolean {
+  const desc = step.description.toLowerCase();
+  const mentionsVerify =
+    desc.includes('type-check') ||
+    desc.includes('typecheck') ||
+    desc.includes('pnpm test') ||
+    desc.includes('run tests') ||
+    desc.includes('verification');
+  const looksLikeEdit =
+    desc.includes('add ') ||
+    desc.includes('update ') ||
+    desc.includes('edit ') ||
+    desc.includes('refactor ') ||
+    desc.includes('rename ') ||
+    desc.includes('implement ');
+  return mentionsVerify && !looksLikeEdit && step.files.length === 0;
+}
+
+function pruneRedundantVerificationSteps(steps: PlanStep[]): PlanStep[] {
+  const hasImplementationStep = steps.some((s) => !isStandaloneVerificationStep(s));
+  if (!hasImplementationStep) return steps;
+  const filtered = steps.filter((s) => !isStandaloneVerificationStep(s));
+  if (filtered.length === 0) return steps;
+  return filtered.map((s, i) => ({ ...s, index: i }));
+}
 
 export async function planNode(
   state: ShipyardStateType,
@@ -104,10 +136,11 @@ export async function planNode(
         config,
         system: rawSystem,
         initialUserText,
+        runId: state.runId,
       });
     return {
       phase: 'executing',
-      steps,
+      steps: pruneRedundantVerificationSteps(steps),
       currentStepIndex: 0,
       messages: newMessages,
       tokenUsage: {
@@ -162,6 +195,18 @@ export async function planNode(
   const maxToolRounds = 15;
 
   for (let round = 0; round < maxToolRounds; round++) {
+    const liveFollowups = consumeLiveFollowups(state.runId);
+    if (liveFollowups.length > 0) {
+      messages.push({
+        role: 'user',
+        content: liveFollowups.join('\n\n'),
+      });
+      newMessages.push({
+        role: 'assistant',
+        content: `[Follow-up] Consumed ${liveFollowups.length} queued user update(s) before planning call.`,
+      });
+    }
+
     const requestMessages = stripToolResultCacheControls(messages);
     const response = await messagesCreate(anthropic, {
       model: config.model,
@@ -170,7 +215,12 @@ export async function planNode(
       system: systemPrompt,
       tools: planTools,
       messages: requestMessages,
-    }, { liveNode: 'plan' });
+    }, {
+      liveNode: 'plan',
+      traceName: 'plan',
+      traceMetadata: { node: 'plan', provider: 'anthropic', model: config.model },
+      traceTags: ['shipyard', 'plan', 'anthropic'],
+    });
 
     tokens.addAnthropicRound(response);
 
@@ -226,6 +276,7 @@ export async function planNode(
       },
     ];
   }
+  steps = pruneRedundantVerificationSteps(steps);
 
   return {
     phase: 'executing',

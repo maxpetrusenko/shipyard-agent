@@ -355,7 +355,7 @@ describe('POST /runs/:id/followup', () => {
       resolvedModels: Record<string, string>;
     };
     expect(debugBody.modelOverride).toBeNull();
-    expect(debugBody.resolvedModels.chat).toBe('claude-sonnet-4-5-20250929');
+    expect(debugBody.resolvedModels.chat).toBe('gpt-5-mini');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });

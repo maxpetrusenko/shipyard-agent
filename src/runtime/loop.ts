@@ -11,6 +11,9 @@
  */
 
 import { v4 as uuid } from 'uuid';
+import { MemorySaver } from '@langchain/langgraph';
+import type { BaseCheckpointSaver } from '@langchain/langgraph';
+import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { createShipyardGraph } from '../graph/builder.js';
 import { ContextStore } from '../context/store.js';
 import { buildTraceUrl, canTrace, resolveLangSmithRunUrl } from './langsmith.js';
@@ -47,6 +50,15 @@ import {
   tryArithmeticShortcut,
   tryChatShortcut,
 } from '../graph/intent.js';
+import {
+  deriveNextActions,
+  type NextAction,
+  appendNextActionsToAssistantMessage,
+} from './next-actions.js';
+import { setCommandRuntimeControls } from '../graph/commands.js';
+import { captureRunBaseline, clearRunBaseline } from './run-baselines.js';
+import { WORK_DIR } from '../config/work-dir.js';
+import { clearLiveFollowups, enqueueLiveFollowup } from './live-followups.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -110,7 +122,15 @@ export interface RunResult {
   modelFamily?: 'anthropic' | 'openai' | null;
   modelOverrides?: Partial<Record<ModelRole, string>> | null;
   resolvedModels?: Partial<Record<ModelRole, string>> | null;
+  completionStatus?: 'completed' | 'failed' | 'cancelled' | 'cancelled_with_completed_actions';
+  cancellation?: {
+    reason: string;
+    completed_actions: number;
+    tool_calls: number;
+    edited_files: number;
+  } | null;
   savedAt?: string;
+  nextActions?: NextAction[];
 }
 
 export type StateListener = (state: Partial<ShipyardStateType>) => void;
@@ -132,6 +152,28 @@ function ensureRunMessages(
     }
   }
   return [{ role: 'user', content: trimmed }, ...list];
+}
+
+function ensureAssistantReplyForLatestTurn(
+  messages: LLMMessage[],
+  phase: ShipyardStateType['phase'],
+  error: string | null | undefined,
+): LLMMessage[] {
+  const list = Array.isArray(messages) ? [...messages] : [];
+  let lastUserIdx = -1;
+  let lastAssistantIdx = -1;
+  for (let i = 0; i < list.length; i += 1) {
+    const msg = list[i];
+    if (msg?.role === 'user') lastUserIdx = i;
+    if (msg?.role === 'assistant') lastAssistantIdx = i;
+  }
+  if (lastUserIdx === -1 || lastAssistantIdx > lastUserIdx) return list;
+
+  const fallback =
+    phase === 'error'
+      ? `I hit an error while handling this request: ${error ?? 'unknown error'}. I can retry with a focused fix plan.`
+      : 'Done. I completed this request and can continue with the next step.';
+  return [...list, { role: 'assistant', content: fallback }];
 }
 
 function buildLocalAskReply(instruction: string): string | null {
@@ -198,6 +240,93 @@ function getRunStartPhase(
   return 'routing';
 }
 
+const MAX_CONTINUATION_ITEMS = 24;
+const MAX_CONTINUATION_CHARS = 12_000;
+
+function truncateValue(value: string, max = 480): string {
+  const text = value.trim();
+  if (!text) return '';
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1)}…`;
+}
+
+function summarizeToolInput(input: Record<string, unknown>): string {
+  const file = input['file_path'];
+  if (typeof file === 'string' && file.trim()) return file;
+  const command = input['command'];
+  if (typeof command === 'string' && command.trim()) return truncateValue(command, 160);
+  const summary = input['summary'];
+  if (typeof summary === 'string' && summary.trim()) return truncateValue(summary, 160);
+  return truncateValue(JSON.stringify(input), 160);
+}
+
+function compactAbsolutePath(path: string): string {
+  return path.replace(/^\/+/, '/');
+}
+
+function buildContinuationContext(run: RunResult): ContextEntry | null {
+  const editedFiles = [...new Set(
+    (run.fileEdits ?? [])
+      .map((e) => e.file_path)
+      .filter((p): p is string => typeof p === 'string' && p.length > 0),
+  )].slice(0, MAX_CONTINUATION_ITEMS);
+
+  const pendingSteps = (run.steps ?? [])
+    .filter((s) => s.status !== 'done')
+    .slice(0, 8)
+    .map((s) => `${s.index + 1}. ${truncateValue(s.description, 180)}`);
+
+  const recentTools = (run.toolCallHistory ?? [])
+    .slice(-MAX_CONTINUATION_ITEMS)
+    .map((call) => `- ${call.tool_name}: ${summarizeToolInput(call.tool_input)}`);
+
+  const lastAssistant = [...(run.messages ?? [])]
+    .reverse()
+    .find((m) => m.role === 'assistant')?.content ?? '';
+
+  if (
+    editedFiles.length === 0 &&
+    pendingSteps.length === 0 &&
+    recentTools.length === 0 &&
+    !lastAssistant.trim()
+  ) {
+    return null;
+  }
+
+  const lines: string[] = [
+    `Run ID: ${run.runId}`,
+    `Previous phase: ${run.phase}`,
+    `Thread kind: ${run.threadKind ?? 'unknown'}`,
+    `Duration so far: ${run.durationMs}ms`,
+    run.error ? `Previous error: ${truncateValue(run.error, 260)}` : '',
+    '',
+    `Completed steps: ${(run.steps ?? []).filter((s) => s.status === 'done').length}/${run.steps?.length ?? 0}`,
+    pendingSteps.length > 0 ? 'Pending steps:' : '',
+    ...pendingSteps.map((s) => `- ${s}`),
+    '',
+    editedFiles.length > 0 ? `Edited files (${editedFiles.length}):` : '',
+    ...editedFiles.map((p) => `- ${compactAbsolutePath(p)}`),
+    '',
+    recentTools.length > 0 ? `Recent tool activity (${recentTools.length}):` : '',
+    ...recentTools,
+    '',
+    lastAssistant.trim()
+      ? `Most recent assistant summary:\n${truncateValue(lastAssistant, 1200)}`
+      : '',
+    '',
+    'Instruction for this turn: continue from the known state first, then explore only gaps.',
+  ].filter(Boolean);
+
+  const content = lines.join('\n');
+  if (!content.trim()) return null;
+
+  return {
+    label: 'Thread Continuation Snapshot',
+    content: content.slice(0, MAX_CONTINUATION_CHARS),
+    source: 'system',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Instruction loop
 // ---------------------------------------------------------------------------
@@ -215,10 +344,20 @@ export class InstructionLoop {
   private liveFeedListeners: Set<LiveFeedListener> = new Set();
   private pool: Pool | null = null;
   private initialized = false;
+  private checkpointer: BaseCheckpointSaver = new MemorySaver();
+  private checkpointerReady: Promise<void> | null = null;
   /** Runs waiting for user to confirm the plan before execution proceeds. */
   private pendingConfirm: Map<string, {
     resolve: (steps: PlanStep[] | null) => void;
   }> = new Map();
+
+  constructor() {
+    setCommandRuntimeControls({
+      getStatus: () => this.getStatus(),
+      cancel: () => this.cancel(),
+      resume: (runId: string) => this.resume(runId),
+    });
+  }
 
   /** User requested pause between graph steps (Agent / Plan runs). */
   private pauseRequested = false;
@@ -227,6 +366,22 @@ export class InstructionLoop {
   /** Set a pg Pool for optional run persistence. */
   setPool(pool: Pool): void {
     this.pool = pool;
+    const pgCheckpointer = new PostgresSaver(pool);
+    this.checkpointer = pgCheckpointer;
+    this.checkpointerReady = pgCheckpointer.setup().then(() => {
+      console.log('[loop] postgres checkpointer ready');
+    }).catch((err) => {
+      console.warn('[loop] postgres checkpointer setup failed, using memory saver:', err);
+      this.checkpointer = new MemorySaver();
+    });
+  }
+
+  private async ensureCheckpointerReady(): Promise<BaseCheckpointSaver> {
+    if (this.checkpointerReady) {
+      await this.checkpointerReady.catch(() => {});
+      this.checkpointerReady = null;
+    }
+    return this.checkpointer;
   }
 
   /**
@@ -375,13 +530,29 @@ export class InstructionLoop {
       existing.messages.find((m) => m.role === 'user')?.content ?? '';
     if (!instruction) return null;
 
-    // Re-queue with the same ID
+    const threadKind =
+      existing.threadKind ??
+      (existing.runMode === 'chat'
+        ? 'ask'
+        : existing.runMode === 'code'
+          ? 'agent'
+          : 'ask');
+
+    // Re-queue with the same ID and prior thread context
     this.queue.push({
       id: runId,
       instruction,
       contexts: [],
       createdAt: Date.now(),
-      runMode: 'code',
+      kind: 'followup',
+      runMode: threadKind === 'ask' ? 'chat' : 'code',
+      confirmPlan: threadKind === 'plan',
+      priorDurationMs: existing.durationMs,
+      seedMessages: existing.messages,
+      modelOverride: existing.modelOverride ?? undefined,
+      modelFamily: existing.modelFamily ?? undefined,
+      modelOverrides: existing.modelOverrides ?? undefined,
+      followupThreadKind: threadKind,
     });
     void this.processNext();
     return runId;
@@ -477,6 +648,15 @@ export class InstructionLoop {
     const hasPendingForRun =
       this.currentRunId === runId ||
       this.queue.some((item) => item.id === runId && item.kind === 'followup');
+    if (
+      this.processing &&
+      this.currentRunId === runId &&
+      threadKind !== 'ask'
+    ) {
+      enqueueLiveFollowup(runId, trimmed);
+      return true;
+    }
+
     if (
       threadKind === 'ask' &&
       existing.phase === 'done' &&
@@ -772,8 +952,20 @@ export class InstructionLoop {
       modelFamily: meta?.modelFamily ?? existing?.modelFamily ?? null,
       modelOverrides: meta?.modelOverrides ?? existing?.modelOverrides ?? null,
       resolvedModels,
+      completionStatus: 'completed',
+      cancellation: null,
       savedAt: new Date(now).toISOString(),
     };
+    runResult.messages = ensureAssistantReplyForLatestTurn(
+      runResult.messages,
+      runResult.phase,
+      runResult.error,
+    );
+    runResult.nextActions = deriveNextActions(runResult);
+    runResult.messages = appendNextActionsToAssistantMessage(
+      runResult.messages,
+      runResult.nextActions,
+    );
 
     this.runs.set(runId, runResult);
     this.persistRun(runResult);
@@ -829,6 +1021,10 @@ export class InstructionLoop {
       isFollowup
         ? (this.runs.get(item.id) ?? loadRunFromFile(item.id) ?? undefined)
         : undefined;
+    const continuationContext =
+      isFollowup && followupThreadKind !== 'ask' && priorSnap
+        ? buildContinuationContext(priorSnap)
+        : null;
     const seedMsgs = isFollowup
       ? (item.seedMessages ?? priorSnap?.messages ?? [])
       : [];
@@ -857,6 +1053,7 @@ export class InstructionLoop {
           modelOverrides: item.modelOverrides ?? null,
           resolvedModels,
           savedAt: new Date().toISOString(),
+          nextActions: [],
         }
       : {
           runId: item.id,
@@ -880,6 +1077,7 @@ export class InstructionLoop {
           modelOverrides: item.modelOverrides ?? null,
           resolvedModels,
           savedAt: new Date().toISOString(),
+          nextActions: [],
         };
     this.runs.set(item.id, inProgressRun);
 
@@ -919,7 +1117,9 @@ export class InstructionLoop {
     let finalState: ShipyardStateType | undefined;
 
     try {
-      const graph = createShipyardGraph();
+      await captureRunBaseline(item.id, WORK_DIR);
+      const checkpointer = await this.ensureCheckpointerReady();
+      const graph = createShipyardGraph({ checkpointer });
 
       const initialPhase = getRunStartPhase(item.runMode, followupThreadKind);
       const initialState: Partial<ShipyardStateType> = {
@@ -934,7 +1134,9 @@ export class InstructionLoop {
         verificationResult: null,
         reviewDecision: null,
         reviewFeedback: null,
-        contexts: this.contextStore.getAll(),
+        contexts: continuationContext
+          ? [...this.contextStore.getAll(), continuationContext]
+          : this.contextStore.getAll(),
         messages: ensureRunMessages(item.instruction, [...seedMsgs]),
         error: null,
         retryCount: 0,
@@ -1033,15 +1235,22 @@ export class InstructionLoop {
 
       if (this.cancelRequested) {
         const traceUrl = buildTraceUrl(item.id) ?? finalState.traceUrl ?? null;
+        const stepsDone = preferNonEmptyArray(finalState.steps, current?.steps).filter(
+          (s) => s.status === 'done',
+        ).length;
+        const fileEdits = preferNonEmptyArray(finalState.fileEdits, current?.fileEdits);
+        const toolCalls = preferNonEmptyArray(
+          finalState.toolCallHistory,
+          current?.toolCallHistory,
+        );
+        const completedActions = stepsDone + fileEdits.length + toolCalls.length;
+        const hasCompletedActions = completedActions > 0;
         const runResult: RunResult = {
           runId: item.id,
           phase: 'error',
           steps: preferNonEmptyArray(finalState.steps, current?.steps),
-          fileEdits: preferNonEmptyArray(finalState.fileEdits, current?.fileEdits),
-          toolCallHistory: preferNonEmptyArray(
-            finalState.toolCallHistory,
-            current?.toolCallHistory,
-          ),
+          fileEdits,
+          toolCallHistory: toolCalls,
           tokenUsage: finalState.tokenUsage ?? current?.tokenUsage ?? null,
           traceUrl,
           messages: ensureRunMessages(
@@ -1063,8 +1272,27 @@ export class InstructionLoop {
           modelFamily: item.modelFamily ?? null,
           modelOverrides: item.modelOverrides ?? null,
           resolvedModels,
+          completionStatus: hasCompletedActions
+            ? 'cancelled_with_completed_actions'
+            : 'cancelled',
+          cancellation: {
+            reason: 'Run cancelled by user',
+            completed_actions: completedActions,
+            tool_calls: toolCalls.length,
+            edited_files: fileEdits.length,
+          },
           savedAt: new Date().toISOString(),
         };
+        runResult.messages = ensureAssistantReplyForLatestTurn(
+          runResult.messages,
+          runResult.phase,
+          runResult.error,
+        );
+        runResult.nextActions = deriveNextActions(runResult);
+        runResult.messages = appendNextActionsToAssistantMessage(
+          runResult.messages,
+          runResult.nextActions,
+        );
         this.runs.set(item.id, runResult);
         this.persistRun(runResult);
         this.broadcast({
@@ -1106,12 +1334,28 @@ export class InstructionLoop {
           modelFamily: item.modelFamily ?? null,
           modelOverrides: item.modelOverrides ?? null,
           resolvedModels,
+          completionStatus: finalState.phase === 'done' ? 'completed' : 'failed',
+          cancellation: null,
           savedAt: new Date().toISOString(),
         };
+        runResult.messages = ensureAssistantReplyForLatestTurn(
+          runResult.messages,
+          runResult.phase,
+          runResult.error,
+        );
+        runResult.nextActions = deriveNextActions(runResult);
+        runResult.messages = appendNextActionsToAssistantMessage(
+          runResult.messages,
+          runResult.nextActions,
+        );
 
         this.runs.set(item.id, runResult);
         this.persistRun(runResult);
-        this.broadcast(finalState);
+        this.broadcast({
+          ...finalState,
+          messages: runResult.messages,
+          nextActions: runResult.nextActions,
+        } as Partial<ShipyardStateType> & { nextActions?: NextAction[] });
         this.resolveTraceUrlInBackground(item.id);
         // Broadcast threadKind separately (not on ShipyardStateType)
         for (const fn of this.listeners) {
@@ -1163,8 +1407,33 @@ export class InstructionLoop {
         modelFamily: item.modelFamily ?? null,
         modelOverrides: item.modelOverrides ?? null,
         resolvedModels,
+        completionStatus: aborted
+          ? ((prev?.toolCallHistory?.length ?? 0) + (prev?.fileEdits?.length ?? 0) > 0
+            ? 'cancelled_with_completed_actions'
+            : 'cancelled')
+          : 'failed',
+        cancellation: aborted
+          ? {
+              reason: 'Run cancelled by user',
+              completed_actions:
+                (prev?.toolCallHistory?.length ?? 0) +
+                (prev?.fileEdits?.length ?? 0),
+              tool_calls: prev?.toolCallHistory?.length ?? 0,
+              edited_files: prev?.fileEdits?.length ?? 0,
+            }
+          : null,
         savedAt: new Date().toISOString(),
       };
+      runResult.messages = ensureAssistantReplyForLatestTurn(
+        runResult.messages,
+        runResult.phase,
+        runResult.error,
+      );
+      runResult.nextActions = deriveNextActions(runResult);
+      runResult.messages = appendNextActionsToAssistantMessage(
+        runResult.messages,
+        runResult.nextActions,
+      );
       this.runs.set(item.id, runResult);
       this.persistRun(runResult);
       this.broadcast({
@@ -1176,6 +1445,8 @@ export class InstructionLoop {
       });
       this.resolveTraceUrlInBackground(item.id);
     } finally {
+      clearRunBaseline(item.id);
+      clearLiveFollowups(item.id);
       setLiveFeedListener(null);
       unsubProgress();
       setRunAbortSignal(null);

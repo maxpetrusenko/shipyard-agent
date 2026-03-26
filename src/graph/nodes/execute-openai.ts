@@ -15,6 +15,7 @@ import {
   chatCompletionCreateWithRetry,
 } from '../../llm/openai-helpers.js';
 import { appendOpenAiToolTurn } from '../../llm/openai-chat-tool-turn.js';
+import { consumeLiveFollowups } from '../../runtime/live-followups.js';
 import type {
   ShipyardStateType,
   FileEdit,
@@ -23,6 +24,7 @@ import type {
 } from '../state.js';
 
 const openAiTools = anthropicToolSchemasToOpenAi(TOOL_SCHEMAS);
+const MAX_NO_EDIT_TOOL_ROUNDS = 8;
 
 export async function runOpenAiExecuteLoop(params: {
   state: ShipyardStateType;
@@ -49,6 +51,7 @@ export async function runOpenAiExecuteLoop(params: {
   const newHistory: ToolCallRecord[] = [...state.toolCallHistory];
   const newMessages: LLMMessage[] = [...state.messages];
   const maxToolRounds = 25;
+  let noEditToolRounds = 0;
 
   const buildReturn = (
     fullText: string,
@@ -72,6 +75,18 @@ export async function runOpenAiExecuteLoop(params: {
   };
 
   for (let round = 0; round < maxToolRounds; round++) {
+    const liveFollowups = consumeLiveFollowups(state.runId);
+    if (liveFollowups.length > 0) {
+      conversation.push({
+        role: 'user',
+        content: liveFollowups.join('\n\n'),
+      });
+      newMessages.push({
+        role: 'assistant',
+        content: `[Follow-up] Consumed ${liveFollowups.length} queued user update(s) before execution call.`,
+      });
+    }
+
     const completion = await chatCompletionCreateWithRetry(client, {
       model: config.model,
       max_tokens: config.maxTokens,
@@ -79,6 +94,10 @@ export async function runOpenAiExecuteLoop(params: {
       messages: [{ role: 'system', content: system }, ...conversation],
       tools: openAiTools,
       tool_choice: 'auto',
+    }, {
+      traceName: 'execute',
+      traceMetadata: { node: 'execute', provider: 'openai', model: config.model },
+      traceTags: ['shipyard', 'execute', 'openai'],
     });
 
     addChatCompletionUsage(usageAcc, completion.usage);
@@ -92,6 +111,7 @@ export async function runOpenAiExecuteLoop(params: {
     const toolCalls = msg.tool_calls;
 
     if (toolCalls && toolCalls.length > 0) {
+      const editsBefore = newEdits.length;
       await appendOpenAiToolTurn(
         conversation,
         msg,
@@ -101,6 +121,40 @@ export async function runOpenAiExecuteLoop(params: {
           unsupportedToolMessage: 'Unsupported tool call type for Shipyard',
         },
       );
+
+      if (newEdits.length === editsBefore) {
+        noEditToolRounds += 1;
+      } else {
+        noEditToolRounds = 0;
+      }
+
+      if (noEditToolRounds >= MAX_NO_EDIT_TOOL_ROUNDS) {
+        const failedSteps = updatedSteps.map((s, i) =>
+          i === state.currentStepIndex ? { ...s, status: 'failed' as const } : s,
+        );
+        newMessages.push({
+          role: 'assistant',
+          content:
+            `[Watchdog] Execution stalled: ${MAX_NO_EDIT_TOOL_ROUNDS} consecutive tool rounds without file edits. ` +
+            'Replanning with tighter scope constraints.',
+        });
+        const snapshotJson = overlay.dirty
+          ? JSON.stringify(
+              Object.fromEntries(overlay.trackedFiles().map((f) => [f, ''])),
+            )
+          : state.fileOverlaySnapshots ?? null;
+        return {
+          phase: 'verifying',
+          steps: failedSteps,
+          fileEdits: newEdits,
+          toolCallHistory: newHistory,
+          messages: newMessages,
+          tokenUsage: { input: usageAcc.input, output: usageAcc.output },
+          fileOverlaySnapshots: snapshotJson,
+          reviewFeedback:
+            'Execution stalled with repeated tool calls and no file edits. Replan with stricter file targeting and complete the edit in one pass.',
+        };
+      }
       continue;
     }
 

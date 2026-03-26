@@ -15,6 +15,11 @@ import {
   extractCacheMetrics,
 } from '../../config/messages-create.js';
 import { completeTextForRole } from '../../llm/complete-text.js';
+import {
+  evaluateScopeGuard,
+  shouldRequireEdits,
+} from '../guards.js';
+import { consumeLiveFollowups } from '../../runtime/live-followups.js';
 import type { ShipyardStateType, ReviewDecision, LLMMessage } from '../state.js';
 
 const REVIEW_SYSTEM = `You are the Shipyard quality reviewer (Opus). You evaluate the work done by the coding agent.
@@ -45,6 +50,34 @@ Your decision must be one of:
 Respond with a JSON object:
 {"decision": "done|continue|retry|escalate", "feedback": "explanation if retry/escalate"}`;
 
+function recentAssistantText(state: ShipyardStateType): string {
+  return state.messages
+    .filter((m) => m.role === 'assistant')
+    .slice(-4)
+    .map((m) => m.content)
+    .join('\n')
+    .toLowerCase();
+}
+
+function looksLikeValidatedNoOp(state: ShipyardStateType): boolean {
+  if (!state.verificationResult?.passed) return false;
+  if (state.fileEdits.length !== 0) return false;
+  const corpus = [
+    state.instruction,
+    ...state.steps.map((s) => s.description),
+    recentAssistantText(state),
+  ]
+    .join('\n')
+    .toLowerCase();
+  return (
+    corpus.includes('no changes needed') ||
+    corpus.includes('no changes are needed') ||
+    corpus.includes('already contains') ||
+    corpus.includes('already exists') ||
+    corpus.includes('no edit is needed')
+  );
+}
+
 export async function reviewNode(
   state: ShipyardStateType,
 ): Promise<Partial<ShipyardStateType>> {
@@ -52,6 +85,35 @@ export async function reviewNode(
 
   const hasMoreSteps = state.currentStepIndex < state.steps.length - 1;
   const verPassed = state.verificationResult?.passed ?? false;
+  const deterministicEditsRequired = shouldRequireEdits(state.instruction);
+  const scopeGuard = evaluateScopeGuard(state);
+  const failedSteps = state.steps.filter((s) => s.status === 'failed').length;
+  const deterministicRetry = (feedback: string): Partial<ShipyardStateType> => {
+    const wouldExceed = state.retryCount >= state.maxRetries - 1;
+    if (wouldExceed) {
+      return {
+        phase: 'error',
+        reviewDecision: 'escalate',
+        reviewFeedback: `Max retries (${state.maxRetries}) exceeded. ${feedback}`,
+        messages: [
+          ...state.messages,
+          { role: 'assistant', content: `[Review] escalate: Max retries exceeded. ${feedback}` },
+        ],
+        modelHint: 'opus',
+      };
+    }
+    return {
+      phase: 'planning',
+      reviewDecision: 'retry',
+      reviewFeedback: feedback,
+      messages: [
+        ...state.messages,
+        { role: 'assistant', content: `[Review] retry: ${feedback}` },
+      ],
+      retryCount: state.retryCount + 1,
+      modelHint: 'opus',
+    };
+  };
 
   // Fast path: more steps to do and verification passed — just advance
   if (hasMoreSteps && verPassed) {
@@ -62,6 +124,27 @@ export async function reviewNode(
       reviewFeedback: null,
       modelHint: 'sonnet',
     };
+  }
+
+  // Deterministic guards before LLM review to avoid false "done".
+  if (!verPassed && state.fileEdits.length > 0) {
+    return deterministicRetry('Verification failed after edits; fix verification errors before completion.');
+  }
+
+  if (failedSteps > 0) {
+    return deterministicRetry(`Execution marked ${failedSteps} failed step(s). Replan and complete unfinished work.`);
+  }
+
+  if (!scopeGuard.ok) {
+    return deterministicRetry(scopeGuard.reason ?? 'Scope guard failed.');
+  }
+
+  if (
+    deterministicEditsRequired &&
+    state.fileEdits.length === 0 &&
+    !looksLikeValidatedNoOp(state)
+  ) {
+    return deterministicRetry('Instruction required code edits but no file changes were recorded.');
   }
 
   // NOTE: No fast path for "all done". We ALWAYS run the full Opus review
@@ -97,9 +180,11 @@ export async function reviewNode(
       ? [
           `Passed: ${state.verificationResult.passed}`,
           `Errors: ${state.verificationResult.error_count}`,
+          !state.verificationResult.passed &&
           state.verificationResult.typecheck_output
             ? `Typecheck:\n${state.verificationResult.typecheck_output.slice(0, 3000)}`
             : '',
+          !state.verificationResult.passed &&
           state.verificationResult.test_output
             ? `Tests:\n${state.verificationResult.test_output.slice(0, 3000)}`
             : '',
@@ -110,6 +195,10 @@ export async function reviewNode(
     '',
     `## Retry count: ${state.retryCount}/${state.maxRetries}`,
   ].join('\n');
+  const liveFollowups = consumeLiveFollowups(state.runId);
+  const reviewPromptWithFollowups = liveFollowups.length > 0
+    ? `${reviewPrompt}\n\n## Live Follow-ups\n${liveFollowups.join('\n\n')}`
+    : reviewPrompt;
 
   let inputTokens = state.tokenUsage?.input ?? 0;
   let outputTokens = state.tokenUsage?.output ?? 0;
@@ -119,7 +208,7 @@ export async function reviewNode(
   let text: string;
   if (isOpenAiModelId(config.model)) {
     const r = await completeTextForRole(state, 'review', REVIEW_SYSTEM, [
-      { role: 'user', content: reviewPrompt },
+      { role: 'user', content: reviewPromptWithFollowups },
     ], { liveNode: 'review' });
     inputTokens += r.inputTokens;
     outputTokens += r.outputTokens;
@@ -133,8 +222,13 @@ export async function reviewNode(
       max_tokens: config.maxTokens,
       temperature: config.temperature,
       system: wrapSystemPrompt(REVIEW_SYSTEM),
-      messages: [{ role: 'user', content: reviewPrompt }],
-    }, { liveNode: 'review' });
+      messages: [{ role: 'user', content: reviewPromptWithFollowups }],
+    }, {
+      liveNode: 'review',
+      traceName: 'review',
+      traceMetadata: { node: 'review', provider: 'anthropic', model: config.model },
+      traceTags: ['shipyard', 'review', 'anthropic'],
+    });
 
     inputTokens += response.usage.input_tokens;
     outputTokens += response.usage.output_tokens;
@@ -174,8 +268,17 @@ export async function reviewNode(
     feedback = `Max retries (${state.maxRetries}) exceeded. ${feedback ?? ''}`;
   }
 
+  // Reviewer can overfit to "edits must exist"; allow validated no-op tasks.
+  if (decision === 'retry' && looksLikeValidatedNoOp(state)) {
+    decision = 'done';
+    feedback = 'Validated no-op task: instruction satisfied without file edits.';
+  }
+
   const newMessages: LLMMessage[] = [
     ...state.messages,
+    ...(liveFollowups.length > 0
+      ? [{ role: 'assistant', content: `[Follow-up] Consumed ${liveFollowups.length} queued user update(s) before review call.` } as LLMMessage]
+      : []),
     { role: 'assistant', content: `[Review] ${decision}: ${feedback ?? 'OK'}` },
   ];
 

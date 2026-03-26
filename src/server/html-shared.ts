@@ -9,14 +9,14 @@ export const NAV_STYLES = `
 .app-nav a{font-size:11px;border:1px solid var(--border);border-radius:var(--radius);padding:5px 14px;color:var(--dim);text-decoration:none;transition:all var(--transition);font-family:var(--mono)}
 .app-nav a:hover{border-color:var(--accent);color:var(--accent);box-shadow:0 0 12px var(--accent-glow)}
 .app-nav a.active{border-color:var(--accent);color:var(--text-bright);background:var(--accent-glow)}
-.chat-layout{display:grid;grid-template-columns:220px 1fr;gap:16px;align-items:stretch;min-height:calc(100dvh - 200px)}
-@media(max-width:960px){.chat-layout{grid-template-columns:1fr;min-height:calc(100dvh - 240px)}}
-.chat-side{font-size:11px;color:var(--dim)}
+.chat-layout{display:grid;grid-template-columns:220px 1fr;gap:16px;align-items:stretch;min-height:0;height:100%;flex:1;overflow:hidden}
+@media(max-width:960px){.chat-layout{grid-template-columns:1fr}}
+.chat-side{font-size:11px;color:var(--dim);min-height:0;overflow-y:auto}
 .chat-side .side-hd{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin-bottom:8px}
-.chat-center{min-width:0;display:flex;flex-direction:column;min-height:0;height:100%;align-self:stretch}
+.chat-center{min-width:0;display:flex;flex-direction:column;min-height:0;height:100%;align-self:stretch;overflow:hidden}
 .chat-shell{display:flex;flex-direction:column;flex:1;min-height:0;height:100%;max-height:none}
 .chat-thread{flex:1;min-height:0;overflow-y:auto;padding:8px 4px 16px;scroll-behavior:smooth;border:1px solid var(--border);border-radius:var(--radius-lg);background:linear-gradient(180deg,var(--bg2),var(--bg))}
-.chat-composer{flex-shrink:0;padding-top:12px;margin-top:0;border-top:1px solid var(--border)}
+.chat-composer{position:sticky;bottom:0;z-index:15;flex-shrink:0;padding-top:12px;margin-top:0;border-top:1px solid var(--border);background:linear-gradient(180deg,rgba(6,10,18,.55) 0%,rgba(6,10,18,.92) 24%,var(--bg) 100%);backdrop-filter:blur(8px)}
 .msg{margin-bottom:14px;max-width:min(92%,720px)}
 .msg-user{margin-left:auto;background:var(--card2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:10px 14px;font-size:12px;line-height:1.5;color:var(--text)}
 .msg-asst{margin-right:auto;background:var(--card);border:1px solid var(--border-bright);border-radius:var(--radius-lg);padding:10px 14px;font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-word}

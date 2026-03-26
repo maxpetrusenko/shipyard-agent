@@ -5,9 +5,14 @@
  * or OPENAI_PROJECT, OPENAI_ORGANIZATION or OPENAI_ORG_ID, OPENAI_BASE_URL.
  */
 import OpenAI from 'openai';
+import { wrapOpenAI } from 'langsmith/wrappers/openai';
 import { ensureEnvLoaded } from './bootstrap-env.js';
 
 let _client: OpenAI | null = null;
+
+export function resetOpenAIClient(): void {
+  _client = null;
+}
 
 export function getOpenAIClient(): OpenAI {
   ensureEnvLoaded();
@@ -36,5 +41,6 @@ export function getOpenAIClient(): OpenAI {
     maxRetries: 0,
     timeout: 600_000,
   });
+  _client = wrapOpenAI(_client) as unknown as OpenAI;
   return _client;
 }

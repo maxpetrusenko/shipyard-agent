@@ -16,6 +16,8 @@ import { listDirectory } from './ls.js';
 import { spawnAgent } from './spawn-agent.js';
 import { askUser } from './ask-user.js';
 import { injectContext } from './inject-context.js';
+import { commitAndOpenPr } from './commit-and-open-pr.js';
+import { revertChanges } from './revert-changes.js';
 import type { ToolHooks } from './hooks.js';
 import { runBeforeHooks, runAfterHooks } from './hooks.js';
 import type { FileOverlay } from './file-overlay.js';
@@ -145,6 +147,56 @@ export const TOOL_SCHEMAS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'revert_changes',
+    description:
+      'Revert prior agent edits dynamically across multiple files using run trace edits (default) or git restore. Use this when user says "revert the change".',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        scope: {
+          type: 'string',
+          description: 'Target selection: "last_run" (default recent edited run) or "run_id"',
+          enum: ['last_run', 'run_id'],
+        },
+        run_id: { type: 'string', description: 'Explicit run id when scope=run_id' },
+        strategy: {
+          type: 'string',
+          description: 'Revert mode: "trace_edits" (inverse edit operations) or "git_restore" (restore files from git)',
+          enum: ['trace_edits', 'git_restore'],
+        },
+        file_paths: {
+          type: 'array',
+          description: 'Optional absolute file paths to limit revert scope',
+          items: { type: 'string' },
+        },
+        dry_run: { type: 'boolean', description: 'Preview only; do not modify files' },
+      },
+      required: ['scope'],
+    },
+  },
+  {
+    name: 'commit_and_open_pr',
+    description:
+      'Commit all current changes, push branch, and open (or update) a GitHub draft PR via gh CLI.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        title: { type: 'string', description: 'PR title' },
+        body: { type: 'string', description: 'PR body markdown' },
+        commit_message: { type: 'string', description: 'Git commit message (defaults to title)' },
+        branch_name: { type: 'string', description: 'Branch to push (defaults to current branch)' },
+        base_branch: { type: 'string', description: 'Base branch (defaults to repo default branch)' },
+        file_paths: {
+          type: 'array',
+          description: 'Optional absolute/relative file paths to stage and commit (scoped commit)',
+          items: { type: 'string' },
+        },
+        draft: { type: 'boolean', description: 'Create draft PR (default true)' },
+      },
+      required: ['title', 'body'],
+    },
+  },
+  {
     name: 'inject_context',
     description:
       'Inject additional context into the current run. The context will be available in subsequent turns.',
@@ -187,6 +239,10 @@ async function dispatchToolRaw(
       return spawnAgent(input as any) as any;
     case 'ask_user':
       return askUser(input as any) as any;
+    case 'revert_changes':
+      return revertChanges(input as any) as any;
+    case 'commit_and_open_pr':
+      return commitAndOpenPr(input as any) as any;
     case 'inject_context':
       return injectContext(input as any) as any;
     default:

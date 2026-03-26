@@ -87,8 +87,8 @@ describe('getModelConfig', () => {
 
   it('uses defaults when env unset', () => {
     const c = getModelConfig('planning');
-    expect(c.model).toBe('claude-opus-4-6');
-    expect(c.temperature).toBe(1);
+    expect(c.model).toBe('gpt-5.3-codex');
+    expect(c.temperature).toBe(0.3);
   });
 
   it('overrides model id from env', () => {

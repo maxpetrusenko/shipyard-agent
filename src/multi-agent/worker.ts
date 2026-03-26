@@ -7,12 +7,20 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { getModelConfig } from '../config/model-policy.js';
+import OpenAI from 'openai';
+import {
+  getRateLimitFallbackModel,
+  getResolvedModelConfig,
+  isOpenAiModelId,
+  type ModelFamily,
+  type ModelRole,
+} from '../config/model-policy.js';
 import {
   getClient,
   wrapSystemPrompt,
   withCachedTools,
 } from '../config/client.js';
+import { getOpenAIClient } from '../config/openai-client.js';
 import { WORK_DIR } from '../config/work-dir.js';
 import { messagesCreate } from '../config/messages-create.js';
 import {
@@ -23,6 +31,13 @@ import {
   extractTextFromContentBlocks,
   extractToolUseBlocks,
 } from '../llm/anthropic-parse.js';
+import {
+  assistantTextContent,
+  addChatCompletionUsage,
+  chatCompletionCreateWithRetry,
+} from '../llm/openai-helpers.js';
+import { anthropicToolSchemasToOpenAi } from '../llm/openai-tool-schemas.js';
+import { appendOpenAiToolTurn } from '../llm/openai-chat-tool-turn.js';
 import { TokenAccumulator } from '../llm/token-usage.js';
 import { TOOL_SCHEMAS, dispatchTool } from '../tools/index.js';
 import { createRecordingHooks } from '../tools/hooks.js';
@@ -53,6 +68,12 @@ export interface WorkerResult {
   durationMs: number;
 }
 
+export interface WorkerModelSelection {
+  modelOverride?: string | null;
+  modelFamily?: ModelFamily | null;
+  modelOverrides?: Partial<Record<ModelRole, string>> | null;
+}
+
 // ---------------------------------------------------------------------------
 // System prompt
 // ---------------------------------------------------------------------------
@@ -77,6 +98,23 @@ Rules:
 
 const MAX_TOOL_ROUNDS = 20;
 
+function isRateLimitLikeError(err: unknown): boolean {
+  const msg =
+    err instanceof Error
+      ? err.message
+      : typeof err === 'string'
+        ? err
+        : '';
+  const norm = msg.toLowerCase();
+  return (
+    norm.includes('rate_limit') ||
+    norm.includes('rate limit') ||
+    norm.includes('too many requests') ||
+    norm.includes(' 429') ||
+    norm.startsWith('429 ')
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Worker execution
 // ---------------------------------------------------------------------------
@@ -95,111 +133,230 @@ export async function runWorker(
   subtaskId: string,
   instruction: string,
   contexts: ContextEntry[],
+  modelSelection?: WorkerModelSelection,
 ): Promise<WorkerResult> {
   const startedAt = Date.now();
-  const config = getModelConfig('coding');
-  const anthropic = getClient();
+  const config = getResolvedModelConfig('coding', {
+    modelFamily: modelSelection?.modelFamily ?? null,
+    modelOverrides: modelSelection?.modelOverrides ?? null,
+    legacyCodingOverride: modelSelection?.modelOverride ?? null,
+  });
 
   // Build context block (separate cache breakpoint)
   const contextBlock = buildContextBlock(contexts);
+  const contextSection = contextBlock ? `# Context\n\n${contextBlock}` : undefined;
 
-  const systemPrompt = wrapSystemPrompt(
-    WORKER_SYSTEM,
-    contextBlock ? `# Context\n\n${contextBlock}` : undefined,
-  );
+  const runWithModel = async (model: string): Promise<WorkerResult> => {
+    const fileEdits: FileEdit[] = [];
+    const toolCallHistory: ToolCallRecord[] = [];
+    const hooks = createRecordingHooks(fileEdits, toolCallHistory);
+    const overlay = new FileOverlay();
 
-  // Isolated state per worker
-  const fileEdits: FileEdit[] = [];
-  const toolCallHistory: ToolCallRecord[] = [];
-  const hooks = createRecordingHooks(fileEdits, toolCallHistory);
-  const overlay = new FileOverlay();
+    try {
+      if (isOpenAiModelId(model)) {
+        const client = getOpenAIClient();
+        const usageAcc = { input: 0, output: 0 };
+        const conversation: OpenAI.Chat.ChatCompletionMessageParam[] = [
+          { role: 'user', content: `## Subtask (${subtaskId})\n${instruction}` },
+        ];
+        const workerOpenAiTools = anthropicToolSchemasToOpenAi(TOOL_SCHEMAS);
+        const system = contextSection
+          ? `${WORKER_SYSTEM}\n\n${contextSection}`
+          : WORKER_SYSTEM;
 
-  const tokens = new TokenAccumulator();
+        for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+          const completion = await chatCompletionCreateWithRetry(client, {
+            model,
+            max_tokens: config.maxTokens,
+            temperature: config.temperature,
+            messages: [{ role: 'system', content: system }, ...conversation],
+            tools: workerOpenAiTools,
+            tool_choice: 'auto',
+          }, {
+            traceName: 'worker',
+            traceMetadata: {
+              node: 'worker',
+              provider: 'openai',
+              model,
+              subtaskId,
+            },
+            traceTags: ['shipyard', 'worker', 'openai'],
+          });
+          addChatCompletionUsage(usageAcc, completion.usage);
 
-  const cachedTools = withCachedTools(TOOL_SCHEMAS);
+          const choice = completion.choices[0];
+          if (!choice) break;
+          const msg = choice.message;
+          const toolCalls = msg.tool_calls;
+          const fullText = assistantTextContent(msg);
 
-  const messages: Anthropic.MessageParam[] = [
-    {
-      role: 'user',
-      content: `## Subtask (${subtaskId})\n${instruction}`,
-    },
-  ];
+          if (toolCalls && toolCalls.length > 0) {
+            await appendOpenAiToolTurn(
+              conversation,
+              msg,
+              toolCalls,
+              (name, input) => dispatchTool(name, input, hooks, overlay),
+              { unsupportedToolMessage: 'Unsupported tool type for Shipyard worker' },
+            );
+            continue;
+          }
 
-  try {
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const requestMessages = stripToolResultCacheControls(messages);
-      const response = await messagesCreate(anthropic, {
-        model: config.model,
-        max_tokens: config.maxTokens,
-        temperature: config.temperature,
-        system: systemPrompt,
-        tools: cachedTools,
-        messages: requestMessages,
-      }, { liveNode: 'worker' });
+          if (
+            fullText.includes('SUBTASK_COMPLETE') ||
+            fullText.includes('SUBTASK_BLOCKED') ||
+            choice.finish_reason === 'stop'
+          ) {
+            return {
+              subtaskId,
+              phase: fullText.includes('SUBTASK_BLOCKED') ? 'error' : 'done',
+              fileEdits,
+              toolCallHistory,
+              tokenUsage: usageAcc,
+              error: fullText.includes('SUBTASK_BLOCKED')
+                ? fullText.split('SUBTASK_BLOCKED:')[1]?.trim() ?? 'blocked'
+                : null,
+              durationMs: Date.now() - startedAt,
+            };
+          }
 
-      tokens.addAnthropicRound(response);
+          break;
+        }
 
-      const fullText = extractTextFromContentBlocks(response.content);
-      const toolBlocks = extractToolUseBlocks(response.content);
-
-      // Check completion signals
-      if (
-        fullText.includes('SUBTASK_COMPLETE') ||
-        fullText.includes('SUBTASK_BLOCKED') ||
-        response.stop_reason === 'end_turn'
-      ) {
         return {
           subtaskId,
-          phase: fullText.includes('SUBTASK_BLOCKED') ? 'error' : 'done',
+          phase: 'done',
           fileEdits,
           toolCallHistory,
-          tokenUsage: tokens.snapshot(),
-          error: fullText.includes('SUBTASK_BLOCKED')
-            ? fullText.split('SUBTASK_BLOCKED:')[1]?.trim() ?? 'blocked'
-            : null,
+          tokenUsage: usageAcc,
+          error: null,
           durationMs: Date.now() - startedAt,
         };
       }
 
-      // Execute tool calls
-      if (toolBlocks.length > 0) {
-        messages.push({ role: 'assistant', content: response.content });
+      const anthropic = getClient();
+      const tokens = new TokenAccumulator();
+      const cachedTools = withCachedTools(TOOL_SCHEMAS);
+      const systemPrompt = wrapSystemPrompt(WORKER_SYSTEM, contextSection);
+      const messages: Anthropic.MessageParam[] = [
+        { role: 'user', content: `## Subtask (${subtaskId})\n${instruction}` },
+      ];
 
-        const toolResults = await dispatchAnthropicToolBlocks(
-          toolBlocks,
-          (name, input) => dispatchTool(name, input, hooks, overlay),
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        const requestMessages = stripToolResultCacheControls(messages);
+        const response = await messagesCreate(
+          anthropic,
+          {
+            model,
+            max_tokens: config.maxTokens,
+            temperature: config.temperature,
+            system: systemPrompt,
+            tools: cachedTools,
+            messages: requestMessages,
+          },
+          {
+            liveNode: 'worker',
+            traceName: 'worker',
+            traceMetadata: {
+              node: 'worker',
+              provider: 'anthropic',
+              model,
+              subtaskId,
+            },
+            traceTags: ['shipyard', 'worker', 'anthropic'],
+          },
         );
-        messages.push({ role: 'user', content: toolResults });
-      } else {
-        // No tools, not complete — break to avoid spinning
+
+        tokens.addAnthropicRound(response);
+
+        const fullText = extractTextFromContentBlocks(response.content);
+        const toolBlocks = extractToolUseBlocks(response.content);
+
+        if (
+          fullText.includes('SUBTASK_COMPLETE') ||
+          fullText.includes('SUBTASK_BLOCKED') ||
+          response.stop_reason === 'end_turn'
+        ) {
+          return {
+            subtaskId,
+            phase: fullText.includes('SUBTASK_BLOCKED') ? 'error' : 'done',
+            fileEdits,
+            toolCallHistory,
+            tokenUsage: tokens.snapshot(),
+            error: fullText.includes('SUBTASK_BLOCKED')
+              ? fullText.split('SUBTASK_BLOCKED:')[1]?.trim() ?? 'blocked'
+              : null,
+            durationMs: Date.now() - startedAt,
+          };
+        }
+
+        if (toolBlocks.length > 0) {
+          messages.push({ role: 'assistant', content: response.content });
+          const toolResults = await dispatchAnthropicToolBlocks(
+            toolBlocks,
+            (name, input) => dispatchTool(name, input, hooks, overlay),
+          );
+          messages.push({ role: 'user', content: toolResults });
+          continue;
+        }
+
         break;
       }
+
+      return {
+        subtaskId,
+        phase: 'done',
+        fileEdits,
+        toolCallHistory,
+        tokenUsage: tokens.snapshot(),
+        error: null,
+        durationMs: Date.now() - startedAt,
+      };
+    } catch (err: unknown) {
+      if (overlay.dirty) {
+        await overlay.rollbackAll().catch(() => {});
+      }
+      if (isRateLimitLikeError(err)) throw err;
+      return {
+        subtaskId,
+        phase: 'error',
+        fileEdits: [],
+        toolCallHistory,
+        tokenUsage: null,
+        error: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startedAt,
+      };
+    }
+  };
+
+  try {
+    return await runWithModel(config.model);
+  } catch (err) {
+    if (!isRateLimitLikeError(err)) {
+      return {
+        subtaskId,
+        phase: 'error',
+        fileEdits: [],
+        toolCallHistory: [],
+        tokenUsage: null,
+        error: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startedAt,
+      };
     }
 
-    // Hit max rounds — return what we have
-    return {
-      subtaskId,
-      phase: 'done',
-      fileEdits,
-      toolCallHistory,
-      tokenUsage: tokens.snapshot(),
-      error: null,
-      durationMs: Date.now() - startedAt,
-    };
-  } catch (err: unknown) {
-    // Rollback on failure
-    if (overlay.dirty) {
-      await overlay.rollbackAll().catch(() => {});
+    const fallbackModel = getRateLimitFallbackModel('coding', config.model);
+    try {
+      return await runWithModel(fallbackModel);
+    } catch (fallbackErr) {
+      return {
+        subtaskId,
+        phase: 'error',
+        fileEdits: [],
+        toolCallHistory: [],
+        tokenUsage: null,
+        error:
+          fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
+        durationMs: Date.now() - startedAt,
+      };
     }
-
-    return {
-      subtaskId,
-      phase: 'error',
-      fileEdits: [],
-      toolCallHistory,
-      tokenUsage: tokens.snapshot(),
-      error: err instanceof Error ? err.message : String(err),
-      durationMs: Date.now() - startedAt,
-    };
   }
 }

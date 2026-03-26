@@ -4,8 +4,8 @@ import { TOOL_SCHEMAS } from '../src/tools/index.js';
 describe('tool registry', () => {
   const toolNames = TOOL_SCHEMAS.map((t) => t.name);
 
-  it('registers all 10 tools', () => {
-    expect(toolNames).toHaveLength(10);
+  it('registers all 12 tools', () => {
+    expect(toolNames).toHaveLength(12);
   });
 
   it('includes core file tools', () => {
@@ -27,6 +27,8 @@ describe('tool registry', () => {
   it('includes multi-agent tools', () => {
     expect(toolNames).toContain('spawn_agent');
     expect(toolNames).toContain('ask_user');
+    expect(toolNames).toContain('revert_changes');
+    expect(toolNames).toContain('commit_and_open_pr');
     expect(toolNames).toContain('inject_context');
   });
 

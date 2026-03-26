@@ -1,6 +1,6 @@
 # Shipyard -- Autonomous Coding Agent
 
-Autonomous coding agent that takes a natural language instruction, decomposes it into steps, makes surgical file edits, verifies correctness via typecheck and tests, and self-corrects through a review loop. Built on LangGraph + Anthropic Claude.
+Autonomous coding agent that takes a natural language instruction, decomposes it into steps, makes surgical file edits, verifies correctness via typecheck and tests, and self-corrects through a review loop. Built on LangGraph.
 
 ## Architecture
 
@@ -18,14 +18,14 @@ START -> plan -> execute -> verify -> review
 
 | Node | Model | Purpose |
 |------|-------|---------|
-| `plan` | Opus 4.6 | Decompose instruction into steps, explore codebase |
-| `execute` | Sonnet 4.5 | Execute current step via tool calls (25 rounds max) |
-| `verify` | bash | Run `tsc --noEmit` + `vitest run`, parse errors |
-| `review` | Opus 4.6 | Quality gate: continue / done / retry / escalate |
+| `plan` | GPT-5.3 Codex (default) | Decompose instruction into steps, explore codebase |
+| `execute` | GPT-5 Mini (default) | Execute current step via tool calls (25 rounds max) |
+| `verify` | bash | Run lint (if configured) + `tsc --noEmit`; run tests on final step |
+| `review` | GPT-5.3 Codex (default) | Quality gate: continue / done / retry / escalate |
 | `error_recovery` | logic | Decide retry (with file rollback) vs abort |
-| `report` | Sonnet 4.5 | Summarize results and cost |
+| `report` | GPT-5 Mini (default) | Summarize results/cost + policy-driven next actions |
 
-Tools: `read_file`, `edit_file` (4-tier surgical edit with fuzzy fallback), `write_file`, `bash`, `grep`, `glob`, `ls`, `spawn_agent`, `ask_user`, `inject_context`.
+Tools: `read_file`, `edit_file` (4-tier surgical edit with fuzzy fallback), `write_file`, `bash`, `grep`, `glob`, `ls`, `spawn_agent`, `ask_user`, `commit_and_open_pr`, `inject_context`.
 
 File edits use anchor-based string replacement: exact match, whitespace-normalized, Levenshtein fuzzy (< 10% distance), full rewrite as last resort.
 
@@ -41,7 +41,7 @@ git clone <repo-url> ship-agent
 cd ship-agent
 pnpm install
 cp .env.example .env
-# Edit .env -- at minimum set ANTHROPIC_API_KEY (or log in via Claude Code for OAuth)
+# Edit .env -- set OPENAI_API_KEY (and optionally ANTHROPIC_* keys if you select Claude models)
 pnpm dev
 ```
 
@@ -62,6 +62,8 @@ pnpm start
 ## Web UI
 
 - `/dashboard` — chat-style workspace for ask, plan, and agent runs
+- `/dashboard` left sidebar `Config` tab — runtime model key overrides and GitHub App OAuth repo connection
+- `/settings/connectors/github` — dedicated GitHub connector settings page (GitHub App install flow + repo connect)
 - `/runs` — `Refactoring Runs` view; defaults to repo-touching/code-oriented history and hides pure ask chats
 - `/benchmarks` — benchmark summaries and trend charts
 
@@ -71,8 +73,9 @@ All env vars are documented in `.env.example`. Copy it and fill in your values.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | Yes* | -- | Anthropic API key (`sk-ant-...`). *Not needed if using `ANTHROPIC_AUTH_TOKEN` or Claude Code Keychain auth. |
-| `ANTHROPIC_AUTH_TOKEN` | No | -- | OAuth token (alternative to API key) |
+| `OPENAI_API_KEY` | Yes* | -- | OpenAI API key (`sk-...`) used by default model routing. |
+| `ANTHROPIC_API_KEY` | No | -- | Optional Anthropic API key (`sk-ant-...`) if you explicitly select Claude models. |
+| `ANTHROPIC_AUTH_TOKEN` | No | -- | Optional Anthropic OAuth token (alternative to Anthropic API key). |
 | `ANTHROPIC_BASE_URL` | No | Anthropic default | Custom API base URL (e.g., local proxy for Claude Max) |
 | `SHIPYARD_PORT` | No | `4200` | HTTP + WebSocket server port |
 | `SHIPYARD_WORK_DIR` | No | `cwd()` | Working directory the agent operates in (the target repo) |
@@ -166,6 +169,56 @@ Cancel the current run.
 curl -X POST http://localhost:4200/api/cancel
 ```
 
+### `GET /api/settings/status`
+
+Returns active workdir/repo metadata and whether runtime provider keys are present.
+
+```bash
+curl http://localhost:4200/api/settings/status
+```
+
+### `POST /api/settings/model-keys`
+
+Update runtime model keys for the current server process (used by `/dashboard` Config tab).
+
+```bash
+curl -X POST http://localhost:4200/api/settings/model-keys \
+  -H "Content-Type: application/json" \
+  -d '{"anthropicApiKey":"sk-ant-...","openaiApiKey":"sk-..."}'
+```
+
+### `GET /api/github/install/start`
+
+Starts the GitHub App installation flow (repo selection happens on GitHub).
+
+```bash
+open "http://localhost:4200/api/github/install/start"
+```
+
+### `GET /api/github/install/callback`
+
+Setup URL callback endpoint for GitHub App installation flow. Set this as your GitHub App "Setup URL".
+
+### `POST /api/github/repos`
+
+List accessible repositories for the connected GitHub App installation session.
+
+```bash
+curl -X POST http://localhost:4200/api/github/repos \
+  -H "Content-Type: application/json" \
+  -d '{"query":"my-repo"}'
+```
+
+### `POST /api/github/connect`
+
+Clone/pull the selected repo into `Sessions/connected-repos/` and switch active workdir for future runs (GitHub App installation token).
+
+```bash
+curl -X POST http://localhost:4200/api/github/connect \
+  -H "Content-Type: application/json" \
+  -d '{"repoFullName":"owner/repo"}'
+```
+
 ### WebSocket (`ws://localhost:4200/ws`)
 
 ```jsonc
@@ -233,17 +286,17 @@ src/
   app.ts                         # Express app, auth middleware, rate limiter
   config/
     env.ts                       # Environment configuration
-    client.ts                    # Anthropic SDK client (API key or OAuth via Keychain)
-    model-policy.ts              # Opus/Sonnet routing + cost estimation
+    client.ts                    # Anthropic SDK client (env-driven only)
+    model-policy.ts              # Model routing + cost estimation
   graph/
     state.ts                     # ShipyardState Annotation
     builder.ts                   # createShipyardGraph()
     edges.ts                     # Conditional routing logic
     nodes/
-      plan.ts                    # Opus: decompose instruction into steps
-      execute.ts                 # Sonnet: tool calls + file overlay snapshots
+      plan.ts                    # Planner role
+      execute.ts                 # Coder role: tool calls + file overlay snapshots
       verify.ts                  # tsc --noEmit + vitest run
-      review.ts                  # Opus: quality gate (continue/done/retry/escalate)
+      review.ts                  # Reviewer role: continue/done/retry/escalate
       error-recovery.ts          # Retry with file rollback, or abort
       report.ts                  # Summarize results + estimated cost
       coordinate.ts              # Multi-agent coordination node

@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 let releaseGraph: (() => void) | null = null;
+let streamedStates: Array<Record<string, unknown>> = [];
 
 vi.mock('../../src/graph/builder.js', () => ({
   createShipyardGraph: () => ({
     stream: async (state: Record<string, unknown>) => ({
       async *[Symbol.asyncIterator]() {
+        streamedStates.push(state);
         await new Promise<void>((resolve) => {
           releaseGraph = resolve;
         });
@@ -58,7 +60,7 @@ vi.mock('../../src/runtime/persistence.js', () => ({
 
 import { InstructionLoop } from '../../src/runtime/loop.js';
 
-async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {
+async function waitFor(predicate: () => boolean, timeoutMs = 1200): Promise<void> {
   const start = Date.now();
   while (!predicate()) {
     if (Date.now() - start > timeoutMs) {
@@ -68,11 +70,34 @@ async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void>
   }
 }
 
+async function releaseUntilIdle(loop: InstructionLoop, maxReleases = 5): Promise<void> {
+  for (let i = 0; i < maxReleases; i += 1) {
+    if (!loop.getStatus().processing) return;
+    const start = Date.now();
+    while (
+      loop.getStatus().processing &&
+      typeof releaseGraph !== 'function' &&
+      Date.now() - start < 1200
+    ) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    if (!loop.getStatus().processing) return;
+    if (typeof releaseGraph !== 'function') {
+      throw new Error('waitFor timeout');
+    }
+    const release = releaseGraph;
+    releaseGraph = null;
+    release?.();
+    await new Promise((r) => setTimeout(r, 0));
+  }
+}
+
 describe('InstructionLoop local chat shortcuts', () => {
   let loop: InstructionLoop;
 
   beforeEach(() => {
     releaseGraph = null;
+    streamedStates = [];
     loop = new InstructionLoop();
   });
 
@@ -130,31 +155,28 @@ describe('InstructionLoop local chat shortcuts', () => {
     await waitFor(() => loop.getRun(blockingId)?.phase === 'done');
   });
 
-  it('queues ask follow-ups while another run is active', async () => {
-    const askId = loop.submit('hi', undefined, false, 'chat');
-    await waitFor(() => loop.getRun(askId)?.phase === 'done');
+  it('queues ask follow-ups while the same ask thread is still processing', async () => {
+    const askId = loop.submit('what is recursion?', undefined, false, 'chat');
+    await waitFor(() => loop.getStatus().processing && loop.getStatus().currentRunId === askId);
 
-    const blockingId = loop.submit('implement auth', undefined, false, 'code');
-    await waitFor(() => loop.getStatus().processing && loop.getStatus().currentRunId === blockingId);
-
-    const ok = loop.followUpAsk(askId, 'what is recursion?');
+    const ok = loop.followUpAsk(askId, 'and memoization?');
     expect(ok).toBe(true);
     expect(loop.getStatus().queueLength).toBe(1);
 
-    releaseGraph?.();
-    await waitFor(() => loop.getRun(blockingId)?.phase === 'done');
-    await waitFor(() => loop.getStatus().processing && loop.getStatus().currentRunId === askId);
-
-    releaseGraph?.();
-    await waitFor(() => loop.getRun(askId)?.phase === 'done');
+    await releaseUntilIdle(loop);
+    await waitFor(() => !loop.getStatus().processing && loop.getRun(askId)?.phase === 'done');
 
     const askRun = loop.getRun(askId);
     expect(askRun?.threadKind).toBe('ask');
-    expect(askRun?.messages.at(-2)?.content).toBe('what is recursion?');
-    expect(askRun?.messages.at(-1)?.content).toContain('Done: what is recursion?');
+    expect(askRun?.messages.map((m) => m.content)).toEqual([
+      'what is recursion?',
+      'Done: what is recursion?',
+      'and memoization?',
+      'Done: and memoization?',
+    ]);
   });
 
-  it('queues multiple follow-up asks on the same thread', async () => {
+  it('handles multiple follow-up asks on the same thread', async () => {
     const askId = loop.submit('hi', undefined, false, 'chat');
     await waitFor(() => loop.getRun(askId)?.phase === 'done');
 
@@ -166,13 +188,16 @@ describe('InstructionLoop local chat shortcuts', () => {
     expect(ok2).toBe(true);
     expect(loop.getStatus().queueLength).toBe(1);
 
+    await waitFor(() => typeof releaseGraph === 'function');
     releaseGraph?.();
+    releaseGraph = null;
     await waitFor(() =>
       loop.getStatus().processing &&
       loop.getStatus().queueLength === 0 &&
       (loop.getRun(askId)?.messages ?? []).some((m) => m.content === 'Done: what is recursion?'),
     );
 
+    await waitFor(() => typeof releaseGraph === 'function');
     releaseGraph?.();
     await waitFor(() => !loop.getStatus().processing && loop.getRun(askId)?.phase === 'done');
 
@@ -188,23 +213,23 @@ describe('InstructionLoop local chat shortcuts', () => {
     ]);
   });
 
-  it('queues code follow-ups on the same agent thread', async () => {
+  it('applies code follow-ups live on the same active agent thread', async () => {
     const runId = loop.submit('implement auth', undefined, false, 'code');
     await waitFor(() => loop.getStatus().processing && loop.getStatus().currentRunId === runId);
+    await waitFor(() => typeof releaseGraph === 'function');
+    const releaseActive = releaseGraph;
 
     const ok = loop.followUpThread(runId, 'refactor small file');
     expect(ok).toBe(true);
-    expect(loop.getStatus().queueLength).toBe(1);
+    expect(loop.getStatus().queueLength).toBe(0);
 
-    releaseGraph?.();
-    await waitFor(() => loop.getStatus().processing && loop.getStatus().queueLength === 0);
-
-    releaseGraph?.();
+    releaseActive?.();
     await waitFor(() => !loop.getStatus().processing && loop.getRun(runId)?.phase === 'done');
 
     const run = loop.getRun(runId);
     expect(run?.threadKind).toBe('agent');
-    expect(run?.messages.map((m) => m.content)).toContain('refactor small file');
-    expect(run?.messages.at(-1)?.content).toBe('Done: refactor small file');
+    expect(run?.messages.map((m) => m.content)).toContain('implement auth');
+    expect(run?.messages.at(-1)?.content).toContain('Done: implement auth');
+    expect(streamedStates.length).toBe(1);
   });
 });

@@ -30,12 +30,28 @@ export function extractCacheMetrics(
 export async function messagesCreate(
   client: Anthropic,
   params: Anthropic.MessageCreateParamsNonStreaming,
-  opts?: { liveNode?: string | null },
+  opts?: {
+    liveNode?: string | null;
+    traceName?: string;
+    traceMetadata?: Record<string, unknown>;
+    traceTags?: string[];
+  },
 ): Promise<Anthropic.Message> {
   const signal = getRunAbortSignal();
-  const response = await client.messages.create(params, {
-    signal: signal ?? undefined,
-  });
+  const response = await client.messages.create(
+    params,
+    {
+      signal: signal ?? undefined,
+      langsmithExtra:
+        opts?.traceName || opts?.traceMetadata || opts?.traceTags
+          ? {
+              ...(opts?.traceName ? { name: opts.traceName } : {}),
+              ...(opts?.traceMetadata ? { metadata: opts.traceMetadata } : {}),
+              ...(opts?.traceTags ? { tags: opts.traceTags } : {}),
+            }
+          : undefined,
+    } as Anthropic.RequestOptions,
+  );
 
   // Log cache utilization when prompt caching is active
   const cm = extractCacheMetrics(response);

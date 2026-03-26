@@ -1,90 +1,85 @@
 /**
- * Report node: summarize run results for the user.
+ * Report node: deterministic summary from run state.
  */
-
-import Anthropic from '@anthropic-ai/sdk';
-import {
-  getResolvedModelConfigFromState,
-  isOpenAiModelId,
-} from '../../config/model-policy.js';
-import { getClient, wrapSystemPrompt } from '../../config/client.js';
-import {
-  messagesCreate,
-  extractCacheMetrics,
-} from '../../config/messages-create.js';
-import { completeTextForRole } from '../../llm/complete-text.js';
 import type { ShipyardStateType, LLMMessage } from '../state.js';
+import {
+  commitAndOpenPr,
+  hasSuccessfulPrToolCall,
+} from '../../tools/commit-and-open-pr.js';
 
-const REPORT_SYSTEM = `Summarize the completed coding run. Include:
-1. What was done (files changed, edits made)
-2. Verification status (typecheck + tests)
-3. Any issues or caveats
+function toPrTitle(instruction: string): string {
+  const normalized = instruction
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .slice(0, 56);
+  return normalized ? `feat: ${normalized}` : 'feat: shipyard automated change';
+}
 
-Be concise. Use bullet points.`;
+function toPrBody(state: ShipyardStateType, uniqueEdited: string[]): string {
+  return [
+    '## Description',
+    `Automated Shipyard run for instruction: "${state.instruction.trim()}".`,
+    `Implemented ${state.steps.filter((s) => s.status === 'done').length} step(s) touching ${uniqueEdited.length} file(s).`,
+    '',
+    '## Test Plan',
+    '- [ ] Review CI checks on this branch',
+  ].join('\n');
+}
 
 export async function reportNode(
   state: ShipyardStateType,
 ): Promise<Partial<ShipyardStateType>> {
-  const config = getResolvedModelConfigFromState('summary', state);
+  const completed = state.steps.filter((s) => s.status === 'done').length;
+  const uniqueEdited = [...new Set(state.fileEdits.map((e) => e.file_path))];
+  const verification = state.verificationResult;
+  let prLine = '';
 
-  const summary = [
+  const shouldTryAutoPr =
+    state.reviewDecision === 'done' &&
+    Boolean(verification?.passed) &&
+    uniqueEdited.length > 0 &&
+    !hasSuccessfulPrToolCall(state.toolCallHistory);
+
+  if (shouldTryAutoPr) {
+    const prResult = await commitAndOpenPr({
+      title: toPrTitle(state.instruction),
+      body: toPrBody(state, uniqueEdited),
+      branch_name: `shipyard/${state.runId}`,
+      commit_message: `feat: shipyard run ${state.runId}`,
+      file_paths: uniqueEdited,
+      draft: true,
+    });
+    if (prResult.success && prResult.pr_url) {
+      prLine = `PR: ${prResult.pr_url}`;
+    } else if (prResult.error) {
+      prLine = `PR: auto-create skipped (${prResult.error})`;
+    }
+  } else if (hasSuccessfulPrToolCall(state.toolCallHistory)) {
+    prLine = 'PR: created during execute step';
+  }
+
+  const text = [
+    '## Summary',
+    '',
     `Instruction: ${state.instruction}`,
-    '',
-    `Steps completed: ${state.steps.filter((s) => s.status === 'done').length}/${state.steps.length}`,
-    '',
-    'File edits:',
-    ...state.fileEdits.map(
-      (e) => `- ${e.file_path} (tier ${e.tier})`,
-    ),
-    '',
-    `Verification: ${state.verificationResult?.passed ? 'PASSED' : 'FAILED'}`,
-    state.verificationResult?.error_count
-      ? `Errors: ${state.verificationResult.error_count}`
+    `Steps completed: ${completed}/${state.steps.length}`,
+    `Files edited: ${uniqueEdited.length}`,
+    verification
+      ? `Verification: ${verification.passed ? 'PASSED' : 'FAILED'}`
+      : 'Verification: Not run',
+    verification?.error_count
+      ? `Errors: ${verification.error_count}`
       : '',
-    '',
+    prLine,
     `Token usage: ${state.tokenUsage?.input ?? 0} input / ${state.tokenUsage?.output ?? 0} output`,
-    state.estimatedCost != null ? `Estimated cost: $${state.estimatedCost.toFixed(4)}` : '',
+    state.estimatedCost != null
+      ? `Estimated cost: $${state.estimatedCost.toFixed(4)}`
+      : '',
     `Duration: ${Date.now() - state.runStartedAt}ms`,
   ]
     .filter(Boolean)
     .join('\n');
-
-  let inputTokens = state.tokenUsage?.input ?? 0;
-  let outputTokens = state.tokenUsage?.output ?? 0;
-  let cacheReadTokens = state.tokenUsage?.cacheRead ?? 0;
-  let cacheCreationTokens = state.tokenUsage?.cacheCreation ?? 0;
-
-  let text: string;
-  if (isOpenAiModelId(config.model)) {
-    const r = await completeTextForRole(state, 'summary', REPORT_SYSTEM, [
-      { role: 'user', content: summary },
-    ], { liveNode: 'report' });
-    inputTokens += r.inputTokens;
-    outputTokens += r.outputTokens;
-    cacheReadTokens += r.cacheRead;
-    cacheCreationTokens += r.cacheCreation;
-    text = r.text;
-  } else {
-    const anthropic = getClient();
-    const response = await messagesCreate(anthropic, {
-      model: config.model,
-      max_tokens: config.maxTokens,
-      temperature: config.temperature,
-      system: wrapSystemPrompt(REPORT_SYSTEM),
-      messages: [{ role: 'user', content: summary }],
-    }, { liveNode: 'report' });
-
-    inputTokens += response.usage.input_tokens;
-    outputTokens += response.usage.output_tokens;
-    const rcm = extractCacheMetrics(response);
-    cacheReadTokens += rcm.cacheRead;
-    cacheCreationTokens += rcm.cacheCreation;
-
-    text = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('');
-  }
 
   const newMessages: LLMMessage[] = [
     ...state.messages,
@@ -94,11 +89,6 @@ export async function reportNode(
   return {
     phase: 'done',
     messages: newMessages,
-    tokenUsage: {
-      input: inputTokens,
-      output: outputTokens,
-      cacheRead: cacheReadTokens,
-      cacheCreation: cacheCreationTokens,
-    },
+    tokenUsage: state.tokenUsage,
   };
 }

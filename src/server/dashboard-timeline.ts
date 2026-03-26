@@ -10,6 +10,7 @@ var timelineMap = {};  // runId -> TimelineEntry[]
 var lastPhaseForRun = {};
 var verResultSeen = {};
 var reviewSeen = {};
+var progressMetricsVisible = false;
 
 function mkEntry(type, ts, data) {
   return { type: type, ts: ts || Date.now(), data: data };
@@ -21,6 +22,7 @@ function mkToolCall(ts, name, ok, fp, detail, durMs) { return mkEntry('tool_call
 function mkFileEdit(ts, path, tier, oldStr, newStr) { return mkEntry('file_edit', ts, { path: path, tier: tier, oldStr: oldStr, newStr: newStr }); }
 function mkVerification(ts, passed, errCount, tcOut, testOut) { return mkEntry('verification', ts, { passed: passed, errCount: errCount, tcOut: tcOut, testOut: testOut }); }
 function mkReview(ts, decision, feedback) { return mkEntry('review', ts, { decision: decision, feedback: feedback }); }
+function mkNextActions(ts, actions) { return mkEntry('next_actions', ts, { actions: actions || [] }); }
 function mkPhase(ts, phase) { return mkEntry('phase', ts, { phase: phase }); }
 function isTimelineMessage(entry) { return entry && (entry.type === 'user_msg' || entry.type === 'asst_msg'); }
 function normalizeRunMessages(messages) {
@@ -29,12 +31,44 @@ function normalizeRunMessages(messages) {
   for (var i = 0; i < list.length; i++) {
     var msg = list[i];
     if (!msg || (msg.role !== 'user' && msg.role !== 'assistant')) continue;
-    out.push({ role: msg.role, content: msg.content || '' });
+    var content = msg.content || '';
+    if (msg.role === 'assistant') {
+      content = sanitizeAssistantContent(content);
+      if (!content.trim()) continue;
+    }
+    out.push({ role: msg.role, content: content });
   }
   return out;
 }
+function sanitizeAssistantContent(raw) {
+  var text = String(raw || '');
+  if (!text) return '';
+  // Strip planner envelopes that are useful for the agent but noisy in chat UI.
+  text = text.replace(/<plan>[\\s\\S]*?<\\/plan>/gi, '').trim();
+  // Suppress raw JSON payload responses from internal nodes.
+  var compact = text.replace(/\\s+/g, ' ').trim();
+  if (
+    (/^\\{[\\s\\S]*\\}$/.test(text) || /^\\[[\\s\\S]*\\]$/.test(text)) &&
+    /(decision|steps|verification|review|tool|phase|feedback)/i.test(compact)
+  ) {
+    return '[internal agent payload hidden]';
+  }
+  return text;
+}
+function shouldSuppressThinkingChunk(raw) {
+  var t = String(raw || '').trim();
+  if (!t) return true;
+  if (/<plan>/i.test(t)) return true;
+  var looksJson = (/^\\{[\\s\\S]*\\}$/.test(t) || /^\\[[\\s\\S]*\\]$/.test(t));
+  if (looksJson && /(tool_use|tool_result|decision|steps|phase|review|verification)/i.test(t)) {
+    return true;
+  }
+  return false;
+}
 function messageEntryFromRunMessage(msg, ts) {
-  return msg.role === 'user' ? mkUserMsg(ts, msg.content) : mkAsstMsg(ts, msg.content);
+  return msg.role === 'user'
+    ? mkUserMsg(ts, msg.content)
+    : mkAsstMsg(ts, sanitizeAssistantContent(msg.content));
 }
 function lastUserMessageIndex(messages) {
   for (var i = messages.length - 1; i >= 0; i--) {
@@ -141,13 +175,29 @@ function buildTimeline(r) {
   // Verification
   var vr = r.verificationResult;
   if (vr) {
-    entries.push(mkVerification(base + dur - 2000, vr.passed, vr.errorCount, vr.typecheckOutput, vr.testOutput));
+    entries.push(
+      mkVerification(
+        base + dur - 2000,
+        vr.passed,
+        vr.errorCount !== undefined ? vr.errorCount : vr.error_count,
+        vr.typecheckOutput !== undefined ? vr.typecheckOutput : vr.typecheck_output,
+        vr.testOutput !== undefined ? vr.testOutput : vr.test_output,
+      ),
+    );
   }
 
   // Review
   var rf = r.reviewFeedback;
   if (rf) {
-    entries.push(mkReview(base + dur - 1000, rf.decision, rf.feedback));
+    if (typeof rf === 'string') {
+      entries.push(mkReview(base + dur - 1000, 'review', rf));
+    } else {
+      entries.push(mkReview(base + dur - 1000, rf.decision, rf.feedback));
+    }
+  }
+
+  if (Array.isArray(r.nextActions) && r.nextActions.length > 0) {
+    entries.push(mkNextActions(base + dur - 500, r.nextActions));
   }
 
   entries.sort(function(a,b){ return a.ts - b.ts; });
@@ -240,6 +290,25 @@ function renderTimelineEntry(entry, idx) {
       var rLabel = 'Review: ' + tlEsc(d.decision || 'done');
       var rBody = '<div class="tl-detail">' + tlEsc(d.feedback || 'No feedback') + '</div>';
       return renderTlCollapsible(idx, rLabel, 'var(--cyan)', true, rBody, null);
+    case 'next_actions':
+      var acts = Array.isArray(d.actions) ? d.actions : [];
+      if (!acts.length) return '';
+      var aBody = '<div class="tl-detail">';
+      for (var ai = 0; ai < acts.length; ai++) {
+        var a = acts[ai] || {};
+        var badge = a.recommended ? ' <span class="tl-tag tl-tag-ok">recommended</span>' : '';
+        aBody += '<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px dashed var(--border)">' +
+          '<div><strong>' + tlEsc(a.label || a.id || 'Action') + '</strong>' + badge + '</div>' +
+          '<div style="color:var(--dim);margin-top:2px">' + tlEsc(a.description || '') + '</div>';
+        if (a.prompt) {
+          aBody += '<div style="margin-top:6px">' +
+            '<button type="button" class="btn btn-g" data-action="applyNextAction" data-prompt="' + tlEsc(a.prompt) + '" style="font-size:10px;padding:4px 8px">Use Prompt</button>' +
+            '</div>';
+        }
+        aBody += '</div>';
+      }
+      aBody += '</div>';
+      return renderTlCollapsible(idx, 'Suggested next actions', 'var(--accent)', false, aBody, null);
     case 'phase':
       var phColor = 'var(--dim)';
       var ph = d.phase;
@@ -253,6 +322,111 @@ function renderTimelineEntry(entry, idx) {
     default:
       return '';
   }
+}
+
+function isInternalEntry(entry) {
+  return entry && (
+    entry.type === 'thinking' ||
+    entry.type === 'tool_call' ||
+    entry.type === 'file_edit' ||
+    entry.type === 'verification' ||
+    entry.type === 'review' ||
+    entry.type === 'phase' ||
+    entry.type === 'next_actions'
+  );
+}
+
+function phaseGoal(phase) {
+  if (phase === 'planning') return 'I am mapping impacted files and planning safe execution order';
+  if (phase === 'executing') return 'I am applying the planned edits and checking each change';
+  if (phase === 'verifying') return 'I am validating changes with lint/type-check/tests before finalizing';
+  if (phase === 'reviewing') return 'I am reviewing completeness and edge cases before completion';
+  if (phase === 'done') return 'I am done. Final summary and next steps are ready';
+  if (phase === 'error') return 'I hit an error and am preparing recovery guidance';
+  return 'I am progressing through the task';
+}
+
+function collectPhaseNotes(entries, runPhase) {
+  var notes = [];
+  var current = null;
+
+  function startPhase(phase) {
+    current = {
+      phase: phase || runPhase || 'executing',
+      toolCalls: 0,
+      touched: {},
+      checks: {},
+      inspect: {},
+    };
+  }
+
+  function flushPhase() {
+    if (!current) return;
+    var parts = [phaseGoal(current.phase)];
+    var inspect = Object.keys(current.inspect);
+    var checks = Object.keys(current.checks);
+    if (inspect.length) parts.push('Currently ' + inspect.slice(0, 2).join(' and '));
+    if (checks.length) parts.push('Now ' + checks.slice(0, 2).join(' and '));
+    var touched = Object.keys(current.touched);
+    if (touched.length) {
+      var show = touched.slice(0, 3);
+      var suffix = touched.length > show.length ? ' +' + (touched.length - show.length) + ' more' : '';
+      parts.push('Touched files: ' + show.join(', ') + suffix);
+    }
+    if (progressMetricsVisible && current.toolCalls > 0) {
+      parts.push('Used ' + current.toolCalls + ' command' + (current.toolCalls === 1 ? '' : 's'));
+    }
+    notes.push(parts.join(' · '));
+    current = null;
+  }
+
+  startPhase(runPhase || 'executing');
+
+  for (var i = 0; i < entries.length; i++) {
+    var e = entries[i];
+    if (!e) continue;
+    if (e.type === 'phase' && e.data && e.data.phase) {
+      var nextPhase = String(e.data.phase);
+      if (!current || current.phase !== nextPhase) {
+        flushPhase();
+        startPhase(nextPhase);
+      }
+      continue;
+    }
+    if (!current) startPhase(runPhase || 'executing');
+
+    if (e.type === 'tool_call') {
+      current.toolCalls++;
+      var name = String((e.data && e.data.name) || '');
+      var detail = String((e.data && e.data.detail) || '').toLowerCase();
+      if (name === 'grep' || detail.indexOf('grep ') >= 0 || detail.indexOf('rg ') >= 0) {
+        current.inspect['searching for impacted code'] = true;
+      } else if (name === 'read_file' || detail.indexOf('read') >= 0) {
+        current.inspect['reading target files'] = true;
+      }
+      if (name === 'bash') {
+        if (detail.indexOf('type-check') >= 0 || detail.indexOf('tsc') >= 0) current.checks['running type-check'] = true;
+        if (detail.indexOf('pnpm test') >= 0 || detail.indexOf('vitest') >= 0) current.checks['running tests'] = true;
+        if (detail.indexOf('lint') >= 0) current.checks['running lint checks'] = true;
+        if (detail.indexOf('git diff') >= 0 || detail.indexOf('git status') >= 0) current.checks['reviewing diffs before finalizing'] = true;
+        if (detail.indexOf('revert') >= 0 || detail.indexOf('checkout') >= 0 || detail.indexOf('restore') >= 0) {
+          current.checks['double-checking rollback/revert safety'] = true;
+        }
+      }
+    } else if (e.type === 'file_edit') {
+      var p = tlShortPath(String((e.data && e.data.path) || ''));
+      if (p) current.touched[p] = true;
+    }
+  }
+
+  flushPhase();
+  var out = [];
+  for (var j = 0; j < notes.length; j++) {
+    if (!notes[j]) continue;
+    if (j > 0 && notes[j] === notes[j - 1]) continue;
+    out.push(notes[j]);
+  }
+  return out.slice(-4);
 }
 
 function runDeleteBlocked(r) {
@@ -305,8 +479,69 @@ function renderTimeline() {
   var entryCount = tl ? tl.length : 0;
   console.log('[TL] renderTimeline', selectedRunId && selectedRunId.slice(0,8), 'entries=' + entryCount, 'phase=' + r.phase);
   if (tl && tl.length) {
+    var lastUserTs = null;
+    var hasAssistantAfterLastUser = false;
+    for (var lu = 0; lu < tl.length; lu++) {
+      if (tl[lu] && tl[lu].type === 'user_msg') lastUserTs = tl[lu].ts;
+    }
+    if (lastUserTs != null) {
+      for (var la = 0; la < tl.length; la++) {
+        if (tl[la] && tl[la].type === 'asst_msg' && tl[la].ts > lastUserTs) {
+          hasAssistantAfterLastUser = true;
+          break;
+        }
+      }
+    }
+
+    var internalBatch = [];
+    var batchCounter = 0;
+
+    function flushInternalBatch() {
+      if (!internalBatch.length) return;
+      var notes = collectPhaseNotes(internalBatch, r.phase);
+      for (var ni = 0; ni < notes.length; ni++) {
+        var toggle = ni === notes.length - 1
+          ? '<button type="button" class="btn btn-g" data-action="toggleProgressMetrics" style="font-size:10px;padding:3px 8px;margin-left:auto">' + (progressMetricsVisible ? 'Hide metrics' : 'Show metrics') + '</button>'
+          : '';
+        h += '<div class="msg msg-asst" style="border-color:var(--border);background:var(--card2)">' +
+          '<div class="msg-meta-row"><div class="msg-meta">Agent progress</div>' + toggle + '</div>' + tlEsc(notes[ni]) + '</div>';
+      }
+
+      var detailHtml = '';
+      for (var ii = 0; ii < internalBatch.length; ii++) {
+        detailHtml += renderTimelineEntry(internalBatch[ii], 20_000 + batchCounter * 1000 + ii);
+      }
+      h += renderTlCollapsible(
+        'internal-' + batchCounter,
+        'Activity details (' + internalBatch.length + ')',
+        'var(--dim)',
+        true,
+        detailHtml,
+        null,
+      );
+      batchCounter += 1;
+      internalBatch = [];
+    }
+
     for (var i = 0; i < tl.length; i++) {
-      h += renderTimelineEntry(tl[i], i);
+      var entry = tl[i];
+      if (isInternalEntry(entry)) {
+        // Keep progress/details tied to the latest user turn only.
+        if (lastUserTs != null && entry.ts < lastUserTs) continue;
+        internalBatch.push(entry);
+        continue;
+      }
+      flushInternalBatch();
+      h += renderTimelineEntry(entry, i);
+    }
+    flushInternalBatch();
+
+    // Guarantee a visible assistant response slot per turn.
+    if (lastUserTs != null && !hasAssistantAfterLastUser) {
+      var statusText = 'Working on this now.';
+      if (r.phase === 'error') statusText = 'I hit an error while processing this turn.';
+      else if (r.phase === 'done') statusText = 'Done. Summary is being finalized.';
+      h += '<div class="msg msg-asst"><div class="msg-meta">Shipyard</div>' + tlEsc(statusText) + '</div>';
     }
   }
 
@@ -347,6 +582,7 @@ function sealLastThinking(runId) {
 
 function onTextChunk(data) {
   if (!curRunId) { console.log('[TL] onTextChunk: no curRunId, ignoring'); return; }
+  if (!data || shouldSuppressThinkingChunk(data.text)) return;
   var rid = curRunId;
   if (!timelineMap[rid]) timelineMap[rid] = [];
   var tl = timelineMap[rid];

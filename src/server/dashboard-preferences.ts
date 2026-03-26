@@ -4,6 +4,10 @@
 
 export const DASHBOARD_MODEL_STORAGE_KEY = 'shipyard_dashboard_coding_model';
 export const DASHBOARD_MODE_STORAGE_KEY = 'shipyard_dashboard_mode';
+export const DASHBOARD_OPENAI_KEY_STORAGE_KEY = 'shipyard_dashboard_openai_api_key';
+export const DASHBOARD_ANTHROPIC_KEY_STORAGE_KEY = 'shipyard_dashboard_anthropic_api_key';
+export const DASHBOARD_GITHUB_REPO_STORAGE_KEY = 'shipyard_dashboard_github_repo';
+export const DASHBOARD_GITHUB_TOKEN_STORAGE_KEY = 'shipyard_dashboard_github_token';
 
 export function getDashboardPreferenceScript(): string {
   return `
@@ -60,6 +64,20 @@ function restoreDashboardModelSel() {
 
 function persistDashboardModelSel() {
   persistDashboardSelect('modelSel', DASH_MODEL_KEY);
+}
+
+function restoreDashboardInput(inputId, storageKey) {
+  var el = document.getElementById(inputId);
+  if (!el) return;
+  var value = loadDashboardPref(storageKey);
+  if (!value) return;
+  el.value = value;
+}
+
+function persistDashboardInput(inputId, storageKey) {
+  var el = document.getElementById(inputId);
+  if (!el) return;
+  saveDashboardPref(storageKey, el.value || '');
 }
 `;
 }

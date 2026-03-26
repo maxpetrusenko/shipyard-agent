@@ -593,13 +593,13 @@ const PAGE_HTML = `<!DOCTYPE html>
       <div class="pipeline-num" style="background:var(--accent-glow);color:var(--accent)">1</div>
       <div class="pipeline-name">Plan</div>
       <div class="pipeline-desc">Reads codebase, generates step-by-step execution plan with file targets</div>
-      <div class="pipeline-model">Opus 4.6</div>
+      <div class="pipeline-model">GPT-5.3 Codex</div>
     </div>
     <div class="pipeline-card spotlight-card glare-hover reveal" style="--stagger:1;--spotlight-color:rgba(16,185,129,0.08)">
       <div class="pipeline-num" style="background:var(--green-dim);color:var(--green)">2</div>
       <div class="pipeline-name">Execute</div>
       <div class="pipeline-desc">Applies edits, creates files, runs tools against the working directory</div>
-      <div class="pipeline-model">Sonnet 4.5</div>
+      <div class="pipeline-model">GPT-5 Mini</div>
     </div>
     <div class="pipeline-card spotlight-card glare-hover reveal" style="--stagger:2;--spotlight-color:rgba(34,211,238,0.08)">
       <div class="pipeline-num" style="background:var(--cyan-dim);color:var(--cyan)">3</div>
@@ -611,13 +611,13 @@ const PAGE_HTML = `<!DOCTYPE html>
       <div class="pipeline-num" style="background:var(--yellow-dim);color:var(--yellow)">4</div>
       <div class="pipeline-name">Review</div>
       <div class="pipeline-desc">Evaluates diffs and verification output, decides: accept, retry, or escalate</div>
-      <div class="pipeline-model">Opus 4.6</div>
+      <div class="pipeline-model">GPT-5.3 Codex</div>
     </div>
     <div class="pipeline-card spotlight-card glare-hover reveal" style="--stagger:4;--spotlight-color:rgba(167,139,250,0.08)">
       <div class="pipeline-num" style="background:var(--purple-dim);color:var(--purple)">5</div>
       <div class="pipeline-name">Report</div>
       <div class="pipeline-desc">Generates human-readable summary of all changes and verification results</div>
-      <div class="pipeline-model">Sonnet 4.5</div>
+      <div class="pipeline-model">GPT-5 Mini</div>
     </div>
   </div>
 </section>
@@ -646,7 +646,7 @@ const PAGE_HTML = `<!DOCTYPE html>
     <div class="feature-card spotlight-card glare-hover reveal" style="--stagger:2;--spotlight-color:rgba(245,158,11,0.06)">
       <div class="feature-icon" style="background:var(--yellow-dim);color:var(--yellow)">&#9733;</div>
       <h3>Model Flexibility</h3>
-      <p>Switch between Haiku 4.5 for fast edits, Sonnet 4.5 for balanced work, or Opus 4.6 for complex reasoning. Per-run model selection.</p>
+      <p>Switch between GPT-5 Mini for fast edits and GPT-5.1/5.3 Codex for deeper reasoning. Per-run model selection.</p>
     </div>
     <div class="feature-card spotlight-card star-border glare-hover reveal" style="--stagger:3;border-radius:16px;--spotlight-color:rgba(34,211,238,0.06)">
       <div class="feature-icon" style="background:var(--cyan-dim);color:var(--cyan)">&#9878;</div>
@@ -686,7 +686,7 @@ const PAGE_HTML = `<!DOCTYPE html>
   <div class="stack-row reveal" style="margin-top:32px">
     <div class="stack-chip"><span class="hl">TypeScript</span> runtime</div>
     <div class="stack-chip"><span class="hl">LangGraph</span> state machine</div>
-    <div class="stack-chip"><span class="hl">Anthropic</span> Claude</div>
+    <div class="stack-chip"><span class="hl">OpenAI</span> GPT-5</div>
     <div class="stack-chip"><span class="hl">Express</span> + WebSocket</div>
     <div class="stack-chip"><span class="hl">PostgreSQL</span> persistence</div>
     <div class="stack-chip"><span class="hl">Vitest</span> + typecheck</div>
@@ -702,7 +702,7 @@ const PAGE_HTML = `<!DOCTYPE html>
   </p>
   <br>
   <p class="reveal" style="font-size:11px;font-family:'JetBrains Mono',monospace;">
-    LangGraph + Anthropic Claude &middot; TypeScript &middot; PostgreSQL &middot; WebSocket streaming
+    LangGraph + OpenAI GPT-5 &middot; TypeScript &middot; PostgreSQL &middot; WebSocket streaming
   </p>
   <br>
   <a href="/dashboard" class="nav-cta reveal" style="display:inline-block">Open Dashboard &#8594;</a>

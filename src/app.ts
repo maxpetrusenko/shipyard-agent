@@ -12,6 +12,7 @@ import { heroHandler } from './server/hero.js';
 import { dashboardHandler } from './server/dashboard.js';
 import { benchmarksHandler } from './server/benchmarks.js';
 import { runsHandler } from './server/runs.js';
+import { settingsGithubHandler } from './server/settings-github.js';
 import { createBenchmarkRoutes } from './server/benchmark-api.js';
 import type { InstructionLoop } from './runtime/loop.js';
 
@@ -88,6 +89,10 @@ export function createApp(loop: InstructionLoop): express.Application {
   app.post('/api/cancel', limiter(60, 'cancel'));
   app.post('/api/runs/:id/confirm', limiter(30, 'confirm'));
   app.post('/api/runs/:id/resume', limiter(30, 'resume'));
+  app.post('/api/settings/model-keys', limiter(30, 'settings-model-keys'));
+  app.post('/api/github/repos', limiter(60, 'github-repos'));
+  app.post('/api/github/connect', limiter(20, 'github-connect'));
+  app.post('/api/github/install/logout', limiter(30, 'github-install-logout'));
   app.delete('/api/runs/:id', limiter(30, 'delete-run'));
   app.delete('/api/contexts/:label', limiter(60, 'delete-context'));
 
@@ -96,6 +101,8 @@ export function createApp(loop: InstructionLoop): express.Application {
   app.get('/dashboard', dashboardHandler(loop));
   app.get('/runs', runsHandler(loop));
   app.get('/benchmarks', benchmarksHandler());
+  app.get('/settings', (_req, res) => res.redirect('/settings/connectors/github'));
+  app.get('/settings/connectors/github', settingsGithubHandler());
 
   app.use('/api', createRoutes(loop));
   app.use('/api', createBenchmarkRoutes());

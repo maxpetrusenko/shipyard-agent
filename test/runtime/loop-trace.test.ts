@@ -50,6 +50,16 @@ vi.mock('../../src/runtime/persistence.js', () => ({
   loadRunFromFile: () => null,
 }));
 
+async function waitFor(predicate: () => boolean, timeoutMs = 750): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error('waitFor timeout');
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 describe('InstructionLoop trace finalization', () => {
   afterEach(() => {
     shouldThrow = false;
@@ -58,8 +68,7 @@ describe('InstructionLoop trace finalization', () => {
   it('does not wait for public trace sharing before marking the run done', async () => {
     const loop = new InstructionLoop();
     const runId = loop.submit('implement auth', undefined, false, 'code');
-
-    await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => loop.getRun(runId)?.phase === 'done');
 
     const run = loop.getRun(runId);
     expect(run?.phase).toBe('done');
@@ -71,8 +80,7 @@ describe('InstructionLoop trace finalization', () => {
 
     const loop = new InstructionLoop();
     const runId = loop.submit('refactor small file', undefined, false, 'code');
-
-    await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => loop.getRun(runId)?.phase === 'error');
 
     const initialRun = loop.getRun(runId);
     expect(initialRun?.phase).toBe('error');

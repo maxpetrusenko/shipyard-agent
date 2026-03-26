@@ -94,6 +94,45 @@ describe('InstructionLoop', () => {
   });
 
   // -------------------------------------------------------------------------
+  // resume
+  // -------------------------------------------------------------------------
+
+  describe('resume', () => {
+    it('re-queues interrupted runs as same-thread follow-ups', async () => {
+      const loopHack = loop as unknown as {
+        runs: Map<string, Record<string, unknown>>;
+      };
+      loopHack.runs.set('resume-run', {
+        runId: 'resume-run',
+        phase: 'error',
+        threadKind: 'agent',
+        runMode: 'code',
+        steps: [],
+        fileEdits: [],
+        toolCallHistory: [],
+        tokenUsage: null,
+        traceUrl: null,
+        messages: [
+          { role: 'user', content: 'implement auth' },
+          { role: 'assistant', content: 'partial progress' },
+        ],
+        error: 'stopped',
+        verificationResult: null,
+        reviewFeedback: null,
+        durationMs: 42,
+      });
+
+      const resumed = loop.resume('resume-run');
+      expect(resumed).toBe('resume-run');
+
+      await new Promise((r) => setTimeout(r, 200));
+      const run = loop.getRun('resume-run');
+      expect(run?.threadKind).toBe('agent');
+      expect(run?.messages.some((m) => m.content === 'implement auth')).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // submit
   // -------------------------------------------------------------------------
 
@@ -198,17 +237,23 @@ describe('InstructionLoop', () => {
 
     it('retains the submitted prompt after graph completion', async () => {
       const id = loop.submit('refactor small file', undefined, false, 'code');
-      await new Promise((r) => setTimeout(r, 200));
+      const deadline = Date.now() + 1500;
+      // Baseline capture adds a couple of git probes; wait until run settles.
+      while (Date.now() < deadline) {
+        const run = loop.getRun(id);
+        if (run?.phase === 'done') break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
 
       const run = loop.getRun(id);
       expect(run?.messages).toContainEqual({
         role: 'user',
         content: 'refactor small file',
       });
-      expect(run?.messages).toContainEqual({
-        role: 'assistant',
-        content: 'Done',
-      });
+      const lastAssistant = [...(run?.messages ?? [])]
+        .reverse()
+        .find((m) => m.role === 'assistant');
+      expect(lastAssistant?.content).toContain('Done');
     });
 
     it('persists live tool activity into completed runs', async () => {
@@ -235,6 +280,8 @@ describe('InstructionLoop', () => {
       const run = loop.getRun(id);
       expect(run?.phase).toBe('error');
       expect(run?.error).toBe('Run cancelled by user');
+      expect(run?.completionStatus).toBe('cancelled_with_completed_actions');
+      expect(run?.cancellation?.tool_calls).toBe(1);
       expect(run?.toolCallHistory).toHaveLength(1);
       expect(run?.toolCallHistory[0]?.tool_name).toBe('bash');
       expect(run?.toolCallHistory[0]?.tool_input).toEqual({ command: 'ls src' });

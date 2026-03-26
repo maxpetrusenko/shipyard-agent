@@ -98,6 +98,9 @@ function serializeRun(result: RunResult): Record<string, unknown> {
     modelFamily: result.modelFamily ?? null,
     modelOverrides: result.modelOverrides ?? null,
     resolvedModels: result.resolvedModels ?? null,
+    completionStatus: result.completionStatus ?? null,
+    cancellation: result.cancellation ?? null,
+    nextActions: result.nextActions ?? [],
     savedAt: new Date().toISOString(),
   };
 }
@@ -235,6 +238,21 @@ function parseRunFile(filePath: string): RunResult | null {
         typeof data['resolvedModels'] === 'object'
           ? (data['resolvedModels'] as RunResult['resolvedModels'])
           : null,
+      completionStatus:
+        data['completionStatus'] === 'completed' ||
+        data['completionStatus'] === 'failed' ||
+        data['completionStatus'] === 'cancelled' ||
+        data['completionStatus'] === 'cancelled_with_completed_actions'
+          ? (data['completionStatus'] as RunResult['completionStatus'])
+          : undefined,
+      cancellation:
+        data['cancellation'] &&
+        typeof data['cancellation'] === 'object'
+          ? (data['cancellation'] as RunResult['cancellation'])
+          : null,
+      nextActions: Array.isArray(data['nextActions'])
+        ? (data['nextActions'] as RunResult['nextActions'])
+        : [],
       savedAt: typeof data['savedAt'] === 'string' ? data['savedAt'] : undefined,
     };
   } catch {
@@ -352,6 +370,7 @@ export function pgRowToRunSummary(row: Record<string, unknown>): RunResult {
     verificationResult: null,
     reviewFeedback: null,
     durationMs: Number(row['duration_ms'] ?? 0),
+    nextActions: [],
     savedAt,
   };
 }

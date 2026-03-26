@@ -4,7 +4,6 @@
  * Supports three auth modes (checked in order):
  * 1. ANTHROPIC_API_KEY  – standard API key
  * 2. ANTHROPIC_AUTH_TOKEN – OAuth bearer token (e.g. from Claude Code Max plan)
- * 3. macOS Keychain – extracts Claude Code OAuth token automatically
  *
  * When using OAuth, the required beta header and system prompt prefix are
  * added automatically. The system prompt MUST be an array of text blocks
@@ -12,7 +11,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { execSync } from 'node:child_process';
+import { wrapAnthropic } from 'langsmith/wrappers/anthropic';
 import { ensureEnvLoaded } from './bootstrap-env.js';
 
 /** Required system prompt prefix for OAuth-authenticated requests. */
@@ -24,19 +23,9 @@ const OAUTH_BETA_HEADERS = 'oauth-2025-04-20,claude-code-20250219';
 let _client: Anthropic | null = null;
 let _isOAuth = false;
 
-function extractKeychainToken(): string | null {
-  try {
-    const raw = execSync(
-      "security find-generic-password -s 'Claude Code-credentials' -w",
-      { encoding: 'utf-8', timeout: 5000 },
-    ).trim();
-    const parsed = JSON.parse(raw) as {
-      claudeAiOauth?: { accessToken?: string };
-    };
-    return parsed.claudeAiOauth?.accessToken ?? null;
-  } catch {
-    return null;
-  }
+export function resetClient(): void {
+  _client = null;
+  _isOAuth = false;
 }
 
 export function isOAuthMode(): boolean {
@@ -63,6 +52,7 @@ export function getClient(): Anthropic {
       ...(baseURL ? { baseURL } : {}),
       ...retryOpts,
     });
+    _client = wrapAnthropic(_client) as unknown as Anthropic;
     _isOAuth = false;
     return _client;
   }
@@ -74,24 +64,13 @@ export function getClient(): Anthropic {
       defaultHeaders: { 'anthropic-beta': OAUTH_BETA_HEADERS },
       ...retryOpts,
     });
-    _isOAuth = true;
-    return _client;
-  }
-
-  // Mode 3: extract from macOS Keychain
-  const keychainToken = extractKeychainToken();
-  if (keychainToken) {
-    _client = new Anthropic({
-      authToken: keychainToken,
-      defaultHeaders: { 'anthropic-beta': OAUTH_BETA_HEADERS },
-      ...retryOpts,
-    });
+    _client = wrapAnthropic(_client) as unknown as Anthropic;
     _isOAuth = true;
     return _client;
   }
 
   throw new Error(
-    'No Anthropic credentials found. Set ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or log in with Claude Code.',
+    'No Anthropic credentials found. Set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN in .env or the dashboard.',
   );
 }
 

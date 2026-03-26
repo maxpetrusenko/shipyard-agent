@@ -61,6 +61,8 @@ Base defaults (overridden by `SHIPYARD_*_MODEL` env vars, then by UI/API):
 
 When `SHIPYARD_DB_URL` is set, runs are written to Postgres. The server ensures `token_input` and `token_output` exist on `shipyard_runs` before insert (same as migration `scripts/migrations/002-add-token-columns.sql`). File-based `results/<runId>.json` always runs as a fallback.
 
+LangGraph state checkpointing now also uses Postgres when `SHIPYARD_DB_URL` is configured (`PostgresSaver.setup()` on startup). If setup fails, the loop falls back to in-memory checkpoints (`MemorySaver`) and logs a warning.
+
 ---
 
 ## 2. File Editing Strategy
@@ -522,6 +524,8 @@ Projections assume standard Anthropic API pricing (not Max plan) for production 
 - [x] 2 public trace links (Trace A: simple edit, Trace B: context injection + retry)
 - [x] README setup guide (clone & run docs)
 - [x] dotenv loading for .env file support
+- [x] Checkpointer wired (`PostgresSaver` with memory fallback) so `thread_id` state is durable across turns
+- [x] Follow-up continuity context (`Thread Continuation Snapshot`) injected for plan/agent threads to reduce repeated rediscovery
 
 ### Blocked
 - [ ] **Ship rebuild execution** — instructions ready, agent not tested E2E

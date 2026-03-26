@@ -30,6 +30,7 @@ import { TokenAccumulator } from '../../llm/token-usage.js';
 import { TOOL_SCHEMAS, dispatchTool } from '../../tools/index.js';
 import { createRecordingHooks } from '../../tools/hooks.js';
 import { FileOverlay } from '../../tools/file-overlay.js';
+import { consumeLiveFollowups } from '../../runtime/live-followups.js';
 import {
   buildContextBlock,
   type ShipyardStateType,
@@ -54,13 +55,18 @@ Rules:
 - Use bash for running commands (build, lint, format) — always cd to ${WORK_DIR} first
 - Make one logical change at a time
 - Process ALL files listed for this step, not just the first one
+- Do NOT run full repo verification commands (pnpm test, pnpm type-check); pipeline handles verification after execution
 - When done with this step, say "STEP_COMPLETE" in your response
 - Do NOT say STEP_COMPLETE until you have addressed every file in the step's file list
 - If the step mentions multiple files, you must edit/verify each one before completing
+- If this is the final step and code changed, call commit_and_open_pr before STEP_COMPLETE
+- When calling commit_and_open_pr, include file_paths with the exact files edited in this run
 
 Codebase conventions:
 - This codebase uses TypeScript with moduleResolution "node16". ALL imports MUST include the .js extension (e.g. import { foo } from './bar.js'), even for .ts source files.
 - Use vitest for testing.`;
+
+const MAX_NO_EDIT_TOOL_ROUNDS = 8;
 
 export async function executeNode(
   state: ShipyardStateType,
@@ -82,6 +88,10 @@ export async function executeNode(
     ? `# Context\n\n${contextBlock}`
     : undefined;
 
+  const nextSteps = state.steps
+    .slice(state.currentStepIndex + 1, state.currentStepIndex + 4)
+    .map((s) => `- [${s.status}] ${s.description}`);
+
   const stepPrompt = [
     `## Current Step (${currentStep.index + 1}/${state.steps.length})`,
     currentStep.description,
@@ -89,11 +99,8 @@ export async function executeNode(
       ? `Files: ${currentStep.files.join(', ')}`
       : '',
     '',
-    '## Full Plan',
-    ...state.steps.map(
-      (s) =>
-        `${s.index === state.currentStepIndex ? '→' : ' '} ${s.index + 1}. [${s.status}] ${s.description}`,
-    ),
+    `Remaining steps after this: ${Math.max(0, state.steps.length - state.currentStepIndex - 1)}`,
+    nextSteps.length > 0 ? 'Next steps:\n' + nextSteps.join('\n') : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -151,8 +158,21 @@ export async function executeNode(
   const messages: Anthropic.MessageParam[] = [
     { role: 'user', content: stepPrompt },
   ];
+  let noEditToolRounds = 0;
 
   for (let round = 0; round < maxToolRounds; round++) {
+    const liveFollowups = consumeLiveFollowups(state.runId);
+    if (liveFollowups.length > 0) {
+      messages.push({
+        role: 'user',
+        content: liveFollowups.join('\n\n'),
+      });
+      newMessages.push({
+        role: 'assistant',
+        content: `[Follow-up] Consumed ${liveFollowups.length} queued user update(s) before execution call.`,
+      });
+    }
+
     const requestMessages = stripToolResultCacheControls(messages);
     const response = await messagesCreate(anthropic, {
       model: config.model,
@@ -161,7 +181,12 @@ export async function executeNode(
       system: systemPrompt,
       tools: cachedTools,
       messages: requestMessages,
-    }, { liveNode: 'execute' });
+    }, {
+      liveNode: 'execute',
+      traceName: 'execute',
+      traceMetadata: { node: 'execute', provider: 'anthropic', model: config.model },
+      traceTags: ['shipyard', 'execute', 'anthropic'],
+    });
 
     tokens.addAnthropicRound(response);
 
@@ -202,6 +227,7 @@ export async function executeNode(
 
     // Execute tool calls (hooks handle recording, overlay handles snapshots)
     if (toolBlocks.length > 0) {
+      const editsBefore = newEdits.length;
       messages.push({ role: 'assistant', content: response.content });
 
       const toolResults = await dispatchAnthropicToolBlocks(
@@ -209,6 +235,34 @@ export async function executeNode(
         (name, input) => dispatchTool(name, input, hooks, overlay),
       );
       messages.push({ role: 'user', content: toolResults });
+
+      if (newEdits.length === editsBefore) {
+        noEditToolRounds += 1;
+      } else {
+        noEditToolRounds = 0;
+      }
+
+      if (noEditToolRounds >= MAX_NO_EDIT_TOOL_ROUNDS) {
+        newMessages.push({
+          role: 'assistant',
+          content:
+            `[Watchdog] Execution stalled: ${MAX_NO_EDIT_TOOL_ROUNDS} consecutive tool rounds without file edits. ` +
+            'Replanning with tighter scope constraints.',
+        });
+        const failedSteps = updatedSteps.map((s, i) =>
+          i === state.currentStepIndex ? { ...s, status: 'failed' as const } : s,
+        );
+        return {
+          phase: 'verifying',
+          steps: failedSteps,
+          fileEdits: newEdits,
+          toolCallHistory: newHistory,
+          messages: newMessages,
+          tokenUsage: tokens.snapshot(),
+          reviewFeedback:
+            'Execution stalled with repeated tool calls and no file edits. Replan with stricter file targeting and complete the edit in one pass.',
+        };
+      }
     } else {
       // No tools, not complete — something's wrong
       newMessages.push({ role: 'assistant', content: fullText });
