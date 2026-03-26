@@ -35,6 +35,8 @@ import {
   githubInstallConfigured,
   setSessionGithubInstallation,
 } from './github-oauth.js';
+import { registerInvokeRoutes } from './invoke-routes.js';
+import { saveRawBody } from './hmac-auth.js';
 
 const MAX_INSTRUCTION_SIZE = 100 * 1024; // 100 KB
 const MAX_CONTEXT_SIZE = 500 * 1024;     // 500 KB
@@ -84,7 +86,7 @@ function installPopupHtml(ok: boolean, message: string): string {
 
 export function createRoutes(loop: InstructionLoop): Router {
   const router = Router();
-  router.use(json({ limit: '1mb' }));
+  router.use(json({ limit: '1mb', verify: saveRawBody }));
 
   function currentRepoStatus(): { branch: string | null; remote: string | null } {
     try {
@@ -303,7 +305,7 @@ export function createRoutes(loop: InstructionLoop): Router {
 
   // POST /cancel - Cancel current run
   router.post('/cancel', wrap((_req, res) => {
-    const cancelled = loop.cancel();
+    const cancelled = loop.cancel('api');
     res.json({ cancelled });
   }));
 
@@ -547,6 +549,23 @@ export function createRoutes(loop: InstructionLoop): Router {
     });
   }));
 
+  // POST /settings/github-app - update GitHub App config in process env
+  router.post('/settings/github-app', wrap((req, res) => {
+    if ((req.headers['x-requested-with'] as string | undefined) !== 'XMLHttpRequest') {
+      res.status(403).json({ error: 'Forbidden: missing X-Requested-With: XMLHttpRequest' });
+      return;
+    }
+    const { slug, appId, privateKey } = (req.body ?? {}) as {
+      slug?: string;
+      appId?: string;
+      privateKey?: string;
+    };
+    if (typeof slug === 'string') process.env['GITHUB_APP_SLUG'] = slug.trim();
+    if (typeof appId === 'string') process.env['GITHUB_APP_ID'] = appId.trim();
+    if (typeof privateKey === 'string') process.env['GITHUB_APP_PRIVATE_KEY'] = privateKey.trim();
+    res.json({ ok: true });
+  }));
+
   // POST /github/repos - list accessible repos for connected installation only
   router.post('/github/repos', wrap(async (req, res) => {
     const { query } = (req.body ?? {}) as { query?: string };
@@ -594,9 +613,16 @@ export function createRoutes(loop: InstructionLoop): Router {
     });
   }));
 
+  // Register invoke, webhook, event, retry, dead-letter, metrics, and ops routes
+  const invokeRoutes = registerInvokeRoutes(router, loop);
+
   // GET /health - Health check
   router.get('/health', wrap((_req, res) => {
-    res.json({ status: 'ok', uptime: process.uptime() });
+    res.json({
+      status: 'ok',
+      uptime: process.uptime(),
+      persistence: invokeRoutes.eventPersistence.health(),
+    });
   }));
 
   return router;

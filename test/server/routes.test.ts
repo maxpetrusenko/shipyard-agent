@@ -42,10 +42,28 @@ afterAll(async () => {
 describe('GET /health', () => {
   it('returns 200 with status ok', async () => {
     const res = await fetch(`${baseUrl}/health`);
-    const body = await res.json() as { status: string; uptime: number };
+    const body = await res.json() as {
+      status: string;
+      uptime: number;
+      persistence: { healthy: boolean; lastError: string | null; lastWriteAt: string | null };
+    };
     expect(res.status).toBe(200);
     expect(body.status).toBe('ok');
     expect(body.uptime).toBeGreaterThanOrEqual(0);
+    expect(typeof body.persistence.healthy).toBe('boolean');
+    expect(body.persistence).toHaveProperty('lastError');
+    expect(body.persistence).toHaveProperty('lastWriteAt');
+  });
+});
+
+describe('GET /metrics', () => {
+  it('includes audit log stats', async () => {
+    const res = await fetch(`${baseUrl}/metrics`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { audit: { entries: number; sizeBytes: number } };
+    expect(body.audit).toBeDefined();
+    expect(typeof body.audit.entries).toBe('number');
+    expect(typeof body.audit.sizeBytes).toBe('number');
   });
 });
 
@@ -355,7 +373,7 @@ describe('POST /runs/:id/followup', () => {
       resolvedModels: Record<string, string>;
     };
     expect(debugBody.modelOverride).toBeNull();
-    expect(debugBody.resolvedModels.chat).toBe('gpt-5-mini');
+    expect(debugBody.resolvedModels.chat).toBe('gpt-5.4-mini');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });
@@ -654,6 +672,115 @@ describe('GET /status', () => {
     const body = await res.json() as { processing: boolean; currentRunId: string | null; queueLength: number };
     expect(typeof body.processing).toBe('boolean');
     expect(typeof body.queueLength).toBe('number');
+  });
+});
+
+describe('invoke events controls', () => {
+  it('applies from/to filters on /invoke/events/summary', async () => {
+    const invokeRes = await fetch(`${baseUrl}/invoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'summary filter seed event' }),
+    });
+    expect(invokeRes.status).toBe(200);
+
+    const now = new Date();
+    const farFuture = new Date(now.getTime() + 86_400_000).toISOString();
+    const res = await fetch(`${baseUrl}/invoke/events/summary?from=${encodeURIComponent(farFuture)}`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      total: number;
+      bySource: Record<string, number>;
+      byEventType: Record<string, number>;
+      byStatus: Record<string, number>;
+    };
+    expect(body.total).toBe(0);
+    expect(typeof body.bySource).toBe('object');
+    expect(typeof body.byEventType).toBe('object');
+    expect(typeof body.byStatus).toBe('object');
+  });
+
+  it('returns ordering + stopReason in /invoke/events/retry-batch', async () => {
+    const invoke1 = await fetch(`${baseUrl}/invoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'retry batch order event 1' }),
+    });
+    expect(invoke1.status).toBe(200);
+    const b1 = await invoke1.json() as { eventId: string };
+
+    const invoke2 = await fetch(`${baseUrl}/invoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'retry batch order event 2' }),
+    });
+    expect(invoke2.status).toBe(200);
+    const b2 = await invoke2.json() as { eventId: string };
+
+    const retryRes = await fetch(`${baseUrl}/invoke/events/retry-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventIds: [b1.eventId, b2.eventId],
+        dryRun: true,
+        ordering: 'oldest_first',
+        maxAccepted: 1,
+      }),
+    });
+    expect(retryRes.status).toBe(200);
+    const payload = await retryRes.json() as {
+      ordering: string;
+      stopReason: string;
+      summary: { accepted: number; skipped: number };
+    };
+    expect(payload.ordering).toBe('oldest_first');
+    expect(payload.stopReason).toBe('aborted_max_reached');
+    expect(payload.summary.accepted).toBe(1);
+    expect(payload.summary.skipped).toBeGreaterThanOrEqual(1);
+  });
+
+  it('replays idempotent retry-batch responses for same key+payload', async () => {
+    const invokeRes = await fetch(`${baseUrl}/invoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'retry-batch idempotent seed' }),
+    });
+    expect(invokeRes.status).toBe(200);
+    const invokeBody = await invokeRes.json() as { eventId: string };
+
+    const idemKey = `idem-retry-batch-${Date.now()}`;
+    const payload = {
+      eventIds: [invokeBody.eventId],
+      dryRun: true,
+      ordering: 'input_order',
+    };
+
+    const first = await fetch(`${baseUrl}/invoke/events/retry-batch`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': idemKey,
+      },
+      body: JSON.stringify(payload),
+    });
+    expect(first.status).toBe(200);
+    expect(first.headers.get('x-idempotency-replayed')).toBeNull();
+    const firstBody = await first.json() as { total: number; stopReason: string };
+    expect(firstBody.total).toBe(1);
+
+    const second = await fetch(`${baseUrl}/invoke/events/retry-batch`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': idemKey,
+      },
+      body: JSON.stringify(payload),
+    });
+    expect(second.status).toBe(200);
+    expect(second.headers.get('x-idempotency-replayed')).toBe('true');
+    const secondBody = await second.json() as { total: number; stopReason: string };
+    expect(secondBody.total).toBe(firstBody.total);
+    expect(secondBody.stopReason).toBe(firstBody.stopReason);
   });
 });
 
