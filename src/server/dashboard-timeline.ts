@@ -45,6 +45,10 @@ function sanitizeAssistantContent(raw) {
   if (!text) return '';
   // Strip planner envelopes that are useful for the agent but noisy in chat UI.
   text = text.replace(/<plan>[\\s\\S]*?<\\/plan>/gi, '').trim();
+  // Strip internal markers that leak from graph nodes.
+  text = text.replace(/STEP_COMPLETE/g, '').trim();
+  // Strip internal bracket-prefixed status lines (e.g. [Review] done: OK, [Compaction] ...).
+  text = text.replace(/^\\[(Review|Compaction|Watchdog|Follow-up)\\][^\\n]*/gm, '').trim();
   // Suppress raw JSON payload responses from internal nodes.
   var compact = text.replace(/\\s+/g, ' ').trim();
   if (
@@ -462,6 +466,7 @@ function renderTimeline() {
   h += '<span class="pbadge ' + phCls(r.phase) + '">' + tlEsc(r.phase) + '</span>';
   if (r.threadKind === 'ask') h += '<span class="pp-thread-ask">ask</span>';
   h += '</div>';
+  h += '<div class="msg msg-asst" style="max-width:none;background:var(--bg2);border-style:dashed;margin-bottom:12px"><div class="msg-meta">Trace source</div>Local reconstructed timeline from run messages, tool history, and websocket events. External LangSmith trace stays separate in Debug.</div>';
 
   // Error box
   if (r.error) {
@@ -558,7 +563,7 @@ function renderTimeline() {
   // Empty state
   if (!tl || !tl.length) {
     if (!isActive) {
-      h += '<div style="padding:16px;text-align:center;color:var(--muted);font-size:11px">No activity yet</div>';
+      h += renderEmptyState('No activity yet');
     }
   }
 

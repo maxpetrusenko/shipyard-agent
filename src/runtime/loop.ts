@@ -36,6 +36,7 @@ import type {
   ShipyardStateType,
   ContextEntry,
   LLMMessage,
+  LoopDiagnostics,
   PlanStep,
   VerificationResult,
   ToolCallRecord,
@@ -59,6 +60,14 @@ import { setCommandRuntimeControls } from '../graph/commands.js';
 import { captureRunBaseline, clearRunBaseline } from './run-baselines.js';
 import { WORK_DIR } from '../config/work-dir.js';
 import { clearLiveFollowups, enqueueLiveFollowup } from './live-followups.js';
+import {
+  createLoopGuard,
+  formatLoopStopError,
+  isGraphRecursionLimitError,
+  resolveGraphRecursionLimit,
+  resolveGraphSoftBudget,
+  withHardRecursionStop,
+} from './loop-guard.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -82,6 +91,8 @@ export interface QueuedInstruction {
   modelFamily?: 'anthropic' | 'openai';
   /** Per-stage model ids (planning, coding, review, …). */
   modelOverrides?: Partial<Record<ModelRole, string>>;
+  requestedUiMode?: 'ask' | 'plan' | 'agent';
+  threadKindHint?: 'ask' | 'plan' | 'agent';
   followupThreadKind?: 'ask' | 'plan' | 'agent';
 }
 
@@ -90,6 +101,8 @@ export interface SubmitModelOptions {
   modelOverride?: string;
   modelFamily?: 'anthropic' | 'openai';
   modelOverrides?: Partial<Record<ModelRole, string>>;
+  requestedUiMode?: 'ask' | 'plan' | 'agent';
+  threadKindHint?: 'ask' | 'plan' | 'agent';
   /**
    * When true, omitted model fields should clear prior thread-level selection
    * instead of silently inheriting it.
@@ -112,6 +125,7 @@ export interface RunResult {
   verificationResult: VerificationResult | null;
   reviewFeedback: string | null;
   durationMs: number;
+  requestedUiMode?: 'ask' | 'plan' | 'agent' | null;
   /** ask: Q&A thread (follow-ups); plan: code with plan review; agent: full auto */
   threadKind?: 'ask' | 'plan' | 'agent';
   runMode?: 'auto' | 'chat' | 'code';
@@ -128,7 +142,17 @@ export interface RunResult {
     completed_actions: number;
     tool_calls: number;
     edited_files: number;
+    source?:
+      | 'api'
+      | 'ws'
+      | 'command'
+      | 'shutdown_signal'
+      | 'watchdog'
+      | 'abort_error'
+      | 'unknown';
+    requested_at?: string | null;
   } | null;
+  loopDiagnostics?: LoopDiagnostics | null;
   savedAt?: string;
   nextActions?: NextAction[];
 }
@@ -338,6 +362,8 @@ export class InstructionLoop {
   private abortController: AbortController | null = null;
   /** Set when user calls cancel(); checked each graph stream chunk to stop the run. */
   private cancelRequested = false;
+  private cancelSource: NonNullable<RunResult['cancellation']>['source'] = 'unknown';
+  private cancelRequestedAt: number | null = null;
   private contextStore = new ContextStore();
   private runs: Map<string, RunResult> = new Map();
   private listeners: Set<StateListener> = new Set();
@@ -354,7 +380,7 @@ export class InstructionLoop {
   constructor() {
     setCommandRuntimeControls({
       getStatus: () => this.getStatus(),
-      cancel: () => this.cancel(),
+      cancel: () => this.cancel('command'),
       resume: (runId: string) => this.resume(runId),
     });
   }
@@ -471,6 +497,8 @@ export class InstructionLoop {
     let modelFamily: 'anthropic' | 'openai' | undefined;
     let modelOverrides: Partial<Record<ModelRole, string>> | undefined;
     let replaceModelSelection = false;
+    let requestedUiMode: 'ask' | 'plan' | 'agent' | undefined;
+    let threadKindHint: 'ask' | 'plan' | 'agent' | undefined;
     if (typeof modelArg === 'string') {
       modelOverride = modelArg.trim() || undefined;
     } else if (modelArg && typeof modelArg === 'object') {
@@ -478,6 +506,8 @@ export class InstructionLoop {
       modelFamily = modelArg.modelFamily;
       modelOverrides = modelArg.modelOverrides;
       replaceModelSelection = modelArg.replaceModelSelection === true;
+      requestedUiMode = modelArg.requestedUiMode;
+      threadKindHint = modelArg.threadKindHint;
     }
     if (
       (runMode ?? 'auto') !== 'code' &&
@@ -489,6 +519,7 @@ export class InstructionLoop {
         modelOverride,
         modelFamily,
         modelOverrides,
+        requestedUiMode,
       })
     ) {
       return id;
@@ -503,7 +534,43 @@ export class InstructionLoop {
       modelOverride,
       modelFamily,
       modelOverrides,
+      requestedUiMode,
+      threadKindHint,
     });
+    const queuedAtIso = new Date().toISOString();
+    if (!this.runs.has(id)) {
+      this.runs.set(id, {
+        runId: id,
+        phase: getRunStartPhase(runMode, threadKindHint),
+        steps: [],
+        fileEdits: [],
+        toolCallHistory: [],
+        tokenUsage: null,
+        traceUrl: null,
+        messages: ensureRunMessages(instruction, []),
+        error: null,
+        verificationResult: null,
+        reviewFeedback: null,
+        durationMs: 0,
+        requestedUiMode: requestedUiMode ?? null,
+        threadKind: threadKindHint,
+        runMode: runMode ?? 'auto',
+        executionPath: 'graph',
+        queuedAt: queuedAtIso,
+        startedAt: queuedAtIso,
+        modelOverride: modelOverride ?? null,
+        modelFamily: modelFamily ?? null,
+        modelOverrides: modelOverrides ?? null,
+        resolvedModels: resolveModelsForRun({
+          modelOverride: modelOverride ?? null,
+          modelFamily: modelFamily ?? null,
+          modelOverrides: modelOverrides ?? null,
+        }),
+        loopDiagnostics: null,
+        savedAt: queuedAtIso,
+        nextActions: [],
+      });
+    }
     void this.processNext();
     return id;
   }
@@ -549,6 +616,7 @@ export class InstructionLoop {
       confirmPlan: threadKind === 'plan',
       priorDurationMs: existing.durationMs,
       seedMessages: existing.messages,
+      requestedUiMode: existing.requestedUiMode ?? undefined,
       modelOverride: existing.modelOverride ?? undefined,
       modelFamily: existing.modelFamily ?? undefined,
       modelOverrides: existing.modelOverrides ?? undefined,
@@ -564,9 +632,13 @@ export class InstructionLoop {
   }
 
   /** Cancel current run (stops consuming the graph stream; persists partial state as error). */
-  cancel(): boolean {
+  cancel(
+    source: NonNullable<RunResult['cancellation']>['source'] = 'unknown',
+  ): boolean {
     if (!this.processing || !this.currentRunId) return false;
     this.cancelRequested = true;
+    this.cancelSource = source;
+    this.cancelRequestedAt = Date.now();
     this.pauseRequested = false;
     const waiters = this.pauseResumeWaiters.splice(0);
     for (const w of waiters) w();
@@ -617,6 +689,8 @@ export class InstructionLoop {
     let modelFamily: 'anthropic' | 'openai' | undefined;
     let modelOverrides: Partial<Record<ModelRole, string>> | undefined;
     let replaceModelSelection = false;
+    let requestedUiMode: 'ask' | 'plan' | 'agent' | undefined;
+    let threadKindHint: 'ask' | 'plan' | 'agent' | undefined;
     if (typeof modelArg === 'string') {
       modelOverride = modelArg.trim() || undefined;
     } else if (modelArg && typeof modelArg === 'object') {
@@ -624,18 +698,39 @@ export class InstructionLoop {
       modelFamily = modelArg.modelFamily;
       modelOverrides = modelArg.modelOverrides;
       replaceModelSelection = modelArg.replaceModelSelection === true;
+      requestedUiMode = modelArg.requestedUiMode;
+      threadKindHint = modelArg.threadKindHint;
     }
 
     let existing = this.runs.get(runId) ?? null;
     if (!existing) existing = loadRunFromFile(runId);
     if (!existing) return false;
-    const threadKind =
+    const existingThreadKind =
       existing.threadKind ??
       (existing.runMode === 'chat'
         ? 'ask'
         : existing.runMode === 'code'
           ? 'agent'
           : 'ask');
+    const threadKind = threadKindHint ?? existingThreadKind;
+    const effectiveRequestedUiMode =
+      requestedUiMode ?? existing.requestedUiMode ?? null;
+    if (
+      (threadKindHint &&
+        (existing.threadKind !== threadKindHint ||
+          existing.runMode !== (threadKindHint === 'ask' ? 'chat' : 'code'))) ||
+      existing.requestedUiMode !== effectiveRequestedUiMode
+    ) {
+      existing = {
+        ...existing,
+        requestedUiMode: effectiveRequestedUiMode ?? null,
+        threadKind: threadKindHint ?? existing.threadKind,
+        runMode: threadKindHint
+          ? (threadKindHint === 'ask' ? 'chat' : 'code')
+          : existing.runMode,
+      };
+      this.runs.set(runId, existing);
+    }
     const effectiveModelOverride = replaceModelSelection
       ? modelOverride
       : modelOverride ?? existing.modelOverride ?? undefined;
@@ -667,6 +762,7 @@ export class InstructionLoop {
         modelOverride: effectiveModelOverride,
         modelFamily: effectiveModelFamily,
         modelOverrides: effectiveModelOverrides,
+        requestedUiMode: effectiveRequestedUiMode ?? undefined,
       })
     ) return true;
 
@@ -679,9 +775,11 @@ export class InstructionLoop {
       runMode: threadKind === 'ask' ? 'chat' : 'code',
       confirmPlan: threadKind === 'plan',
       priorDurationMs: existing.durationMs,
+      requestedUiMode: effectiveRequestedUiMode ?? undefined,
       modelOverride: effectiveModelOverride,
       modelFamily: effectiveModelFamily,
       modelOverrides: effectiveModelOverrides,
+      threadKindHint,
       followupThreadKind: threadKind,
     });
     void this.processNext();
@@ -913,6 +1011,7 @@ export class InstructionLoop {
       modelOverride?: string;
       modelFamily?: 'anthropic' | 'openai';
       modelOverrides?: Partial<Record<ModelRole, string>>;
+      requestedUiMode?: 'ask' | 'plan' | 'agent';
     },
   ): boolean {
     const reply = buildLocalAskReply(instruction);
@@ -943,6 +1042,7 @@ export class InstructionLoop {
       verificationResult: existing?.verificationResult ?? null,
       reviewFeedback: existing?.reviewFeedback ?? null,
       durationMs: (existing?.durationMs ?? 0) + Math.max(0, now - startedMs),
+      requestedUiMode: meta?.requestedUiMode ?? existing?.requestedUiMode ?? null,
       threadKind: 'ask',
       runMode: meta?.runMode ?? existing?.runMode ?? 'chat',
       executionPath: 'local-shortcut',
@@ -952,6 +1052,7 @@ export class InstructionLoop {
       modelFamily: meta?.modelFamily ?? existing?.modelFamily ?? null,
       modelOverrides: meta?.modelOverrides ?? existing?.modelOverrides ?? null,
       resolvedModels,
+      loopDiagnostics: existing?.loopDiagnostics ?? null,
       completionStatus: 'completed',
       cancellation: null,
       savedAt: new Date(now).toISOString(),
@@ -993,6 +1094,8 @@ export class InstructionLoop {
     const item = this.queue.shift()!;
     this.currentRunId = item.id;
     this.cancelRequested = false;
+    this.cancelSource = 'unknown';
+    this.cancelRequestedAt = null;
     this.pauseRequested = false;
     this.abortController = new AbortController();
     setRunAbortSignal(this.abortController.signal);
@@ -1043,6 +1146,8 @@ export class InstructionLoop {
           verificationResult: null,
           reviewFeedback: null,
           durationMs: priorDuration,
+          requestedUiMode:
+            item.requestedUiMode ?? priorSnap?.requestedUiMode ?? null,
           threadKind: followupThreadKind,
           runMode: item.runMode ?? (followupThreadKind === 'ask' ? 'chat' : 'code'),
           executionPath: 'graph',
@@ -1052,6 +1157,7 @@ export class InstructionLoop {
           modelFamily: item.modelFamily ?? null,
           modelOverrides: item.modelOverrides ?? null,
           resolvedModels,
+          loopDiagnostics: priorSnap?.loopDiagnostics ?? null,
           savedAt: new Date().toISOString(),
           nextActions: [],
         }
@@ -1068,6 +1174,8 @@ export class InstructionLoop {
           verificationResult: null,
           reviewFeedback: null,
           durationMs: 0,
+          requestedUiMode: item.requestedUiMode ?? null,
+          threadKind: item.threadKindHint,
           runMode: item.runMode ?? 'auto',
           executionPath: 'graph',
           queuedAt: queuedAtIso,
@@ -1076,6 +1184,7 @@ export class InstructionLoop {
           modelFamily: item.modelFamily ?? null,
           modelOverrides: item.modelOverrides ?? null,
           resolvedModels,
+          loopDiagnostics: null,
           savedAt: new Date().toISOString(),
           nextActions: [],
         };
@@ -1109,12 +1218,19 @@ export class InstructionLoop {
           state.messages !== undefined
             ? ensureRunMessages(item.instruction, state.messages)
             : current.messages,
+        loopDiagnostics:
+          state.loopDiagnostics !== undefined
+            ? state.loopDiagnostics
+            : current.loopDiagnostics ?? null,
         durationMs: priorDuration + (Date.now() - startedAt),
         threadKind: current.threadKind,
       });
     });
 
     let finalState: ShipyardStateType | undefined;
+    let latestLoopDiagnostics: LoopDiagnostics | null = null;
+    const recursionLimit = resolveGraphRecursionLimit();
+    const softBudget = resolveGraphSoftBudget(recursionLimit);
 
     try {
       await captureRunBaseline(item.id, WORK_DIR);
@@ -1122,7 +1238,7 @@ export class InstructionLoop {
       const graph = createShipyardGraph({ checkpointer });
 
       const initialPhase = getRunStartPhase(item.runMode, followupThreadKind);
-      const initialState: Partial<ShipyardStateType> = {
+      const initialState: ShipyardStateType = {
         runId: item.id,
         traceId: uuid(),
         instruction: item.instruction,
@@ -1155,7 +1271,16 @@ export class InstructionLoop {
         modelOverrides: item.modelOverrides
           ? { ...item.modelOverrides }
           : null,
+        loopDiagnostics: null,
       };
+      const loopGuard = createLoopGuard({
+        recursionLimit,
+        softBudget,
+        initialState,
+        useDynamicSoftBudget: !process.env['SHIPYARD_GRAPH_SOFT_BUDGET']?.trim(),
+      });
+      initialState.loopDiagnostics = loopGuard.current();
+      latestLoopDiagnostics = initialState.loopDiagnostics;
 
       this.broadcast(initialState);
 
@@ -1164,8 +1289,9 @@ export class InstructionLoop {
 
       // Use stream() instead of invoke() so we get phase updates mid-execution.
       // Each yielded chunk is { [nodeName]: partialState }.
-      finalState = initialState as ShipyardStateType;
+      finalState = initialState;
       const stream = await graph.stream(initialState, {
+        recursionLimit,
         configurable: { thread_id: item.id },
         streamMode: 'updates',
         runId: item.id,
@@ -1185,8 +1311,24 @@ export class InstructionLoop {
           chunk as Record<string, Partial<ShipyardStateType>>,
         );
         for (const update of nodeUpdates) {
-          finalState = { ...finalState, ...update };
-          this.broadcast(update);
+          const priorState = finalState;
+          const mergedState = {
+            ...finalState,
+            ...update,
+          } as ShipyardStateType;
+          const diagnostics = loopGuard.observe(priorState, mergedState);
+          latestLoopDiagnostics = diagnostics;
+          finalState = {
+            ...mergedState,
+            loopDiagnostics: diagnostics,
+          };
+          this.broadcast({
+            ...update,
+            loopDiagnostics: diagnostics,
+          });
+          if (diagnostics.stopReason) {
+            throw new Error(formatLoopStopError(diagnostics));
+          }
         }
 
         // Plan-then-confirm: after the plan node emits steps, pause
@@ -1234,6 +1376,10 @@ export class InstructionLoop {
       const current = this.runs.get(item.id);
 
       if (this.cancelRequested) {
+        const cancelSource = this.cancelSource ?? 'unknown';
+        const cancelRequestedAtIso = this.cancelRequestedAt
+          ? new Date(this.cancelRequestedAt).toISOString()
+          : null;
         const traceUrl = buildTraceUrl(item.id) ?? finalState.traceUrl ?? null;
         const stepsDone = preferNonEmptyArray(finalState.steps, current?.steps).filter(
           (s) => s.status === 'done',
@@ -1263,6 +1409,7 @@ export class InstructionLoop {
           reviewFeedback:
             finalState.reviewFeedback ?? current?.reviewFeedback ?? null,
           durationMs: totalDuration,
+          requestedUiMode: current?.requestedUiMode ?? item.requestedUiMode ?? null,
           threadKind,
           runMode: item.runMode ?? 'auto',
           executionPath: 'graph',
@@ -1272,6 +1419,11 @@ export class InstructionLoop {
           modelFamily: item.modelFamily ?? null,
           modelOverrides: item.modelOverrides ?? null,
           resolvedModels,
+          loopDiagnostics:
+            finalState.loopDiagnostics ??
+            latestLoopDiagnostics ??
+            current?.loopDiagnostics ??
+            null,
           completionStatus: hasCompletedActions
             ? 'cancelled_with_completed_actions'
             : 'cancelled',
@@ -1280,6 +1432,8 @@ export class InstructionLoop {
             completed_actions: completedActions,
             tool_calls: toolCalls.length,
             edited_files: fileEdits.length,
+            source: cancelSource,
+            requested_at: cancelRequestedAtIso,
           },
           savedAt: new Date().toISOString(),
         };
@@ -1300,7 +1454,9 @@ export class InstructionLoop {
           runId: item.id,
           phase: 'error',
           error: 'Run cancelled by user',
-        });
+          threadKind,
+          completionStatus: runResult.completionStatus,
+        } as Partial<ShipyardStateType> & { threadKind?: string; completionStatus?: string });
         this.resolveTraceUrlInBackground(item.id);
       } else {
         const traceUrl = buildTraceUrl(item.id) ?? finalState.traceUrl ?? null;
@@ -1325,6 +1481,7 @@ export class InstructionLoop {
           reviewFeedback:
             finalState.reviewFeedback ?? current?.reviewFeedback ?? null,
           durationMs: totalDuration,
+          requestedUiMode: current?.requestedUiMode ?? item.requestedUiMode ?? null,
           threadKind,
           runMode: item.runMode ?? 'auto',
           executionPath: 'graph',
@@ -1334,6 +1491,11 @@ export class InstructionLoop {
           modelFamily: item.modelFamily ?? null,
           modelOverrides: item.modelOverrides ?? null,
           resolvedModels,
+          loopDiagnostics:
+            finalState.loopDiagnostics ??
+            latestLoopDiagnostics ??
+            current?.loopDiagnostics ??
+            null,
           completionStatus: finalState.phase === 'done' ? 'completed' : 'failed',
           cancellation: null,
           savedAt: new Date().toISOString(),
@@ -1355,24 +1517,45 @@ export class InstructionLoop {
           ...finalState,
           messages: runResult.messages,
           nextActions: runResult.nextActions,
-        } as Partial<ShipyardStateType> & { nextActions?: NextAction[] });
+          threadKind,
+          completionStatus: runResult.completionStatus,
+        } as Partial<ShipyardStateType> & { nextActions?: NextAction[]; threadKind?: string; completionStatus?: string });
         this.resolveTraceUrlInBackground(item.id);
-        // Broadcast threadKind separately (not on ShipyardStateType)
-        for (const fn of this.listeners) {
-          try {
-            fn({ runId: item.id, phase: finalState.phase, threadKind } as Partial<ShipyardStateType> & { threadKind?: string });
-          } catch { /* ignore */ }
-        }
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      const recursionLimitHit = isGraphRecursionLimitError(err);
+      const watchdogAbort = /watchdog/i.test(msg);
       const aborted =
         this.cancelRequested ||
         (err instanceof Error &&
           (err.name === 'AbortError' ||
             /abort|cancel/i.test(msg)));
-      const errorMsg = aborted ? 'Run cancelled by user' : msg;
+      const cancelSource = this.cancelRequested
+        ? (this.cancelSource ?? 'unknown')
+        : watchdogAbort
+          ? 'watchdog'
+          : aborted
+            ? 'abort_error'
+            : 'unknown';
+      const cancelRequestedAtIso = this.cancelRequestedAt
+        ? new Date(this.cancelRequestedAt).toISOString()
+        : (aborted || watchdogAbort ? new Date().toISOString() : null);
       const prev = this.runs.get(item.id);
+      const diagnosticsBase =
+        latestLoopDiagnostics ??
+        finalState?.loopDiagnostics ??
+        prev?.loopDiagnostics ??
+        null;
+      const recursionDiagnostics = recursionLimitHit
+        ? withHardRecursionStop(diagnosticsBase, recursionLimit)
+        : null;
+      const effectiveDiagnostics = recursionDiagnostics ?? diagnosticsBase;
+      const errorMsg = aborted
+        ? 'Run cancelled by user'
+        : recursionDiagnostics
+          ? formatLoopStopError(recursionDiagnostics)
+          : msg;
       const threadKindErr = this.resolveThreadKind(
         item,
         finalState ??
@@ -1398,6 +1581,7 @@ export class InstructionLoop {
         reviewFeedback: prev?.reviewFeedback ?? null,
         error: errorMsg,
         durationMs: priorDuration + (Date.now() - startedAt),
+        requestedUiMode: prev?.requestedUiMode ?? item.requestedUiMode ?? null,
         threadKind: threadKindErr,
         runMode: item.runMode ?? 'auto',
         executionPath: 'graph',
@@ -1407,19 +1591,22 @@ export class InstructionLoop {
         modelFamily: item.modelFamily ?? null,
         modelOverrides: item.modelOverrides ?? null,
         resolvedModels,
+        loopDiagnostics: effectiveDiagnostics,
         completionStatus: aborted
           ? ((prev?.toolCallHistory?.length ?? 0) + (prev?.fileEdits?.length ?? 0) > 0
             ? 'cancelled_with_completed_actions'
             : 'cancelled')
           : 'failed',
-        cancellation: aborted
+        cancellation: (aborted || watchdogAbort)
           ? {
-              reason: 'Run cancelled by user',
+              reason: aborted ? 'Run cancelled by user' : msg,
               completed_actions:
                 (prev?.toolCallHistory?.length ?? 0) +
                 (prev?.fileEdits?.length ?? 0),
               tool_calls: prev?.toolCallHistory?.length ?? 0,
               edited_files: prev?.fileEdits?.length ?? 0,
+              source: cancelSource,
+              requested_at: cancelRequestedAtIso,
             }
           : null,
         savedAt: new Date().toISOString(),
@@ -1442,6 +1629,7 @@ export class InstructionLoop {
         runId: item.id,
         verificationResult: runResult.verificationResult,
         reviewFeedback: runResult.reviewFeedback,
+        loopDiagnostics: runResult.loopDiagnostics ?? null,
       });
       this.resolveTraceUrlInBackground(item.id);
     } finally {
@@ -1454,6 +1642,8 @@ export class InstructionLoop {
       const pw = this.pauseResumeWaiters.splice(0);
       for (const r of pw) r();
       this.cancelRequested = false;
+      this.cancelSource = 'unknown';
+      this.cancelRequestedAt = null;
       this.processing = false;
       this.currentRunId = null;
       this.abortController = null;

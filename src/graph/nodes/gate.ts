@@ -28,6 +28,8 @@ import {
   tryChatShortcut,
 } from '../intent.js';
 import { tryCommandShortcut } from '../commands.js';
+import { detectRepoTargetMismatch } from '../guards.js';
+import { WORK_DIR } from '../../config/work-dir.js';
 
 const CHAT_SYSTEM = `You are Shipyard. The user is in Q&A mode: they are not asking you to modify the repository in this turn.
 
@@ -91,7 +93,7 @@ async function directChatResponse(
   }));
 
   if (isOpenAiModelId(config.model)) {
-    const { text, inputTokens, outputTokens } = await completeTextForRole(
+    const { text, inputTokens, outputTokens, cacheRead, cacheCreation } = await completeTextForRole(
       state,
       'chat',
       CHAT_SYSTEM,
@@ -107,8 +109,8 @@ async function directChatResponse(
       messages: newMessages,
       inputTokens,
       outputTokens,
-      cacheRead: 0,
-      cacheCreation: 0,
+      cacheRead,
+      cacheCreation,
     };
   }
 
@@ -189,6 +191,25 @@ export async function gateNode(
       messages: [
         ...withUser,
         { role: 'assistant', content: commandShortcut },
+      ],
+      tokenUsage: baseTokens,
+      modelHint: 'sonnet',
+    };
+  }
+
+  const repoMismatch = detectRepoTargetMismatch(state.instruction, WORK_DIR);
+  if (repoMismatch) {
+    const withUser = appendUserTurn(state.messages, state.instruction);
+    const mismatchMsg =
+      `Repo target mismatch: instruction targets "${repoMismatch.targetRepo}" but active workdir is "${repoMismatch.activeRepo}". ` +
+      `Switch SHIPYARD_WORK_DIR to the target repo, then retry.`;
+    return {
+      gateRoute: 'end',
+      phase: 'error',
+      error: mismatchMsg,
+      messages: [
+        ...withUser,
+        { role: 'assistant', content: mismatchMsg },
       ],
       tokenUsage: baseTokens,
       modelHint: 'sonnet',

@@ -13,7 +13,12 @@ import {
   chatCompletionCreateWithRetry,
 } from '../../llm/openai-helpers.js';
 import { appendOpenAiToolTurn } from '../../llm/openai-chat-tool-turn.js';
+import { compactOpenAiMessages } from '../../llm/openai-message-compaction.js';
 import { consumeLiveFollowups } from '../../runtime/live-followups.js';
+import {
+  constrainPlanStepsToScope,
+  deriveScopeConstraints,
+} from '../guards.js';
 import type { ShipyardStateType, PlanStep, LLMMessage } from '../state.js';
 
 const PLAN_TOOL_NAMES = new Set([
@@ -27,6 +32,7 @@ const PLAN_TOOL_NAMES = new Set([
 const planOpenAiTools = anthropicToolSchemasToOpenAi(
   TOOL_SCHEMAS.filter((t) => PLAN_TOOL_NAMES.has(t.name)),
 );
+const PLAN_OPENAI_COMPACTION_MAX_CHARS = 100_000;
 
 function isStandaloneVerificationStep(step: PlanStep): boolean {
   const desc = step.description.toLowerCase();
@@ -54,6 +60,20 @@ function pruneRedundantVerificationSteps(steps: PlanStep[]): PlanStep[] {
   return filtered.map((s, i) => ({ ...s, index: i }));
 }
 
+function finalizePlan(instruction: string, steps: PlanStep[]): PlanStep[] {
+  return constrainPlanStepsToScope(
+    instruction,
+    pruneRedundantVerificationSteps(steps),
+  );
+}
+
+function derivePlanToolRoundLimit(instruction: string): number {
+  const constraints = deriveScopeConstraints(instruction);
+  if (constraints.strictSingleFile) return 4;
+  if (constraints.disallowUnrelatedFiles) return 6;
+  return 15;
+}
+
 export async function runOpenAiPlanLoop(params: {
   state: ShipyardStateType;
   config: ModelConfig;
@@ -65,6 +85,8 @@ export async function runOpenAiPlanLoop(params: {
   newMessages: LLMMessage[];
   inputTokens: number;
   outputTokens: number;
+  cacheRead: number;
+  cacheCreation: number;
 }> {
   const { state, config, system, initialUserText, runId } = params;
   const client = getOpenAIClient();
@@ -76,10 +98,12 @@ export async function runOpenAiPlanLoop(params: {
   const usageAcc = {
     input: state.tokenUsage?.input ?? 0,
     output: state.tokenUsage?.output ?? 0,
+    cacheRead: state.tokenUsage?.cacheRead ?? 0,
+    cacheCreation: state.tokenUsage?.cacheCreation ?? 0,
   };
   const newMessages: LLMMessage[] = [...state.messages];
   let steps: PlanStep[] = [];
-  const maxToolRounds = 15;
+  const maxToolRounds = derivePlanToolRoundLimit(state.instruction);
 
   for (let round = 0; round < maxToolRounds; round++) {
     const liveFollowups = consumeLiveFollowups(runId);
@@ -94,11 +118,23 @@ export async function runOpenAiPlanLoop(params: {
       });
     }
 
+    const compacted = compactOpenAiMessages(conversation, {
+      maxChars: PLAN_OPENAI_COMPACTION_MAX_CHARS,
+      preserveRecentMessages: 8,
+    });
+    if (compacted.compacted) {
+      newMessages.push({
+        role: 'assistant',
+        content:
+          `[Compaction] planning history compacted (${compacted.beforeChars} -> ${compacted.afterChars} chars, dropped ${compacted.droppedMessages} messages).`,
+      });
+    }
+
     const completion = await chatCompletionCreateWithRetry(client, {
       model: config.model,
       max_tokens: config.maxTokens,
       temperature: config.temperature,
-      messages: [{ role: 'system', content: system }, ...conversation],
+      messages: [{ role: 'system', content: system }, ...compacted.messages],
       tools: planOpenAiTools,
       tool_choice: 'auto',
     }, {
@@ -164,12 +200,14 @@ export async function runOpenAiPlanLoop(params: {
       },
     ];
   }
-  steps = pruneRedundantVerificationSteps(steps);
+  steps = finalizePlan(state.instruction, steps);
 
   return {
     steps,
     newMessages,
     inputTokens: usageAcc.input,
     outputTokens: usageAcc.output,
+    cacheRead: usageAcc.cacheRead,
+    cacheCreation: usageAcc.cacheCreation,
   };
 }

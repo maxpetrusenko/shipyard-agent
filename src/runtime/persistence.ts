@@ -89,6 +89,7 @@ function serializeRun(result: RunResult): Record<string, unknown> {
     verificationResult: result.verificationResult ?? null,
     reviewFeedback: result.reviewFeedback ?? null,
     durationMs: result.durationMs,
+    requestedUiMode: result.requestedUiMode ?? null,
     threadKind: result.threadKind ?? null,
     runMode: result.runMode ?? null,
     executionPath: result.executionPath ?? null,
@@ -100,6 +101,7 @@ function serializeRun(result: RunResult): Record<string, unknown> {
     resolvedModels: result.resolvedModels ?? null,
     completionStatus: result.completionStatus ?? null,
     cancellation: result.cancellation ?? null,
+    loopDiagnostics: result.loopDiagnostics ?? null,
     nextActions: result.nextActions ?? [],
     savedAt: new Date().toISOString(),
   };
@@ -201,6 +203,12 @@ function parseRunFile(filePath: string): RunResult | null {
       reviewFeedback:
         (data['reviewFeedback'] as RunResult['reviewFeedback']) ?? null,
       durationMs: typeof data['durationMs'] === 'number' ? data['durationMs'] : 0,
+      requestedUiMode:
+        data['requestedUiMode'] === 'ask' ||
+        data['requestedUiMode'] === 'plan' ||
+        data['requestedUiMode'] === 'agent'
+          ? (data['requestedUiMode'] as RunResult['requestedUiMode'])
+          : null,
       threadKind:
         data['threadKind'] === 'ask' ||
         data['threadKind'] === 'plan' ||
@@ -249,6 +257,11 @@ function parseRunFile(filePath: string): RunResult | null {
         data['cancellation'] &&
         typeof data['cancellation'] === 'object'
           ? (data['cancellation'] as RunResult['cancellation'])
+          : null,
+      loopDiagnostics:
+        data['loopDiagnostics'] &&
+        typeof data['loopDiagnostics'] === 'object'
+          ? (data['loopDiagnostics'] as RunResult['loopDiagnostics'])
           : null,
       nextActions: Array.isArray(data['nextActions'])
         ? (data['nextActions'] as RunResult['nextActions'])

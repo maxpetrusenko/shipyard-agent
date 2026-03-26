@@ -10,7 +10,7 @@ import { execSync } from 'node:child_process';
 import type { InstructionLoop } from '../runtime/loop.js';
 import type { ModelRole } from '../config/model-policy.js';
 import type { RunResult } from '../runtime/loop.js';
-import { buildRunDebugSnapshot } from './run-debug.js';
+import { buildRunDebugSnapshot, resolveDebugTraceUrl } from './run-debug.js';
 import { WORK_DIR, setWorkDir } from '../config/work-dir.js';
 import { resetClient } from '../config/client.js';
 import { resetOpenAIClient } from '../config/openai-client.js';
@@ -202,14 +202,20 @@ export function createRoutes(loop: InstructionLoop): Router {
       modelOverride: model?.trim() || undefined,
       modelFamily: fam,
       modelOverrides,
+      requestedUiMode:
+        uiMode === 'ask' || uiMode === 'plan' || uiMode === 'agent'
+          ? uiMode
+          : undefined,
     });
-    const immediate = immediateRunPayload(loop.getRun(id));
+    const run = loop.getRun(id);
+    const immediate = immediateRunPayload(run);
 
     res.json({
       runId: id,
       confirmPlan: wantConfirm,
       runMode: mode,
       uiMode: uiMode ?? null,
+      requestedUiMode: run?.requestedUiMode ?? uiMode ?? null,
       model: model?.trim() || null,
       modelFamily: fam ?? null,
       models: modelOverrides ?? null,
@@ -220,8 +226,9 @@ export function createRoutes(loop: InstructionLoop): Router {
   // POST /runs/:id/followup — continue an existing thread (same runId)
   router.post('/runs/:id/followup', wrap((req, res) => {
     const payload = (req.body ?? {}) as Record<string, unknown>;
-    const { instruction, model, modelFamily, models } = payload as {
+    const { instruction, uiMode, model, modelFamily, models } = payload as {
       instruction?: string;
+      uiMode?: string | null;
       model?: string | null;
       modelFamily?: string | null;
       models?: Partial<Record<ModelRole, string>>;
@@ -240,6 +247,13 @@ export function createRoutes(loop: InstructionLoop): Router {
         : undefined;
     const modelOverrides =
       models && typeof models === 'object' ? models : undefined;
+    let threadKindHint: 'ask' | 'plan' | 'agent' | undefined;
+    if (uiMode === 'ask' || uiMode === 'plan' || uiMode === 'agent') {
+      threadKindHint = uiMode;
+    } else if (uiMode != null && uiMode !== '') {
+      res.status(400).json({ error: 'uiMode must be ask, plan, or agent' });
+      return;
+    }
     const replaceModelSelection =
       hasOwn(payload, 'model') ||
       hasOwn(payload, 'modelFamily') ||
@@ -249,6 +263,8 @@ export function createRoutes(loop: InstructionLoop): Router {
         typeof model === 'string' ? model.trim() || undefined : undefined,
       modelFamily: fam,
       modelOverrides,
+      requestedUiMode: threadKindHint,
+      threadKindHint,
       replaceModelSelection,
     });
     if (!ok) {
@@ -257,10 +273,14 @@ export function createRoutes(loop: InstructionLoop): Router {
       });
       return;
     }
+    const run = loop.getRun(req.params['id'] as string);
     res.json({
       runId: req.params['id'],
       queued: true,
-      ...immediateRunPayload(loop.getRun(req.params['id'] as string)),
+      requestedUiMode: run?.requestedUiMode ?? null,
+      threadKind: run?.threadKind ?? null,
+      runMode: run?.runMode ?? null,
+      ...immediateRunPayload(run),
     });
   }));
 
@@ -339,13 +359,14 @@ export function createRoutes(loop: InstructionLoop): Router {
   }));
 
   // GET /runs/:id/debug - Compact debug snapshot for dashboard modal
-  router.get('/runs/:id/debug', wrap((req, res) => {
+  router.get('/runs/:id/debug', wrap(async (req, res) => {
     const run = loop.getRun(req.params['id'] as string);
     if (!run) {
       res.status(404).json({ error: 'Run not found' });
       return;
     }
-    res.json(buildRunDebugSnapshot(run));
+    const traceUrl = await resolveDebugTraceUrl(run);
+    res.json(buildRunDebugSnapshot(run, traceUrl));
   }));
 
   // DELETE /runs/:id - Remove run from server (file + optional Postgres)

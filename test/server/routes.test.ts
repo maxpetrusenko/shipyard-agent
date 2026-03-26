@@ -246,6 +246,43 @@ describe('POST /run validation', () => {
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });
+
+  it('keeps requested agent ui mode visible in debug snapshots even when execution resolves to ask', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const res = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: '2=2?', uiMode: 'agent' }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { runId: string };
+    expect(body.runId).toBeTruthy();
+
+    const debugRes = await fetch(`${baseUrl2}/runs/${body.runId}/debug`);
+    expect(debugRes.status).toBe(200);
+    const debugBody = await debugRes.json() as {
+      requestedUiMode: string | null;
+      runMode: string | null;
+      threadKind: string | null;
+      executionPath: string | null;
+    };
+    expect(debugBody.requestedUiMode).toBe('agent');
+    expect(debugBody.runMode).toBe('auto');
+    expect(debugBody.threadKind).toBe('ask');
+    expect(debugBody.executionPath).toBe('local-shortcut');
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
 });
 
 describe('POST /runs/:id/followup', () => {
@@ -409,6 +446,50 @@ describe('POST /runs/:id/followup', () => {
     const body = await res.json() as { runId: string; queued: boolean };
     expect(body.runId).toBe(created.runId);
     expect(body.queued).toBe(true);
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+
+  it('upgrades an ask thread to agent mode on same-run follow-up', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const createRes = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'hi', uiMode: 'ask' }),
+    });
+    expect(createRes.status).toBe(200);
+    const created = await createRes.json() as { runId: string };
+
+    const res = await fetch(`${baseUrl2}/runs/${created.runId}/followup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'add 1 line hello world to contributions page in ship-refactored',
+        uiMode: 'agent',
+        model: 'gpt-5-mini',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { runId: string; queued: boolean };
+    expect(body.runId).toBe(created.runId);
+    expect(body.queued).toBe(true);
+
+    await new Promise((r) => setTimeout(r, 50));
+    const run = loop2.getRun(created.runId);
+    expect(run?.runId).toBe(created.runId);
+    expect(run?.threadKind).toBe('agent');
+    expect(run?.runMode).toBe('code');
+    expect(run?.modelOverride).toBe('gpt-5-mini');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });

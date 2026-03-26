@@ -43,8 +43,37 @@ export function getTraceProject(): string {
 // ---------------------------------------------------------------------------
 
 interface LangSmithRunUrlClient {
+  getRunUrl?: (params: { runId: string }) => Promise<string>;
   readRunSharedLink: (runId: string) => Promise<string | undefined>;
   shareRun: (runId: string) => Promise<string>;
+}
+
+const LANGSMITH_HOST = 'smith.langchain.com';
+
+export function isLangSmithPublicTraceUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.hostname === LANGSMITH_HOST &&
+      /^\/public\/[^/]+\/r\/?$/.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function isLangSmithInternalTraceUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.hostname === LANGSMITH_HOST &&
+      /^\/o\/[^/]+\/projects\/p\/[^/]+\/r\/[^/]+\/?$/.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function getErrorStatus(err: unknown): number | null {
@@ -90,10 +119,13 @@ export async function resolveLangSmithRunUrl(
         if (getErrorStatus(err) !== 404) throw err;
       }
 
-      if (existing) return existing;
+      if (existing && isLangSmithPublicTraceUrl(existing)) return existing;
 
       // Create new public share link
-      return await lsClient.shareRun(runId);
+      const shared = await lsClient.shareRun(runId);
+      if (isLangSmithPublicTraceUrl(shared)) return shared;
+      console.warn('[shipyard] LangSmith shareRun returned a non-public URL:', shared);
+      return null;
     } catch (err) {
       const shouldRetry = getErrorStatus(err) === 404 && attempt < maxAttempts;
       if (shouldRetry) {

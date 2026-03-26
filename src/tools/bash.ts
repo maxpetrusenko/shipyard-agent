@@ -34,6 +34,12 @@ const BLOCKED_PATTERNS = [
   /\|\s*bash\b/,         // pipe into bash
   /curl\b.*\|\s*sh/,     // curl pipe sh
   /wget\b.*\|\s*sh/,     // wget pipe sh
+  /\bgit\s+add\s+-A\b/,  // broad staging
+  /\bgit\s+add\s+\.\b/,  // broad staging
+  /\bgit\s+stash\b/,     // hidden workspace mutation
+  /\bgit\s+apply\b/,     // prefer structured file tools
+  /\bgit\s+reset\s+--hard\b/, // destructive
+  /\bgit\s+clean\s+-[^\n]*f/, // destructive
 ];
 
 export function runBash(params: BashParams): Promise<BashResult> {

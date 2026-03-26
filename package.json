@@ -10,10 +10,14 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "clean": "rm -rf dist",
+    "lint": "tsc --noEmit",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "bench": "./scripts/bench.sh"
+    "test:flake": "./scripts/flake-check.sh",
+    "bench": "./scripts/bench.sh",
+    "load:test": "tsx scripts/load-test.ts",
+    "done:check": "./scripts/done-gate.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",

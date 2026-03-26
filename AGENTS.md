@@ -2,6 +2,7 @@
 
 Max owns this. Start: say hi + 1 motivating line.
 Work style: telegraph; noun-phrases ok; drop grammar; min tokens.
+At every stop, output: Progress: X% / 100% (against original plan), Scope additions: (user-requested), and Agent additions: (all agent-initiated work with [related] or [unrelated] tags; no omissions).
 
 ## Agent Protocol
 - Contact: Max Petrusenko (@maxpetrusenko, max.petrusenko@gmail.com).
@@ -28,10 +29,11 @@ Work style: telegraph; noun-phrases ok; drop grammar; min tokens.
 - New deps: quick health check (recent releases/commits, adoption).
 - Slash cmds: `~/.codex/prompts/`.
 - if missing tools, use this -> https://github.com/steipete to check first, then find official cli ( i can login or give you api keys )
-- Web: search early; quote exact errors; prefer 2024–2025 sources; fallback Firecrawl (`pnpm mcp:*`) / `mcporter`.
+- Web: search early; quote exact errors; prefer 2025–2026 sources; fallback Firecrawl (`pnpm mcp:*`) / `mcporter`.
 - Oracle: run `npx -y @steipete/oracle --help` once/session before first use.
 - Style: telegraph. Drop filler/grammar. Min tokens (global AGENTS + replies CLI). Docs / commits: normal grammar
-- If blocked > 2 attempts: summarize problem -> propose options -> ask user
+- Avoiding cognitive debt in codebases where AI has run wild: Design the interface first, delegate the implementation
+
 
 
 ## Screenshots (“use a screenshot”)

@@ -135,4 +135,49 @@ describe('gateNode', () => {
     expect(mocks.completeTextForRole).toHaveBeenCalledTimes(1);
     expect(mocks.classifyIntentLlm).not.toHaveBeenCalled();
   });
+
+  it('fails fast when instruction repo target mismatches active workdir', async () => {
+    mocks.tryCommandShortcut.mockResolvedValue(null);
+    mocks.tryArithmeticShortcut.mockReturnValue(null);
+    mocks.tryChatShortcut.mockReturnValue(null);
+    mocks.looksLikeCodeRequest.mockReturnValue(true);
+
+    const result = await gateNode({
+      runId: 'run-repo-mismatch',
+      traceId: 'trace-repo-mismatch',
+      instruction: 'In ship-refactored, make exactly one bugfix.',
+      phase: 'routing',
+      steps: [],
+      currentStepIndex: 0,
+      fileEdits: [],
+      toolCallHistory: [],
+      verificationResult: null,
+      reviewDecision: null,
+      reviewFeedback: null,
+      contexts: [],
+      messages: [],
+      error: null,
+      retryCount: 0,
+      maxRetries: 3,
+      tokenUsage: { input: 0, output: 0 },
+      traceUrl: null,
+      runStartedAt: Date.now(),
+      fileOverlaySnapshots: null,
+      estimatedCost: null,
+      workerResults: [],
+      modelHint: null,
+      runMode: 'auto',
+      gateRoute: 'plan',
+      modelOverride: 'gpt-5-mini',
+      modelFamily: 'openai',
+      modelOverrides: null,
+    });
+
+    expect(result.phase).toBe('error');
+    expect(result.gateRoute).toBe('end');
+    expect(result.error).toContain('Repo target mismatch');
+    expect(result.error).toContain('ship-refactored');
+    expect(result.error).toContain('ship-agent');
+    expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
 });

@@ -102,6 +102,7 @@ export function attachWebSocket(server: Server, loop: InstructionLoop): void {
                   modelOverride: msg.model?.trim() || undefined,
                   modelFamily: fam,
                   modelOverrides: msg.models,
+                  requestedUiMode: msg.uiMode,
                 },
               );
               ws.send(JSON.stringify({ type: 'submitted', runId: id }));
@@ -130,7 +131,7 @@ export function attachWebSocket(server: Server, loop: InstructionLoop): void {
             break;
           }
           case 'cancel': {
-            const cancelled = loop.cancel();
+            const cancelled = loop.cancel('ws');
             ws.send(JSON.stringify({ type: 'cancel_result', cancelled }));
             break;
           }

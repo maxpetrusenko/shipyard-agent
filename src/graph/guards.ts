@@ -15,7 +15,7 @@ export interface ScopeGuardResult {
   reason: string | null;
 }
 
-function normalizePath(value: string): string {
+export function normalizePath(value: string): string {
   return value.trim().replace(/\\/g, '/');
 }
 
@@ -44,14 +44,17 @@ function anyInstructionMatch(instruction: string, patterns: RegExp[]): boolean {
 
 export function deriveScopeConstraints(instruction: string): ScopeConstraints {
   const text = instruction.toLowerCase();
-  const strictSingleFile = anyInstructionMatch(text, [
+  const explicitFiles = parseExplicitFiles(instruction);
+  const strictSingleFile = explicitFiles.length === 1 || anyInstructionMatch(text, [
     /\bexactly one (existing )?file\b/,
     /\bone file only\b/,
     /\bsingle file\b/,
+    /\bone untouched file\b/,
     /\bkeep to one file\b/,
     /\bjust one file\b/,
+    /\bdo not touch more than (?:1|one) file\b/,
   ]);
-  const disallowUnrelatedFiles = strictSingleFile || anyInstructionMatch(text, [
+  const disallowUnrelatedFiles = strictSingleFile || explicitFiles.length > 0 || anyInstructionMatch(text, [
     /\bdo not (edit|modify|change) any other file\b/,
     /\bdon'?t (edit|modify|change) unrelated files\b/,
     /\bdon'?t modify unrelated files\b/,
@@ -61,7 +64,7 @@ export function deriveScopeConstraints(instruction: string): ScopeConstraints {
   return {
     strictSingleFile,
     disallowUnrelatedFiles,
-    explicitFiles: parseExplicitFiles(instruction),
+    explicitFiles,
   };
 }
 
@@ -69,7 +72,7 @@ export function uniqueEditedPaths(fileEdits: FileEdit[]): string[] {
   return [...new Set(fileEdits.map((e) => normalizePath(e.file_path)).filter(Boolean))];
 }
 
-function pathMatchesAny(filePath: string, candidates: string[]): boolean {
+export function pathMatchesAny(filePath: string, candidates: string[]): boolean {
   const fp = normalizePath(filePath);
   return candidates.some((raw) => {
     const cand = normalizePath(raw);
@@ -90,7 +93,11 @@ export function evaluateScopeGuard(
     return { ok: true, reason: null };
   }
 
-  if (constraints.strictSingleFile && edited.length !== 1) {
+  if (
+    constraints.strictSingleFile &&
+    edited.length !== 1 &&
+    !(constraints.explicitFiles.length === 1 && edited.length === 0)
+  ) {
     return {
       ok: false,
       reason: `Instruction requested exactly one file change, but ${edited.length} file(s) were edited.`,
@@ -129,4 +136,162 @@ export function shouldRequireEdits(instruction: string): boolean {
     /\b(make|apply|add|update|change|edit|modify|fix|refactor|implement)\b/,
     /\bbugfix\b/,
   ]);
+}
+
+export function constrainPlanStepsToScope(
+  instruction: string,
+  steps: PlanStep[],
+): PlanStep[] {
+  const constraints = deriveScopeConstraints(instruction);
+  if (constraints.explicitFiles.length === 0) return steps;
+
+  const scoped = steps
+    .map((step) => ({
+      ...step,
+      files: step.files.filter((file) => pathMatchesAny(file, constraints.explicitFiles)),
+    }))
+    .filter((step) => step.files.length > 0)
+    .map((step, index) => ({ ...step, index }));
+
+  if (scoped.length > 0) return scoped;
+
+  return [{
+    index: 0,
+    description: instruction.trim() || steps[0]?.description || 'Apply requested change',
+    files: [...constraints.explicitFiles],
+    status: 'pending',
+  }];
+}
+
+export function isDiscoveryToolName(toolName: string): boolean {
+  return (
+    toolName === 'read_file' ||
+    toolName === 'grep' ||
+    toolName === 'glob' ||
+    toolName === 'ls' ||
+    toolName === 'bash'
+  );
+}
+
+export function deriveDiscoveryCallLimit(instruction: string): number | null {
+  const explicit = instruction.match(
+    /\bmax\s+(\d{1,3})\s+discovery tool calls?\s+before\s+first edit\b/i,
+  );
+  if (explicit) {
+    const parsed = Number.parseInt(explicit[1] ?? '', 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  const constraints = deriveScopeConstraints(instruction);
+  if (constraints.strictSingleFile) return 8;
+  if (constraints.disallowUnrelatedFiles) return 10;
+  return null;
+}
+
+export function deriveFirstEditDeadlineMs(instruction: string): number | null {
+  const explicit = instruction.match(
+    /\b(?:first[- ]edit deadline|max first[- ]edit wait|first edit deadline)\b[^0-9]{0,20}(\d{1,4})\s*(ms|milliseconds?|s|sec|seconds?|m|min|minutes?)\b/i,
+  );
+  if (explicit) {
+    const raw = Number.parseInt(explicit[1] ?? '', 10);
+    const unit = (explicit[2] ?? '').toLowerCase();
+    if (Number.isFinite(raw) && raw > 0) {
+      if (unit.startsWith('ms')) return raw;
+      if (unit === 's' || unit.startsWith('sec')) return raw * 1_000;
+      if (unit === 'm' || unit.startsWith('min')) return raw * 60_000;
+    }
+  }
+  const constraints = deriveScopeConstraints(instruction);
+  if (constraints.strictSingleFile) return 75_000;
+  if (constraints.disallowUnrelatedFiles) return 90_000;
+  return null;
+}
+
+const REPO_TARGET_STOPWORDS = new Set([
+  'this',
+  'that',
+  'the',
+  'a',
+  'an',
+  'repo',
+  'repository',
+  'project',
+  'codebase',
+  'one',
+  'single',
+]);
+
+function basenamePath(value: string): string {
+  const parts = normalizePath(value).split('/').filter(Boolean);
+  return (parts[parts.length - 1] ?? '').toLowerCase();
+}
+
+export function extractExplicitRepoTarget(instruction: string): string | null {
+  const patterns = [
+    /^\s*in\s+([a-zA-Z0-9._-]+)\s*(?:,|\n|$)/im,
+    /\b(?:in|inside|within)\s+([a-zA-Z0-9._-]+)\s+(?:repo|repository|project|codebase)\b/i,
+  ];
+  for (const pattern of patterns) {
+    const m = instruction.match(pattern);
+    const candidate = m?.[1]?.trim();
+    if (!candidate) continue;
+    const lowered = candidate.toLowerCase();
+    if (REPO_TARGET_STOPWORDS.has(lowered)) continue;
+    return candidate;
+  }
+  return null;
+}
+
+export function detectRepoTargetMismatch(
+  instruction: string,
+  workDir: string,
+): { targetRepo: string; activeRepo: string } | null {
+  const targetRepo = extractExplicitRepoTarget(instruction);
+  if (!targetRepo) return null;
+  const activeRepo = basenamePath(workDir);
+  if (!activeRepo) return null;
+  const normalizedTarget = targetRepo.toLowerCase();
+  if (
+    normalizedTarget === activeRepo ||
+    activeRepo.endsWith(`-${normalizedTarget}`) ||
+    normalizedTarget.endsWith(`-${activeRepo}`)
+  ) {
+    return null;
+  }
+  return { targetRepo, activeRepo };
+}
+
+export function evaluateCandidateEditPath(params: {
+  instruction: string;
+  steps: PlanStep[];
+  editedPaths: string[];
+  candidatePath: string;
+}): ScopeGuardResult {
+  const constraints = deriveScopeConstraints(params.instruction);
+  const candidate = normalizePath(params.candidatePath);
+  const edited = params.editedPaths.map(normalizePath);
+  if (constraints.strictSingleFile && edited.length > 0) {
+    const primary = edited[0]!;
+    if (!pathMatchesAny(candidate, [primary])) {
+      return {
+        ok: false,
+        reason: `Instruction requested exactly one file change; refusing edit outside ${primary}.`,
+      };
+    }
+  }
+  if (constraints.explicitFiles.length > 0 && !pathMatchesAny(candidate, constraints.explicitFiles)) {
+    return {
+      ok: false,
+      reason: `Refusing edit outside explicit targets: ${candidate}`,
+    };
+  }
+  if (constraints.disallowUnrelatedFiles) {
+    const planned = uniquePlannedPaths(params.steps);
+    if (planned.length > 0 && !pathMatchesAny(candidate, planned)) {
+      return {
+        ok: false,
+        reason: `Refusing edit outside planned scope: ${candidate}`,
+      };
+    }
+  }
+  return { ok: true, reason: null };
 }

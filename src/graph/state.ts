@@ -55,6 +55,19 @@ export interface VerificationResult {
 
 export type ReviewDecision = 'continue' | 'done' | 'retry' | 'escalate';
 
+export interface LoopDiagnostics {
+  graphStepCount: number;
+  graphSoftBudget: number;
+  recursionLimit: number;
+  stopReason: string | null;
+  noProgressReason: string | null;
+  lastPhaseTransition: string | null;
+  repeatedTransitionCount: number;
+  noProgressStreak: number;
+  repeatedReviewVerifyCount: number;
+  successfulToolOutcomes: number;
+}
+
 export interface ContextEntry {
   label: string;
   content: string;
@@ -128,6 +141,9 @@ export const ShipyardState = Annotation.Root({
 
   // Multi-agent outputs (Phase 6)
   workerResults: Annotation<Record<string, unknown>[]>,
+
+  // Graph loop observability
+  loopDiagnostics: Annotation<LoopDiagnostics | null>,
 
   // Model routing hint
   modelHint: Annotation<'opus' | 'sonnet' | null>,

@@ -16,7 +16,9 @@ import {
 } from '../../config/messages-create.js';
 import { completeTextForRole } from '../../llm/complete-text.js';
 import {
+  deriveScopeConstraints,
   evaluateScopeGuard,
+  pathMatchesAny,
   shouldRequireEdits,
 } from '../guards.js';
 import { consumeLiveFollowups } from '../../runtime/live-followups.js';
@@ -85,9 +87,18 @@ export async function reviewNode(
 
   const hasMoreSteps = state.currentStepIndex < state.steps.length - 1;
   const verPassed = state.verificationResult?.passed ?? false;
+  const constraints = deriveScopeConstraints(state.instruction);
   const deterministicEditsRequired = shouldRequireEdits(state.instruction);
   const scopeGuard = evaluateScopeGuard(state);
   const failedSteps = state.steps.filter((s) => s.status === 'failed').length;
+  const explicitSingleTarget =
+    constraints.strictSingleFile && constraints.explicitFiles.length === 1;
+  const validatedNoOp = looksLikeValidatedNoOp(state);
+  const touchedExplicitTarget =
+    explicitSingleTarget &&
+    state.fileEdits.some((edit) =>
+      pathMatchesAny(edit.file_path, constraints.explicitFiles),
+    );
   const deterministicRetry = (feedback: string): Partial<ShipyardStateType> => {
     const wouldExceed = state.retryCount >= state.maxRetries - 1;
     if (wouldExceed) {
@@ -114,17 +125,16 @@ export async function reviewNode(
       modelHint: 'opus',
     };
   };
-
-  // Fast path: more steps to do and verification passed — just advance
-  if (hasMoreSteps && verPassed) {
-    return {
-      phase: 'executing',
-      currentStepIndex: state.currentStepIndex + 1,
-      reviewDecision: 'continue',
-      reviewFeedback: null,
-      modelHint: 'sonnet',
-    };
-  }
+  const deterministicDone = (feedback: string): Partial<ShipyardStateType> => ({
+    phase: 'done',
+    reviewDecision: 'done',
+    reviewFeedback: feedback,
+    messages: [
+      ...state.messages,
+      { role: 'assistant', content: `[Review] done: ${feedback}` },
+    ],
+    modelHint: 'opus',
+  });
 
   // Deterministic guards before LLM review to avoid false "done".
   if (!verPassed && state.fileEdits.length > 0) {
@@ -139,12 +149,31 @@ export async function reviewNode(
     return deterministicRetry(scopeGuard.reason ?? 'Scope guard failed.');
   }
 
+  if (explicitSingleTarget && verPassed && (touchedExplicitTarget || validatedNoOp)) {
+    return deterministicDone(
+      touchedExplicitTarget
+        ? `Explicit target satisfied: ${constraints.explicitFiles[0]}`
+        : `Validated explicit-target no-op: ${constraints.explicitFiles[0]} already satisfied the request.`,
+    );
+  }
+
   if (
     deterministicEditsRequired &&
     state.fileEdits.length === 0 &&
-    !looksLikeValidatedNoOp(state)
+    !validatedNoOp
   ) {
     return deterministicRetry('Instruction required code edits but no file changes were recorded.');
+  }
+
+  // Fast path: more steps to do and verification passed — just advance
+  if (hasMoreSteps && verPassed) {
+    return {
+      phase: 'executing',
+      currentStepIndex: state.currentStepIndex + 1,
+      reviewDecision: 'continue',
+      reviewFeedback: null,
+      modelHint: 'sonnet',
+    };
   }
 
   // NOTE: No fast path for "all done". We ALWAYS run the full Opus review
@@ -269,7 +298,7 @@ export async function reviewNode(
   }
 
   // Reviewer can overfit to "edits must exist"; allow validated no-op tasks.
-  if (decision === 'retry' && looksLikeValidatedNoOp(state)) {
+  if (decision === 'retry' && validatedNoOp) {
     decision = 'done';
     feedback = 'Validated no-op task: instruction satisfied without file edits.';
   }

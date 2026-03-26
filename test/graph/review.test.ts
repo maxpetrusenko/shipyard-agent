@@ -67,4 +67,50 @@ describe('reviewNode deterministic guards', () => {
     expect(out.reviewFeedback).toContain('failed step');
     expect(mocks.completeTextForRole).not.toHaveBeenCalled();
   });
+
+  it('finishes explicit single-target tasks once the target file is validated, even if extra plan steps remain', async () => {
+    const state = {
+      ...baseState(),
+      instruction: 'Update /repo/CONTRIBUTING.md to say Hello world.',
+      steps: [
+        { index: 0, description: 'edit target', files: ['/repo/CONTRIBUTING.md'], status: 'done' as const },
+        { index: 1, description: 'wander elsewhere', files: ['/repo/other.ts'], status: 'pending' as const },
+      ],
+      fileEdits: [
+        {
+          file_path: '/repo/CONTRIBUTING.md',
+          tier: 1,
+          old_string: 'Hello',
+          new_string: 'Hello world',
+          timestamp: 1,
+        },
+      ],
+    };
+
+    const out = await reviewNode(state as any);
+    expect(out.reviewDecision).toBe('done');
+    expect(out.phase).toBe('done');
+    expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
+
+  it('treats explicit single-target already-satisfied requests as done no-ops', async () => {
+    const state = {
+      ...baseState(),
+      instruction: 'Update /repo/CONTRIBUTING.md to include "Hello world".',
+      fileEdits: [],
+      verificationResult: {
+        passed: true,
+        error_count: 0,
+        typecheck_output: 'Skipped verification (no file edits in run).',
+      },
+      messages: [
+        { role: 'assistant', content: 'No changes needed: /repo/CONTRIBUTING.md already contains "Hello world".' },
+      ],
+    };
+
+    const out = await reviewNode(state as any);
+    expect(out.reviewDecision).toBe('done');
+    expect(out.phase).toBe('done');
+    expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
 });

@@ -48,7 +48,7 @@ server.listen(env.SHIPYARD_PORT, () => {
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {
   process.on(sig, () => {
     console.log(`\nReceived ${sig}. Shutting down...`);
-    loop.cancel();
+    loop.cancel('shutdown_signal');
     server.close(() => process.exit(0));
   });
 }

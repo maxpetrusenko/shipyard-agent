@@ -62,26 +62,13 @@ describe('reportNode PR fallback', () => {
     hasSuccessfulPrToolCallMock.mockReset();
   });
 
-  it('auto-creates PR when run is done and no PR tool success exists', async () => {
+  it('does not auto-create PR when the user did not request commit or PR behavior', async () => {
     hasSuccessfulPrToolCallMock.mockReturnValue(false);
-    commitAndOpenPrMock.mockResolvedValue({
-      success: true,
-      error: null,
-      pr_url: 'https://github.com/o/r/pull/99',
-      branch: 'shipyard/run-123',
-      commit_sha: 'abc',
-      pr_existing: false,
-    });
 
     const out = await reportNode(baseState() as any);
-    expect(commitAndOpenPrMock).toHaveBeenCalledTimes(1);
-    expect(commitAndOpenPrMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        file_paths: ['/tmp/a.ts'],
-      }),
-    );
+    expect(commitAndOpenPrMock).not.toHaveBeenCalled();
     const last = out.messages?.at(-1)?.content ?? '';
-    expect(last).toContain('PR: https://github.com/o/r/pull/99');
+    expect(last).not.toContain('PR:');
   });
 
   it('does not auto-create PR if commit_and_open_pr already succeeded', async () => {

@@ -41,7 +41,7 @@ describe('commitAndOpenPr', () => {
       { match: /^gh --version$/, stdout: 'gh version 2.70.0' },
       { match: /^gh auth status$/, stdout: 'Logged in' },
       { match: /^git rev-parse --is-inside-work-tree$/, stdout: 'true' },
-      { match: /^git status --porcelain$/, stdout: ' M src/a.ts\n' },
+      { match: /^git status --porcelain -- /, stdout: ' M src/a.ts\n' },
       { match: /^git rev-parse --abbrev-ref HEAD$/, stdout: 'feature/test\n' },
       { match: /^git diff --cached --name-only$/, stdout: 'src/a.ts\n' },
       { match: /^git commit -m /, stdout: '[feature/test abc] msg' },
@@ -59,6 +59,7 @@ describe('commitAndOpenPr', () => {
       {
         title: 'feat: add thing',
         body: '## Description\nx\n\n## Test Plan\n- [ ] y',
+        file_paths: ['src/a.ts'],
       },
       runner,
     );
@@ -79,10 +80,10 @@ describe('commitAndOpenPr', () => {
       { match: /^gh --version$/, stdout: 'gh version 2.70.0' },
       { match: /^gh auth status$/, stdout: 'Logged in' },
       { match: /^git rev-parse --is-inside-work-tree$/, stdout: 'true' },
-      { match: /^git status --porcelain$/, stdout: '' },
+      { match: /^git status --porcelain -- /, stdout: '' },
     ]);
     const result = await commitAndOpenPr(
-      { title: 'feat: no-op', body: 'body' },
+      { title: 'feat: no-op', body: 'body', file_paths: ['src/a.ts'] },
       runner,
     );
     expect(result.success).toBe(false);
@@ -125,6 +126,16 @@ describe('commitAndOpenPr', () => {
     expect(commands.some((c) => c.startsWith('git status --porcelain -- '))).toBe(true);
     expect(commands.some((c) => c.startsWith("git add -- 'src/a.ts'"))).toBe(true);
     expect(commands.includes('git add -A')).toBe(false);
+  });
+
+  it('fails when file_paths is omitted', async () => {
+    const runner = makeRunner([]);
+    const result = await commitAndOpenPr(
+      { title: 'feat: missing scope', body: 'body' },
+      runner,
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('requires file_paths');
   });
 });
 

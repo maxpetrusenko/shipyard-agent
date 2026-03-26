@@ -21,6 +21,7 @@ import {
   dispatchAnthropicToolBlocks,
   stripToolResultCacheControls,
 } from '../../llm/anthropic-tool-dispatch.js';
+import { compactAnthropicMessages } from '../../llm/message-compaction.js';
 import {
   extractTextFromContentBlocks,
   extractToolUseBlocks,
@@ -29,6 +30,10 @@ import { TokenAccumulator } from '../../llm/token-usage.js';
 import { TOOL_SCHEMAS, dispatchTool } from '../../tools/index.js';
 import { createPlanLiveHooks } from '../../tools/hooks.js';
 import { consumeLiveFollowups } from '../../runtime/live-followups.js';
+import {
+  constrainPlanStepsToScope,
+  deriveScopeConstraints,
+} from '../guards.js';
 import {
   buildContextBlock,
   type ShipyardStateType,
@@ -61,6 +66,11 @@ You MUST identify ALL files that need changes, not just a sample or subset.
 3. Build a comprehensive file list. Verify you haven't missed anything.
 4. Create steps that cover ALL identified files.
 
+Hard scope rules:
+- If the instruction names explicit target files, plan ONLY those files.
+- Do not add unrelated files when the instruction already pins the target path.
+- If the explicit target already appears satisfied, keep the plan minimal and focused on confirming that no-op.
+
 For each step, specify:
 - A clear description of what to do
 - Which files need to be read or modified (use absolute paths) — list ALL of them
@@ -88,6 +98,15 @@ Verification policy:
 - This codebase uses TypeScript with \`moduleResolution: "node16"\`. ALL imports MUST include the \`.js\` extension (e.g. \`import { foo } from './bar.js'\`), even for \`.ts\` source files.
 - Use vitest for testing. Import from 'vitest' not '@jest/globals'.`;
 
+const PLAN_COMPACTION_MAX_CHARS = 100_000;
+
+function derivePlanToolRoundLimit(instruction: string): number {
+  const constraints = deriveScopeConstraints(instruction);
+  if (constraints.strictSingleFile) return 4;
+  if (constraints.disallowUnrelatedFiles) return 6;
+  return 15;
+}
+
 function isStandaloneVerificationStep(step: PlanStep): boolean {
   const desc = step.description.toLowerCase();
   const mentionsVerify =
@@ -114,6 +133,13 @@ function pruneRedundantVerificationSteps(steps: PlanStep[]): PlanStep[] {
   return filtered.map((s, i) => ({ ...s, index: i }));
 }
 
+function finalizePlan(instruction: string, steps: PlanStep[]): PlanStep[] {
+  return constrainPlanStepsToScope(
+    instruction,
+    pruneRedundantVerificationSteps(steps),
+  );
+}
+
 export async function planNode(
   state: ShipyardStateType,
 ): Promise<Partial<ShipyardStateType>> {
@@ -130,7 +156,14 @@ export async function planNode(
     if (state.reviewFeedback) {
       initialUserText = `${state.instruction}\n\nPrevious attempt feedback: ${state.reviewFeedback}\n\nPlease revise your plan based on the feedback above.`;
     }
-    const { steps, newMessages, inputTokens, outputTokens } =
+    const {
+      steps,
+      newMessages,
+      inputTokens,
+      outputTokens,
+      cacheRead,
+      cacheCreation,
+    } =
       await runOpenAiPlanLoop({
         state,
         config,
@@ -140,14 +173,14 @@ export async function planNode(
       });
     return {
       phase: 'executing',
-      steps: pruneRedundantVerificationSteps(steps),
+      steps: finalizePlan(state.instruction, steps),
       currentStepIndex: 0,
       messages: newMessages,
       tokenUsage: {
         input: inputTokens,
         output: outputTokens,
-        cacheRead: state.tokenUsage?.cacheRead ?? 0,
-        cacheCreation: state.tokenUsage?.cacheCreation ?? 0,
+        cacheRead,
+        cacheCreation,
       },
       modelHint: 'sonnet',
     };
@@ -192,7 +225,7 @@ export async function planNode(
 
   // Agentic tool loop: let Opus explore the codebase
   let steps: PlanStep[] = [];
-  const maxToolRounds = 15;
+  const maxToolRounds = derivePlanToolRoundLimit(state.instruction);
 
   for (let round = 0; round < maxToolRounds; round++) {
     const liveFollowups = consumeLiveFollowups(state.runId);
@@ -208,13 +241,24 @@ export async function planNode(
     }
 
     const requestMessages = stripToolResultCacheControls(messages);
+    const compacted = compactAnthropicMessages(requestMessages, {
+      maxChars: PLAN_COMPACTION_MAX_CHARS,
+      preserveRecentMessages: 8,
+    });
+    if (compacted.compacted) {
+      newMessages.push({
+        role: 'assistant',
+        content:
+          `[Compaction] planning history compacted (${compacted.beforeChars} -> ${compacted.afterChars} chars, dropped ${compacted.droppedMessages} messages).`,
+      });
+    }
     const response = await messagesCreate(anthropic, {
       model: config.model,
       max_tokens: config.maxTokens,
       temperature: config.temperature,
       system: systemPrompt,
       tools: planTools,
-      messages: requestMessages,
+      messages: compacted.messages,
     }, {
       liveNode: 'plan',
       traceName: 'plan',
@@ -276,7 +320,7 @@ export async function planNode(
       },
     ];
   }
-  steps = pruneRedundantVerificationSteps(steps);
+  steps = finalizePlan(state.instruction, steps);
 
   return {
     phase: 'executing',

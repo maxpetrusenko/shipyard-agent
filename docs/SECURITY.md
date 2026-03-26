@@ -6,7 +6,7 @@
 - Invoke auth (`SHIPYARD_INVOKE_TOKEN`): protects invoke/retry/dead-letter replay paths.
   - Accepted headers: `X-Shipyard-Invoke-Token` or `Authorization: Bearer ...`.
   - If unset: server allows requests and increments `shipyard.security.unprotected_invoke`; logs one startup warning on first request.
-- Webhook auth (`GITHUB_WEBHOOK_SECRET`): validates `X-Hub-Signature-256` with HMAC-SHA256.
+- Webhook auth (`SHIPYARD_GITHUB_WEBHOOK_SECRET`, legacy alias `GITHUB_WEBHOOK_SECRET`): validates `X-Hub-Signature-256` with HMAC-SHA256.
 
 ## HMAC request signing middleware
 
@@ -81,7 +81,7 @@ This also redacts partial keys like `X-Custom-Authorization`.
 
 1. Set `SHIPYARD_API_KEY`.
 2. Set `SHIPYARD_INVOKE_TOKEN`.
-3. Set `GITHUB_WEBHOOK_SECRET`.
+3. Set `SHIPYARD_GITHUB_WEBHOOK_SECRET` (or legacy alias `GITHUB_WEBHOOK_SECRET`).
 4. If using HMAC middleware, wire `express.json({ verify: saveRawBody })`.
 5. Configure webhook sender allowlists/roles where needed.
 6. Verify `/api/metrics` and audit log persistence are enabled in your runtime.

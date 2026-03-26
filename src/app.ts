@@ -71,7 +71,14 @@ export function createApp(loop: InstructionLoop): express.Application {
   const apiKey = process.env['SHIPYARD_API_KEY'];
   if (apiKey) {
     app.use('/api', (req, res, next) => {
-      if (req.path === '/health') { next(); return; }
+      if (
+        req.path === '/health' ||
+        req.path === '/healthz' ||
+        req.path === '/readyz' ||
+        req.path === '/providers/readiness' ||
+        req.path === '/metrics' ||
+        req.path === '/version'
+      ) { next(); return; }
       const auth = req.headers['authorization'];
       if (auth !== `Bearer ${apiKey}`) {
         res.status(401).json({ error: 'Unauthorized' });

@@ -26,6 +26,31 @@ import type { FileOverlay } from './file-overlay.js';
 // Anthropic tool schemas
 // ---------------------------------------------------------------------------
 
+const COMMIT_AND_OPEN_PR_TOOL_NAME = 'commit_and_open_pr';
+
+const COMMIT_AND_OPEN_PR_TOOL: Anthropic.Tool = {
+  name: COMMIT_AND_OPEN_PR_TOOL_NAME,
+  description:
+    'Commit all current changes, push branch, and open (or update) a GitHub draft PR via gh CLI.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      title: { type: 'string', description: 'PR title' },
+      body: { type: 'string', description: 'PR body markdown' },
+      commit_message: { type: 'string', description: 'Git commit message (defaults to title)' },
+      branch_name: { type: 'string', description: 'Branch to push (defaults to current branch)' },
+      base_branch: { type: 'string', description: 'Base branch (defaults to repo default branch)' },
+      file_paths: {
+        type: 'array',
+        description: 'Optional absolute/relative file paths to stage and commit (scoped commit)',
+        items: { type: 'string' },
+      },
+      draft: { type: 'boolean', description: 'Create draft PR (default true)' },
+    },
+    required: ['title', 'body'],
+  },
+};
+
 export const TOOL_SCHEMAS: Anthropic.Tool[] = [
   {
     name: 'read_file',
@@ -174,28 +199,7 @@ export const TOOL_SCHEMAS: Anthropic.Tool[] = [
       required: ['scope'],
     },
   },
-  {
-    name: 'commit_and_open_pr',
-    description:
-      'Commit all current changes, push branch, and open (or update) a GitHub draft PR via gh CLI.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        title: { type: 'string', description: 'PR title' },
-        body: { type: 'string', description: 'PR body markdown' },
-        commit_message: { type: 'string', description: 'Git commit message (defaults to title)' },
-        branch_name: { type: 'string', description: 'Branch to push (defaults to current branch)' },
-        base_branch: { type: 'string', description: 'Base branch (defaults to repo default branch)' },
-        file_paths: {
-          type: 'array',
-          description: 'Optional absolute/relative file paths to stage and commit (scoped commit)',
-          items: { type: 'string' },
-        },
-        draft: { type: 'boolean', description: 'Create draft PR (default true)' },
-      },
-      required: ['title', 'body'],
-    },
-  },
+  COMMIT_AND_OPEN_PR_TOOL,
   {
     name: 'inject_context',
     description:
@@ -210,6 +214,26 @@ export const TOOL_SCHEMAS: Anthropic.Tool[] = [
     },
   },
 ];
+
+export function shouldAllowCommitAndOpenPrTool(instruction: string): boolean {
+  const text = instruction.toLowerCase();
+  if (
+    /\b(?:do not|don't|no|without)\b[^.\n]{0,40}\b(?:commit|push|pr|pull request)\b/.test(text)
+  ) {
+    return false;
+  }
+  return [
+    /\bcommit\b/,
+    /\bpush\b/,
+    /\bpr\b/,
+    /\bpull request\b/,
+  ].some((pattern) => pattern.test(text));
+}
+
+export function getExecutionToolSchemas(instruction: string): Anthropic.Tool[] {
+  if (shouldAllowCommitAndOpenPrTool(instruction)) return TOOL_SCHEMAS;
+  return TOOL_SCHEMAS.filter((tool) => tool.name !== COMMIT_AND_OPEN_PR_TOOL_NAME);
+}
 
 // ---------------------------------------------------------------------------
 // Tool dispatch (raw, no hooks)

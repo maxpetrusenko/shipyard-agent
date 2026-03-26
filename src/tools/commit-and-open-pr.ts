@@ -122,6 +122,16 @@ export async function commitAndOpenPr(
     });
     return fail(scoped.error, receipts);
   }
+  if (scoped.paths.length === 0) {
+    const reason = 'commit_and_open_pr requires file_paths; broad staging is disabled';
+    receipts.push({
+      action: 'validate_scope',
+      outcome: 'failed',
+      scope: 'local_only',
+      details: reason,
+    });
+    return fail(reason, receipts);
+  }
 
   const gh = await run(runner, 'gh --version', cwd);
   if (!gh.success) {
@@ -174,9 +184,7 @@ export async function commitAndOpenPr(
     details: `repo ok: ${cwd}`,
   });
 
-  const statusCommand = scoped.paths.length > 0
-    ? `git status --porcelain -- ${scoped.paths.map(shQuote).join(' ')}`
-    : 'git status --porcelain';
+  const statusCommand = `git status --porcelain -- ${scoped.paths.map(shQuote).join(' ')}`;
   const status = await run(runner, statusCommand, cwd);
   if (!status.success) {
     receipts.push({
@@ -200,9 +208,7 @@ export async function commitAndOpenPr(
     action: 'check_worktree_changes',
     outcome: 'completed',
     scope: 'local_only',
-    details: scoped.paths.length > 0
-      ? `detected changes in scoped paths (${scoped.paths.length})`
-      : 'detected file changes',
+    details: `detected changes in scoped paths (${scoped.paths.length})`,
   });
 
   const currentBranchRes = await run(
@@ -264,9 +270,7 @@ export async function commitAndOpenPr(
     });
   }
 
-  const addCommand = scoped.paths.length > 0
-    ? `git add -- ${scoped.paths.map(shQuote).join(' ')}`
-    : 'git add -A';
+  const addCommand = `git add -- ${scoped.paths.map(shQuote).join(' ')}`;
   const add = await run(runner, addCommand, cwd);
   if (!add.success) {
     receipts.push({

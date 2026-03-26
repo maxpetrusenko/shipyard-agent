@@ -22,15 +22,25 @@ import {
   dispatchAnthropicToolBlocks,
   stripToolResultCacheControls,
 } from '../../llm/anthropic-tool-dispatch.js';
+import { compactAnthropicMessages } from '../../llm/message-compaction.js';
 import {
   extractTextFromContentBlocks,
   extractToolUseBlocks,
 } from '../../llm/anthropic-parse.js';
 import { TokenAccumulator } from '../../llm/token-usage.js';
-import { TOOL_SCHEMAS, dispatchTool } from '../../tools/index.js';
+import {
+  dispatchTool,
+  getExecutionToolSchemas,
+} from '../../tools/index.js';
 import { createRecordingHooks } from '../../tools/hooks.js';
 import { FileOverlay } from '../../tools/file-overlay.js';
 import { consumeLiveFollowups } from '../../runtime/live-followups.js';
+import {
+  deriveDiscoveryCallLimit,
+  deriveFirstEditDeadlineMs,
+  evaluateCandidateEditPath,
+  isDiscoveryToolName,
+} from '../guards.js';
 import {
   buildContextBlock,
   type ShipyardStateType,
@@ -59,14 +69,36 @@ Rules:
 - When done with this step, say "STEP_COMPLETE" in your response
 - Do NOT say STEP_COMPLETE until you have addressed every file in the step's file list
 - If the step mentions multiple files, you must edit/verify each one before completing
-- If this is the final step and code changed, call commit_and_open_pr before STEP_COMPLETE
-- When calling commit_and_open_pr, include file_paths with the exact files edited in this run
+- If the instruction names explicit target files, treat them as hard scope. Do not edit files outside that explicit target list.
+- If the explicit target already satisfies the request, report a no-op and complete without editing other files.
+- Never call commit_and_open_pr unless the user explicitly asked for commit, push, or PR behavior.
 
 Codebase conventions:
 - This codebase uses TypeScript with moduleResolution "node16". ALL imports MUST include the .js extension (e.g. import { foo } from './bar.js'), even for .ts source files.
 - Use vitest for testing.`;
 
 const MAX_NO_EDIT_TOOL_ROUNDS = 8;
+const MAX_FORCED_EDIT_NUDGES = 1;
+const EXECUTE_COMPACTION_MAX_CHARS = 100_000;
+
+function forcedEditNudge(
+  discoveryCallsBeforeFirstEdit: number,
+  discoveryCallLimit: number | null,
+): string {
+  const limitMsg =
+    discoveryCallLimit != null
+      ? `${discoveryCallsBeforeFirstEdit}/${discoveryCallLimit}`
+      : `${discoveryCallsBeforeFirstEdit}`;
+  return (
+    `You are drifting in discovery with no file edits.\n` +
+    `Discovery calls before first edit: ${limitMsg}.\n` +
+    `Now do this immediately:\n` +
+    `1) Pick ONE concrete target file.\n` +
+    `2) Call edit_file with a minimal bugfix in that file.\n` +
+    `3) If blocked, return one blocker and 2 concrete options.\n` +
+    `Do not run more broad scans before the edit attempt.`
+  );
+}
 
 export async function executeNode(
   state: ShipyardStateType,
@@ -118,6 +150,60 @@ export async function executeNode(
 
   const hooks = createRecordingHooks(newEdits, newHistory);
   const overlay = new FileOverlay();
+  const discoveryCallLimit = deriveDiscoveryCallLimit(state.instruction);
+  const firstEditDeadlineMs = deriveFirstEditDeadlineMs(state.instruction);
+  const firstEditWindowStart = state.fileEdits.length === 0 ? Date.now() : null;
+  let discoveryCallsBeforeFirstEdit =
+    state.fileEdits.length === 0
+      ? state.toolCallHistory.filter((t) => isDiscoveryToolName(t.tool_name)).length
+      : 0;
+  let guardrailViolation: string | null = null;
+  let forcedEditNudges = 0;
+
+  const dispatchWithGuards = async (
+    name: string,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    const hasEdits = state.fileEdits.length + newEdits.length > 0;
+    if (!hasEdits && firstEditWindowStart != null && firstEditDeadlineMs != null) {
+      const elapsed = Date.now() - firstEditWindowStart;
+      if (elapsed > firstEditDeadlineMs) {
+        guardrailViolation =
+          `Watchdog: first edit deadline exceeded (${elapsed}ms > ${firstEditDeadlineMs}ms).`;
+        return { success: false, message: guardrailViolation };
+      }
+    }
+    if (!hasEdits && isDiscoveryToolName(name)) {
+      discoveryCallsBeforeFirstEdit += 1;
+      if (
+        discoveryCallLimit != null &&
+        discoveryCallsBeforeFirstEdit > discoveryCallLimit
+      ) {
+        guardrailViolation =
+          `Watchdog: discovery tool calls before first edit exceeded limit (${discoveryCallsBeforeFirstEdit}/${discoveryCallLimit}).`;
+        return { success: false, message: guardrailViolation };
+      }
+    }
+    if (name === 'edit_file' || name === 'write_file') {
+      const candidatePath = input['file_path'];
+      if (typeof candidatePath === 'string' && candidatePath.trim()) {
+        const editedPaths = [
+          ...new Set([...state.fileEdits, ...newEdits].map((e) => e.file_path)),
+        ];
+        const scopeCheck = evaluateCandidateEditPath({
+          instruction: state.instruction,
+          steps: state.steps,
+          editedPaths,
+          candidatePath,
+        });
+        if (!scopeCheck.ok) {
+          guardrailViolation = `Watchdog: ${scopeCheck.reason ?? 'edit scope violation.'}`;
+          return { success: false, message: guardrailViolation };
+        }
+      }
+    }
+    return dispatchTool(name, input, hooks, overlay);
+  };
 
   const updatedSteps = state.steps.map((s, i) =>
     i === state.currentStepIndex ? { ...s, status: 'in_progress' as const } : s,
@@ -136,24 +222,16 @@ export async function executeNode(
       overlay,
       updatedSteps,
     });
-    const tu = oa.tokenUsage;
     return {
       ...oa,
-      tokenUsage: tu
-        ? {
-            input: tu.input,
-            output: tu.output,
-            cacheRead: state.tokenUsage?.cacheRead ?? 0,
-            cacheCreation: state.tokenUsage?.cacheCreation ?? 0,
-          }
-        : oa.tokenUsage,
+      tokenUsage: oa.tokenUsage,
     };
   }
 
   const anthropic = getClient();
   const systemPrompt = wrapSystemPrompt(EXECUTE_SYSTEM, contextSection);
 
-  const cachedTools = withCachedTools(TOOL_SCHEMAS);
+  const cachedTools = withCachedTools(getExecutionToolSchemas(state.instruction));
 
   const messages: Anthropic.MessageParam[] = [
     { role: 'user', content: stepPrompt },
@@ -174,13 +252,24 @@ export async function executeNode(
     }
 
     const requestMessages = stripToolResultCacheControls(messages);
+    const compacted = compactAnthropicMessages(requestMessages, {
+      maxChars: EXECUTE_COMPACTION_MAX_CHARS,
+      preserveRecentMessages: 10,
+    });
+    if (compacted.compacted) {
+      newMessages.push({
+        role: 'assistant',
+        content:
+          `[Compaction] execution history compacted (${compacted.beforeChars} -> ${compacted.afterChars} chars, dropped ${compacted.droppedMessages} messages).`,
+      });
+    }
     const response = await messagesCreate(anthropic, {
       model: config.model,
       max_tokens: config.maxTokens,
       temperature: config.temperature,
       system: systemPrompt,
       tools: cachedTools,
-      messages: requestMessages,
+      messages: compacted.messages,
     }, {
       liveNode: 'execute',
       traceName: 'execute',
@@ -232,9 +321,12 @@ export async function executeNode(
 
       const toolResults = await dispatchAnthropicToolBlocks(
         toolBlocks,
-        (name, input) => dispatchTool(name, input, hooks, overlay),
+        dispatchWithGuards,
       );
       messages.push({ role: 'user', content: toolResults });
+      if (guardrailViolation) {
+        throw new Error(guardrailViolation);
+      }
 
       if (newEdits.length === editsBefore) {
         noEditToolRounds += 1;
@@ -243,25 +335,26 @@ export async function executeNode(
       }
 
       if (noEditToolRounds >= MAX_NO_EDIT_TOOL_ROUNDS) {
-        newMessages.push({
-          role: 'assistant',
-          content:
-            `[Watchdog] Execution stalled: ${MAX_NO_EDIT_TOOL_ROUNDS} consecutive tool rounds without file edits. ` +
-            'Replanning with tighter scope constraints.',
-        });
-        const failedSteps = updatedSteps.map((s, i) =>
-          i === state.currentStepIndex ? { ...s, status: 'failed' as const } : s,
+        if (newEdits.length === 0 && forcedEditNudges < MAX_FORCED_EDIT_NUDGES) {
+          forcedEditNudges += 1;
+          noEditToolRounds = 0;
+          messages.push({
+            role: 'user',
+            content: forcedEditNudge(
+              discoveryCallsBeforeFirstEdit,
+              discoveryCallLimit,
+            ),
+          });
+          newMessages.push({
+            role: 'assistant',
+            content:
+              `[Watchdog] Recovery nudge ${forcedEditNudges}/${MAX_FORCED_EDIT_NUDGES}: forcing one concrete edit attempt now.`,
+          });
+          continue;
+        }
+        throw new Error(
+          `Watchdog: execution stalled after ${MAX_NO_EDIT_TOOL_ROUNDS} consecutive no-edit tool rounds.`,
         );
-        return {
-          phase: 'verifying',
-          steps: failedSteps,
-          fileEdits: newEdits,
-          toolCallHistory: newHistory,
-          messages: newMessages,
-          tokenUsage: tokens.snapshot(),
-          reviewFeedback:
-            'Execution stalled with repeated tool calls and no file edits. Replan with stricter file targeting and complete the edit in one pass.',
-        };
       }
     } else {
       // No tools, not complete — something's wrong
@@ -270,24 +363,5 @@ export async function executeNode(
     }
   }
 
-  // If we hit max rounds without STEP_COMPLETE, mark step as done anyway
-  const finalSteps = updatedSteps.map((s, i) =>
-    i === state.currentStepIndex ? { ...s, status: 'done' as const } : s,
-  );
-
-  const tailSnapshotJson = overlay.dirty
-    ? JSON.stringify(Object.fromEntries(
-        overlay.trackedFiles().map((f) => [f, '']),
-      ))
-    : state.fileOverlaySnapshots ?? null;
-
-  return {
-    phase: 'verifying',
-    steps: finalSteps,
-    fileEdits: newEdits,
-    toolCallHistory: newHistory,
-    messages: newMessages,
-    tokenUsage: tokens.snapshot(),
-    fileOverlaySnapshots: tailSnapshotJson,
-  };
+  throw new Error(`Watchdog: execution exceeded max tool rounds (${maxToolRounds}) without completion.`);
 }

@@ -7,6 +7,11 @@ import { evaluateWebhookPolicy } from './webhook-policy.js';
 import { apiError, ErrorCodes } from './error-codes.js';
 import { sanitizeHeaders } from './dead-letter.js';
 import { recordInvokeEvent, wrap, type InvokeEvent, type InvokeRoutesDeps } from './invoke-shared.js';
+import {
+  buildGithubConversationRef,
+  parseShipyardCommand,
+  resolveGithubWebhookSecret,
+} from './github-webhook.js';
 
 export function verifyGithubWebhookSignature(body: Buffer, signature: string | undefined, secret: string): boolean {
   if (!signature || !signature.startsWith('sha256=')) return false;
@@ -17,18 +22,34 @@ export function verifyGithubWebhookSignature(body: Buffer, signature: string | u
   return timingSafeEqual(expected, actual);
 }
 
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function findConversationRunId(
+  eventIndex: InvokeRoutesDeps['eventIndex'],
+  conversationKey: string,
+): string | null {
+  for (const event of eventIndex.all()) {
+    if (
+      event.source === 'github' &&
+      event.status === 'accepted' &&
+      event.runId &&
+      event.metadata?.['conversationKey'] === conversationKey
+    ) {
+      return event.runId;
+    }
+  }
+  return null;
 }
 
-export function extractCommandFromComment(body: string): { instruction: string | null; prefixRequired: boolean; prefix: string } {
-  const prefix = (process.env['SHIPYARD_COMMAND_PREFIX'] ?? '/shipyard').trim();
-  const regex = new RegExp(`${escapeRegex(prefix)}\\s+(.+)`, 'i');
-  const match = body.match(regex);
-  if (match) {
-    return { instruction: match[1]!.trim(), prefixRequired: true, prefix };
+async function tryReuseConversationRun(
+  loop: InvokeRoutesDeps['loop'],
+  runId: string,
+  instruction: string,
+  threadKindHint: 'ask' | 'plan' | 'agent',
+): Promise<boolean> {
+  if (loop.followUpThread(runId, instruction, { threadKindHint })) {
+    return true;
   }
-  return { instruction: null, prefixRequired: true, prefix };
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  return loop.followUpThread(runId, instruction, { threadKindHint });
 }
 
 export function registerWebhookHandlers(router: Router, deps: InvokeRoutesDeps): void {
@@ -36,8 +57,8 @@ export function registerWebhookHandlers(router: Router, deps: InvokeRoutesDeps):
 
   router.post(
     '/github/webhook',
-    wrap((req, res) => {
-      const secret = process.env['GITHUB_WEBHOOK_SECRET'];
+    wrap(async (req, res) => {
+      const secret = resolveGithubWebhookSecret();
       if (secret) {
         const sig = req.headers['x-hub-signature-256'] as string | undefined;
         const raw = (req as { rawBody?: Buffer | string }).rawBody;
@@ -95,12 +116,18 @@ export function registerWebhookHandlers(router: Router, deps: InvokeRoutesDeps):
         }
       }
 
-      let instruction: string | null = null;
-      if (eventType === 'issue_comment' && action === 'created' && typeof payload['comment'] === 'object' && payload['comment'] !== null) {
+      let command = parseShipyardCommand('');
+      if (
+        (eventType === 'issue_comment' || eventType === 'pull_request_review_comment') &&
+        action === 'created' &&
+        typeof payload['comment'] === 'object' &&
+        payload['comment'] !== null
+      ) {
         const comment = payload['comment'] as Record<string, unknown>;
         const body = String(comment['body'] ?? '');
-        instruction = extractCommandFromComment(body).instruction;
+        command = parseShipyardCommand(body);
       }
+      const instruction = command.instruction;
       if (!instruction) {
         OPS.increment('shipyard.webhook.rejected');
         const prefix = (process.env['SHIPYARD_COMMAND_PREFIX'] ?? '/shipyard').trim();
@@ -119,7 +146,29 @@ export function registerWebhookHandlers(router: Router, deps: InvokeRoutesDeps):
       }
 
       const eventId = randomUUID();
-      const runId = loop.submit(instruction, undefined, false, 'auto');
+      const conversation = buildGithubConversationRef(eventType, payload);
+      const priorRunId = conversation
+        ? findConversationRunId(eventIndex, conversation.key)
+        : null;
+      let reusedThread = false;
+      let runId = priorRunId;
+      if (runId) {
+        reusedThread = await tryReuseConversationRun(
+          loop,
+          runId,
+          instruction,
+          command.threadKindHint,
+        );
+      }
+      if (!runId || !reusedThread) {
+        runId = loop.submit(
+          instruction,
+          undefined,
+          command.confirmPlan,
+          command.runMode,
+          { threadKindHint: command.threadKindHint },
+        );
+      }
       const event: InvokeEvent = {
         id: eventId,
         source: 'github',
@@ -131,6 +180,16 @@ export function registerWebhookHandlers(router: Router, deps: InvokeRoutesDeps):
           deliveryId,
           action,
           sender: (payload['sender'] as Record<string, unknown>)?.['login'],
+          conversationKey: conversation?.key,
+          conversationKind: conversation?.kind,
+          repository: conversation?.repository,
+          installationId: conversation?.installationId,
+          issueNumber: conversation?.issueNumber,
+          pullRequestNumber: conversation?.pullRequestNumber,
+          commentId: conversation?.commentId,
+          rootCommentId: conversation?.rootCommentId,
+          threadKindHint: command.threadKindHint,
+          reusedThread,
         },
         receivedAt: new Date().toISOString(),
         retryAttempts: 0,
@@ -138,7 +197,7 @@ export function registerWebhookHandlers(router: Router, deps: InvokeRoutesDeps):
           source: 'webhook',
           entrypoint: '/api/github/webhook',
           instruction,
-          runMode: 'auto',
+          runMode: command.runMode,
           queueDepthAtIngress: loop.getStatus().queueLength,
           correlationId: (req.headers['x-correlation-id'] as string) ?? eventId,
           webhookDeliveryId: deliveryId,
@@ -148,7 +207,14 @@ export function registerWebhookHandlers(router: Router, deps: InvokeRoutesDeps):
       };
       recordInvokeEvent(eventIndex, eventPersistence, maxInvokeEvents, event);
       OPS.increment('shipyard.webhook.accepted');
-      res.json({ status: 'accepted', eventId, runId, deliveryId, correlationId: (req.headers['x-correlation-id'] as string) ?? eventId });
+      res.json({
+        status: 'accepted',
+        eventId,
+        runId,
+        deliveryId,
+        correlationId: (req.headers['x-correlation-id'] as string) ?? eventId,
+        reusedThread,
+      });
     }),
   );
 }

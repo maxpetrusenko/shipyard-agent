@@ -4,10 +4,16 @@ import {
   type ModelRole,
 } from '../config/model-policy.js';
 import type { RunResult } from '../runtime/loop.js';
+import {
+  buildTraceUrl,
+  isLangSmithInternalTraceUrl,
+  resolveLangSmithRunUrl,
+} from '../runtime/langsmith.js';
 
 export interface RunDebugSnapshot {
   runId: string;
   phase: RunResult['phase'];
+  requestedUiMode: RunResult['requestedUiMode'] | null;
   threadKind: RunResult['threadKind'] | null;
   runMode: RunResult['runMode'] | null;
   executionPath: RunResult['executionPath'] | null;
@@ -32,6 +38,7 @@ export interface RunDebugSnapshot {
   toolCallCount: number;
   fileEditCount: number;
   messageCount: number;
+  loopDiagnostics: RunResult['loopDiagnostics'] | null;
 }
 
 const MODEL_ROLES = Object.keys(MODEL_CONFIGS) as ModelRole[];
@@ -67,7 +74,29 @@ function queueWaitMs(queuedAt: string | null, startedAt: string | null): number 
   return Number.isFinite(diff) ? Math.max(0, diff) : null;
 }
 
-export function buildRunDebugSnapshot(run: RunResult): RunDebugSnapshot {
+export function isSyntheticTraceUrl(traceUrl: string | null | undefined): boolean {
+  return isLangSmithInternalTraceUrl(traceUrl);
+}
+
+export async function resolveDebugTraceUrl(
+  run: RunResult,
+  resolver: (runId: string) => Promise<string | null> = resolveLangSmithRunUrl,
+): Promise<string | null> {
+  const traceUrl = run.traceUrl ?? null;
+  if (!traceUrl) {
+    if (run.executionPath !== 'graph') return null;
+    const resolved = await resolver(run.runId);
+    return resolved ?? buildTraceUrl(run.runId);
+  }
+  if (!isSyntheticTraceUrl(traceUrl)) return traceUrl;
+  const resolved = await resolver(run.runId);
+  return resolved ?? traceUrl;
+}
+
+export function buildRunDebugSnapshot(
+  run: RunResult,
+  traceUrlOverride?: string | null,
+): RunDebugSnapshot {
   const resolvedModels = run.resolvedModels ?? fallbackResolvedModels(run);
   const primaryRole = primaryRoleForRun(run);
   const queuedAt = safeIso(run.queuedAt);
@@ -76,10 +105,12 @@ export function buildRunDebugSnapshot(run: RunResult): RunDebugSnapshot {
   const localTraceUrl = `/api/runs/${encodeURIComponent(run.runId)}/debug`;
   const instruction =
     run.messages.find((msg) => msg.role === 'user')?.content ?? '';
+  const traceUrl = traceUrlOverride ?? run.traceUrl ?? null;
 
   return {
     runId: run.runId,
     phase: run.phase,
+    requestedUiMode: run.requestedUiMode ?? null,
     threadKind: run.threadKind ?? null,
     runMode: run.runMode ?? null,
     executionPath: run.executionPath ?? null,
@@ -96,13 +127,14 @@ export function buildRunDebugSnapshot(run: RunResult): RunDebugSnapshot {
     queueWaitMs: queueWaitMs(queuedAt, startedAt),
     durationMs: run.durationMs,
     tokenUsage: run.tokenUsage ?? null,
-    traceUrl: run.traceUrl ?? null,
+    traceUrl,
     localTraceUrl,
-    openTraceUrl: run.traceUrl ?? localTraceUrl,
+    openTraceUrl: traceUrl ?? localTraceUrl,
     error: run.error ?? null,
     stepCount: run.steps.length,
     toolCallCount: run.toolCallHistory.length,
     fileEditCount: run.fileEdits.length,
     messageCount: run.messages.length,
+    loopDiagnostics: run.loopDiagnostics ?? null,
   };
 }

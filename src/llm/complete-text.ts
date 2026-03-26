@@ -14,7 +14,10 @@ import {
   isOpenAiModelId,
   type ModelRole,
 } from '../config/model-policy.js';
-import { chatCompletionCreateWithRetry } from './openai-helpers.js';
+import {
+  chatCompletionCreateWithRetry,
+  extractOpenAiCacheMetrics,
+} from './openai-helpers.js';
 import type { ShipyardStateType } from '../graph/state.js';
 import { emitTextChunk } from '../tools/hooks.js';
 
@@ -105,12 +108,13 @@ export async function completeTextForRole(
               .join('')
           : '';
     if (opts?.liveNode && text.trim()) emitTextChunk(opts.liveNode, text);
+    const cacheMetrics = extractOpenAiCacheMetrics(usage);
     return {
       text,
       inputTokens: usage?.prompt_tokens ?? 0,
       outputTokens: usage?.completion_tokens ?? 0,
-      cacheRead: 0,
-      cacheCreation: 0,
+      cacheRead: cacheMetrics.cacheRead,
+      cacheCreation: cacheMetrics.cacheCreation,
     };
   }
 

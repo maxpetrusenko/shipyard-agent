@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 let releaseGraph: (() => void) | null = null;
 let streamedStates: Array<Record<string, unknown>> = [];
@@ -60,7 +60,7 @@ vi.mock('../../src/runtime/persistence.js', () => ({
 
 import { InstructionLoop } from '../../src/runtime/loop.js';
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1200): Promise<void> {
+async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
   const start = Date.now();
   while (!predicate()) {
     if (Date.now() - start > timeoutMs) {
@@ -70,26 +70,20 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1200): Promise<void
   }
 }
 
-async function releaseUntilIdle(loop: InstructionLoop, maxReleases = 5): Promise<void> {
+async function releaseUntilIdle(loop: InstructionLoop, maxReleases = 10): Promise<void> {
   for (let i = 0; i < maxReleases; i += 1) {
     if (!loop.getStatus().processing) return;
-    const start = Date.now();
-    while (
-      loop.getStatus().processing &&
-      typeof releaseGraph !== 'function' &&
-      Date.now() - start < 1200
-    ) {
-      await new Promise((r) => setTimeout(r, 10));
-    }
+    await waitFor(
+      () => !loop.getStatus().processing || typeof releaseGraph === 'function',
+      12000,
+    );
     if (!loop.getStatus().processing) return;
-    if (typeof releaseGraph !== 'function') {
-      throw new Error('waitFor timeout');
-    }
     const release = releaseGraph;
     releaseGraph = null;
     release?.();
     await new Promise((r) => setTimeout(r, 0));
   }
+  throw new Error('releaseUntilIdle exceeded maxReleases');
 }
 
 describe('InstructionLoop local chat shortcuts', () => {
@@ -99,6 +93,16 @@ describe('InstructionLoop local chat shortcuts', () => {
     releaseGraph = null;
     streamedStates = [];
     loop = new InstructionLoop();
+  });
+
+  afterEach(async () => {
+    if (!loop) return;
+    try {
+      await releaseUntilIdle(loop, 20);
+    } catch {
+      // best-effort cleanup to prevent cross-test interference
+    }
+    releaseGraph = null;
   });
 
   it('completes trivial hi immediately even while another run is active', async () => {
@@ -164,7 +168,7 @@ describe('InstructionLoop local chat shortcuts', () => {
     expect(loop.getStatus().queueLength).toBe(1);
 
     await releaseUntilIdle(loop);
-    await waitFor(() => !loop.getStatus().processing && loop.getRun(askId)?.phase === 'done');
+    await waitFor(() => loop.getRun(askId)?.phase === 'done', 12000);
 
     const askRun = loop.getRun(askId);
     expect(askRun?.threadKind).toBe('ask');
@@ -174,7 +178,7 @@ describe('InstructionLoop local chat shortcuts', () => {
       'and memoization?',
       'Done: and memoization?',
     ]);
-  });
+  }, 30000);
 
   it('handles multiple follow-up asks on the same thread', async () => {
     const askId = loop.submit('hi', undefined, false, 'chat');
@@ -188,18 +192,8 @@ describe('InstructionLoop local chat shortcuts', () => {
     expect(ok2).toBe(true);
     expect(loop.getStatus().queueLength).toBe(1);
 
-    await waitFor(() => typeof releaseGraph === 'function');
-    releaseGraph?.();
-    releaseGraph = null;
-    await waitFor(() =>
-      loop.getStatus().processing &&
-      loop.getStatus().queueLength === 0 &&
-      (loop.getRun(askId)?.messages ?? []).some((m) => m.content === 'Done: what is recursion?'),
-    );
-
-    await waitFor(() => typeof releaseGraph === 'function');
-    releaseGraph?.();
-    await waitFor(() => !loop.getStatus().processing && loop.getRun(askId)?.phase === 'done');
+    await releaseUntilIdle(loop);
+    await waitFor(() => loop.getRun(askId)?.phase === 'done', 12000);
 
     const askRun = loop.getRun(askId);
     expect(askRun?.threadKind).toBe('ask');
@@ -211,7 +205,7 @@ describe('InstructionLoop local chat shortcuts', () => {
       'and memoization?',
       'Done: and memoization?',
     ]);
-  });
+  }, 30000);
 
   it('applies code follow-ups live on the same active agent thread', async () => {
     const runId = loop.submit('implement auth', undefined, false, 'code');

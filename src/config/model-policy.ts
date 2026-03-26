@@ -25,39 +25,39 @@ function clampTemp(config: ModelConfig): ModelConfig {
 
 export const MODEL_CONFIGS = {
   planning: {
-    model: 'gpt-5.3-codex',
+    model: 'gpt-5.4',
     maxTokens: 16384,
     temperature: 0.3,
   },
   coding: {
-    model: 'gpt-5-mini',
+    model: 'gpt-5.4-mini',
     maxTokens: 8192,
     temperature: 0.2,
   },
   review: {
-    model: 'gpt-5.3-codex',
+    model: 'gpt-5.4',
     maxTokens: 4096,
     temperature: 0.2,
   },
   verification: {
-    model: 'gpt-5-mini',
+    model: 'gpt-5.4-mini',
     maxTokens: 2048,
     temperature: 0.0,
   },
   summary: {
-    model: 'gpt-5-mini',
+    model: 'gpt-5.4-mini',
     maxTokens: 2048,
     temperature: 0.3,
   },
   /** CHAT vs CODE routing in auto mode (keep tiny). */
   intent: {
-    model: 'gpt-5-mini',
+    model: 'gpt-5.4-mini',
     maxTokens: 16,
     temperature: 0,
   },
   /** Direct Q&A replies (no tools). */
   chat: {
-    model: 'gpt-5-mini',
+    model: 'gpt-5.4-mini',
     maxTokens: 2048,
     temperature: 0.2,
   },
@@ -95,9 +95,9 @@ const COST_RATES: Record<string, { input: number; output: number }> = {
   'claude-haiku-4-5': { input: 1 / 1_000_000, output: 5 / 1_000_000 },
   'claude-3-5-haiku-20241022': { input: 1 / 1_000_000, output: 5 / 1_000_000 },
   /** OpenAI (platform pricing, per 1M tokens). */
-  'gpt-5.1-codex': { input: 1.25 / 1_000_000, output: 10 / 1_000_000 },
-  'gpt-5.3-codex': { input: 1.25 / 1_000_000, output: 10 / 1_000_000 },
-  'gpt-5-mini': { input: 0.25 / 1_000_000, output: 2 / 1_000_000 },
+  'gpt-5.4': { input: 2.5 / 1_000_000, output: 10 / 1_000_000 },
+  'gpt-5.4-mini': { input: 0.25 / 1_000_000, output: 2 / 1_000_000 },
+  'gpt-5.4-nano': { input: 0.1 / 1_000_000, output: 0.4 / 1_000_000 },
 };
 
 /** Provider family presets (per-stage model ids). */
@@ -117,13 +117,13 @@ const FAMILY_DEFAULT_MODELS: Record<
     chat: 'claude-sonnet-4-5-20250929',
   },
   openai: {
-    planning: 'gpt-5.3-codex',
-    coding: 'gpt-5-mini',
-    review: 'gpt-5.3-codex',
-    verification: 'gpt-5-mini',
-    summary: 'gpt-5-mini',
-    intent: 'gpt-5-mini',
-    chat: 'gpt-5-mini',
+    planning: 'gpt-5.4',
+    coding: 'gpt-5.4-mini',
+    review: 'gpt-5.4',
+    verification: 'gpt-5.4-mini',
+    summary: 'gpt-5.4-mini',
+    intent: 'gpt-5.4-mini',
+    chat: 'gpt-5.4-mini',
   },
 };
 
@@ -192,9 +192,9 @@ export function getRateLimitFallbackModel(
 ): string {
   const model = currentModel.trim().toLowerCase();
   if (isOpenAiModelId(currentModel)) {
-    if (model === 'gpt-5-mini') return 'gpt-5.1-codex';
-    if (model === 'gpt-5.1-codex') return 'gpt-5.3-codex';
-    return 'gpt-5.1-codex';
+    if (model === 'gpt-5.4-mini') return 'gpt-5.4';
+    if (model === 'gpt-5.4-nano') return 'gpt-5.4-mini';
+    return 'gpt-5.4-mini';
   }
   if (model.includes('haiku')) return 'claude-sonnet-4-5-20250929';
   if (model.includes('sonnet')) return 'claude-opus-4-6';
@@ -203,24 +203,24 @@ export function getRateLimitFallbackModel(
 
 /** Model presets available in the dashboard model selector. */
 export const MODEL_PRESETS = [
-  { id: 'default', label: 'Default (GPT-5 Mini)', model: null },
+  { id: 'default', label: 'Default (GPT-5.4 Mini)', model: null },
   {
-    id: 'gpt-5.1-codex',
-    label: 'GPT-5.1 Codex (OpenAI)',
-    model: 'gpt-5.1-codex',
+    id: 'gpt-5.4',
+    label: 'GPT-5.4 (OpenAI)',
+    model: 'gpt-5.4',
   },
   {
-    id: 'gpt-5-mini',
-    label: 'GPT-5 Mini (OpenAI)',
-    model: 'gpt-5-mini',
+    id: 'gpt-5.4-mini',
+    label: 'GPT-5.4 Mini (OpenAI)',
+    model: 'gpt-5.4-mini',
   },
 ] as const;
 
 /** All model ids selectable in Settings (per-stage overrides). */
 export const MODEL_CATALOG: { id: string; label: string }[] = [
-  { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
-  { id: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' },
-  { id: 'gpt-5-mini', label: 'GPT-5 Mini' },
+  { id: 'gpt-5.4', label: 'GPT-5.4' },
+  { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+  { id: 'gpt-5.4-nano', label: 'GPT-5.4 Nano' },
 ];
 
 /**

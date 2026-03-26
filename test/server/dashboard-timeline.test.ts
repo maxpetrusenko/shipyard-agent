@@ -22,4 +22,10 @@ describe('dashboard timeline script', () => {
     const script = getTimelineScript();
     expect(script).not.toContain('disabled>i</button>');
   });
+
+  it('labels the chat trace as a reconstructed local timeline', () => {
+    const script = getTimelineScript();
+    expect(script).toContain('Local reconstructed timeline');
+    expect(script).toContain('External LangSmith trace');
+  });
 });

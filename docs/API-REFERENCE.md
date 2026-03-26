@@ -5,7 +5,7 @@ Base path: `/api`
 Auth modes:
 - Global API key: `Authorization: Bearer $SHIPYARD_API_KEY` (when configured)
 - Invoke routes: `X-Shipyard-Invoke-Token` or bearer token (when `SHIPYARD_INVOKE_TOKEN` is set)
-- Webhook signature: `X-Hub-Signature-256` (`sha256=...`) when `GITHUB_WEBHOOK_SECRET` is set
+- Webhook signature: `X-Hub-Signature-256` (`sha256=...`) when `SHIPYARD_GITHUB_WEBHOOK_SECRET` is set (legacy alias: `GITHUB_WEBHOOK_SECRET`)
 
 ## Core Run APIs
 

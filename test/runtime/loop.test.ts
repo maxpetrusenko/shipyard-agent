@@ -14,6 +14,19 @@ let liveFeedListener:
   | null = null;
 let liveToolDetail: string | null = null;
 let streamDelayMs = 0;
+let streamScenario: 'done' | 'recursion_error' | 'soft_budget_loop' | 'review_verify_loop' = 'done';
+
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 2500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error('waitFor timeout');
+}
 
 // ---------------------------------------------------------------------------
 // Mock the graph builder so processNext doesn't call Anthropic
@@ -36,6 +49,14 @@ vi.mock('../../src/graph/builder.js', () => ({
       };
       return {
         async *[Symbol.asyncIterator]() {
+          if (streamScenario === 'recursion_error') {
+            const err = new Error(
+              'Recursion limit of 25 reached without hitting a stop condition.',
+            ) as Error & { name: string };
+            err.name = 'GraphRecursionError';
+            throw err;
+          }
+
           if (liveToolDetail) {
             liveFeedListener?.({
               type: 'tool',
@@ -45,6 +66,48 @@ vi.mock('../../src/graph/builder.js', () => ({
               timestamp: Date.now(),
             });
           }
+
+          if (streamScenario === 'soft_budget_loop') {
+            const phases = ['executing', 'verifying', 'reviewing', 'planning'] as const;
+            for (let i = 0; i < 12; i += 1) {
+              yield {
+                execute: {
+                  phase: phases[i % phases.length],
+                  currentStepIndex: i,
+                  steps: [{ index: 0, description: 'loop', files: [], status: 'in_progress' }],
+                  fileEdits: [],
+                  toolCallHistory: [],
+                },
+              };
+            }
+          }
+
+          if (streamScenario === 'review_verify_loop') {
+            for (let i = 0; i < 5; i += 1) {
+              yield {
+                verify: {
+                  phase: 'reviewing',
+                  currentStepIndex: 0,
+                  steps: [{ index: 0, description: 'loop', files: [], status: 'done' }],
+                  fileEdits: [],
+                  toolCallHistory: [],
+                  verificationResult: { passed: true, error_count: 0 },
+                },
+              };
+              yield {
+                review: {
+                  phase: 'planning',
+                  currentStepIndex: 0,
+                  reviewDecision: 'retry',
+                  reviewFeedback: 'retry',
+                  fileEdits: [],
+                  toolCallHistory: [],
+                  verificationResult: { passed: true, error_count: 0 },
+                },
+              };
+            }
+          }
+
           if (streamDelayMs > 0) {
             await new Promise((r) => setTimeout(r, streamDelayMs));
           }
@@ -91,6 +154,9 @@ describe('InstructionLoop', () => {
     liveFeedListener = null;
     liveToolDetail = null;
     streamDelayMs = 0;
+    streamScenario = 'done';
+    delete process.env['SHIPYARD_GRAPH_SOFT_BUDGET'];
+    delete process.env['SHIPYARD_GRAPH_RECURSION_LIMIT'];
   });
 
   // -------------------------------------------------------------------------
@@ -129,6 +195,72 @@ describe('InstructionLoop', () => {
       const run = loop.getRun('resume-run');
       expect(run?.threadKind).toBe('agent');
       expect(run?.messages.some((m) => m.content === 'implement auth')).toBe(true);
+    });
+
+    it('re-queues plan threads as same-run plan follow-ups', async () => {
+      const loopHack = loop as unknown as {
+        runs: Map<string, Record<string, unknown>>;
+      };
+      loopHack.runs.set('plan-run', {
+        runId: 'plan-run',
+        phase: 'awaiting_confirmation',
+        threadKind: 'plan',
+        runMode: 'code',
+        steps: [{ index: 0, description: 'draft', files: [], status: 'pending' }],
+        fileEdits: [],
+        toolCallHistory: [],
+        tokenUsage: null,
+        traceUrl: null,
+        messages: [
+          { role: 'user', content: 'draft rollout plan' },
+          { role: 'assistant', content: 'here is the plan' },
+        ],
+        error: null,
+        verificationResult: null,
+        reviewFeedback: null,
+        durationMs: 21,
+      });
+
+      const queued = loop.followUpThread('plan-run', 'revise step 2');
+      expect(queued).toBe(true);
+
+      await new Promise((r) => setTimeout(r, 200));
+      const run = loop.getRun('plan-run');
+      expect(run?.runId).toBe('plan-run');
+      expect(run?.phase).toBe('done');
+      expect(run?.threadKind).toBe('plan');
+    });
+
+    it('upgrades ask threads to agent follow-ups on the same run id', async () => {
+      const id = loop.submit('hi');
+      expect(loop.getRun(id)?.threadKind).toBe('ask');
+
+      const queued = loop.followUpThread(id, 'refactor small file', {
+        threadKindHint: 'agent',
+      });
+      expect(queued).toBe(true);
+
+      await waitFor(() => loop.getRun(id)?.phase === 'done');
+      const run = loop.getRun(id);
+      expect(run?.runId).toBe(id);
+      expect(run?.threadKind).toBe('agent');
+      expect(run?.runMode).toBe('code');
+    });
+
+    it('upgrades ask threads to plan follow-ups on the same run id', async () => {
+      const id = loop.submit('hi');
+      expect(loop.getRun(id)?.threadKind).toBe('ask');
+
+      const queued = loop.followUpThread(id, 'draft a migration plan', {
+        threadKindHint: 'plan',
+      });
+      expect(queued).toBe(true);
+
+      await waitFor(() => loop.getRun(id)?.phase === 'done');
+      const run = loop.getRun(id);
+      expect(run?.runId).toBe(id);
+      expect(run?.threadKind).toBe('plan');
+      expect(run?.runMode).toBe('code');
     });
   });
 
@@ -206,8 +338,7 @@ describe('InstructionLoop', () => {
     it('returns run result after processing', async () => {
       const id = loop.submit('test instruction');
 
-      // Wait for async processNext to complete
-      await new Promise((r) => setTimeout(r, 200));
+      await waitFor(() => loop.getRun(id)?.phase === 'done');
 
       const run = loop.getRun(id);
       expect(run).toBeDefined();
@@ -217,13 +348,25 @@ describe('InstructionLoop', () => {
 
     it('records debug metadata for graph runs', async () => {
       const id = loop.submit('test instruction');
-      await new Promise((r) => setTimeout(r, 200));
+      await waitFor(() => loop.getRun(id)?.phase === 'done');
 
       const run = loop.getRun(id);
       expect(run?.executionPath).toBe('graph');
       expect(run?.queuedAt).toBeTruthy();
       expect(run?.startedAt).toBeTruthy();
       expect(run?.resolvedModels?.coding).toBeTruthy();
+    });
+
+    it('preserves requested ui mode separately from resolved ask thread shortcuts', () => {
+      const id = loop.submit('2=2?', undefined, false, 'auto', {
+        requestedUiMode: 'agent',
+      } as any);
+
+      const run = loop.getRun(id) as any;
+      expect(run?.requestedUiMode).toBe('agent');
+      expect(run?.runMode).toBe('auto');
+      expect(run?.threadKind).toBe('ask');
+      expect(run?.executionPath).toBe('local-shortcut');
     });
 
     it('seeds the submitted prompt into in-progress code runs', () => {
@@ -260,7 +403,7 @@ describe('InstructionLoop', () => {
       liveToolDetail = 'ls src';
 
       const id = loop.submit('refactor small file', undefined, false, 'code');
-      await new Promise((r) => setTimeout(r, 200));
+      await waitFor(() => loop.getRun(id)?.phase === 'done');
 
       const run = loop.getRun(id);
       expect(run?.toolCallHistory).toHaveLength(1);
@@ -274,14 +417,15 @@ describe('InstructionLoop', () => {
 
       const id = loop.submit('refactor small file', undefined, false, 'code');
       await new Promise((r) => setTimeout(r, 20));
-      expect(loop.cancel()).toBe(true);
-      await new Promise((r) => setTimeout(r, 200));
+      expect(loop.cancel('api')).toBe(true);
+      await waitFor(() => loop.getRun(id)?.phase === 'error');
 
       const run = loop.getRun(id);
       expect(run?.phase).toBe('error');
       expect(run?.error).toBe('Run cancelled by user');
       expect(run?.completionStatus).toBe('cancelled_with_completed_actions');
       expect(run?.cancellation?.tool_calls).toBe(1);
+      expect(run?.cancellation?.source).toBe('api');
       expect(run?.toolCallHistory).toHaveLength(1);
       expect(run?.toolCallHistory[0]?.tool_name).toBe('bash');
       expect(run?.toolCallHistory[0]?.tool_input).toEqual({ command: 'ls src' });
@@ -304,7 +448,47 @@ describe('InstructionLoop', () => {
       const run = loop.getRun(id);
       expect(run?.executionPath).toBe('local-shortcut');
       expect(run?.modelFamily).toBe('openai');
-      expect(run?.resolvedModels?.chat).toBe('gpt-5-mini');
+      expect(run?.resolvedModels?.chat).toBe('gpt-5.4-mini');
+    });
+
+    it('captures graph recursion limit failures with explicit loop diagnostics', async () => {
+      streamScenario = 'recursion_error';
+      const id = loop.submit('implement auth', undefined, false, 'code');
+      await waitFor(() => loop.getRun(id)?.phase === 'error');
+
+      const run = loop.getRun(id) as any;
+      expect(run?.phase).toBe('error');
+      expect(run?.error).toContain('Graph recursion limit');
+      expect(run?.loopDiagnostics?.stopReason).toBe('hard_recursion_limit');
+      expect(run?.loopDiagnostics?.graphStepCount).toBeTypeOf('number');
+    });
+
+    it('stops on graph soft budget before the hard recursion limit', async () => {
+      streamScenario = 'soft_budget_loop';
+      process.env['SHIPYARD_GRAPH_SOFT_BUDGET'] = '12';
+      process.env['SHIPYARD_GRAPH_RECURSION_LIMIT'] = '40';
+
+      const id = loop.submit('implement auth', undefined, false, 'code');
+      await waitFor(() => loop.getRun(id)?.phase === 'error');
+
+      const run = loop.getRun(id) as any;
+      expect(run?.error).toContain('soft graph budget');
+      expect(run?.loopDiagnostics?.stopReason).toBe('soft_budget_exceeded');
+      expect(run?.loopDiagnostics?.graphStepCount).toBeGreaterThanOrEqual(12);
+    });
+
+    it('stops repeated verify/review retries when no state progress occurs', async () => {
+      streamScenario = 'review_verify_loop';
+      process.env['SHIPYARD_GRAPH_SOFT_BUDGET'] = '60';
+      process.env['SHIPYARD_GRAPH_RECURSION_LIMIT'] = '80';
+
+      const id = loop.submit('implement auth', undefined, false, 'code');
+      await waitFor(() => loop.getRun(id)?.phase === 'error');
+
+      const run = loop.getRun(id) as any;
+      expect(run?.error).toContain('no progress');
+      expect(run?.loopDiagnostics?.stopReason).toBe('no_progress');
+      expect(run?.loopDiagnostics?.noProgressReason).toContain('review/verify');
     });
 
     it('lets ask follow-ups adopt fresh model settings', async () => {
@@ -319,12 +503,12 @@ describe('InstructionLoop', () => {
       ) => boolean)(id, 'what is recursion?', { modelFamily: 'openai' });
 
       expect(ok).toBe(true);
-      await new Promise((r) => setTimeout(r, 200));
+      await waitFor(() => loop.getRun(id)?.phase === 'done');
 
       const run = loop.getRun(id);
       expect(run?.phase).toBe('done');
       expect(run?.modelFamily).toBe('openai');
-      expect(run?.resolvedModels?.chat).toBe('gpt-5-mini');
+      expect(run?.resolvedModels?.chat).toBe('gpt-5.4-mini');
     });
   });
 
@@ -338,8 +522,8 @@ describe('InstructionLoop', () => {
     });
 
     it('includes completed runs', async () => {
-      loop.submit('first');
-      await new Promise((r) => setTimeout(r, 200));
+      const id = loop.submit('first');
+      await waitFor(() => loop.getRun(id)?.phase === 'done');
 
       const runs = loop.getAllRuns();
       expect(runs.length).toBeGreaterThanOrEqual(1);
@@ -369,7 +553,7 @@ describe('InstructionLoop', () => {
       });
 
       loop.submit('test');
-      await new Promise((r) => setTimeout(r, 300));
+      await waitFor(() => events.length >= 1);
 
       expect(events.length).toBeGreaterThanOrEqual(1);
     });
@@ -427,7 +611,8 @@ describe('InstructionLoop', () => {
       const id1 = loop.submit('first');
       const id2 = loop.submit('second');
 
-      await new Promise((r) => setTimeout(r, 800));
+      await waitFor(() => loop.getRun(id1)?.phase === 'done');
+      await waitFor(() => loop.getRun(id2)?.phase === 'done');
 
       // Both should complete
       const run1 = loop.getRun(id1);

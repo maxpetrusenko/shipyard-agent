@@ -2,11 +2,16 @@
  * Benchmarks comparison page served at GET /benchmarks.
  *
  * Self-contained HTML with Chart.js (CDN) for radar + line charts.
- * Dark theme matches the main dashboard.
+ * Light theme aligned with dashboard surfaces.
  */
 
 import type { Request, Response } from 'express';
-import { NAV_STYLES, topNav } from './html-shared.js';
+import {
+  NAV_STYLES,
+  SHIPYARD_BASE_STYLES,
+  SHIPYARD_THEME_VARS,
+  topNav,
+} from './html-shared.js';
 
 export function benchmarksHandler() {
   return (_req: Request, res: Response) => {
@@ -29,55 +34,49 @@ const PAGE_HTML = `<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
-:root{--bg:#060a12;--bg2:#0a0e17;--card:#111827;--card2:#1a2035;--border:#2a3250;--border-bright:#3a4570;--text:#e2e8f0;--text-bright:#f1f5f9;--dim:#6b7a90;--muted:#4a5568;--accent:#818cf8;--accent-dim:rgba(129,140,248,.25);--accent-glow:rgba(129,140,248,.12);--green:#10b981;--green-dim:rgba(16,185,129,.2);--red:#ef4444;--red-dim:rgba(239,68,68,.2);--yellow:#f59e0b;--yellow-dim:rgba(245,158,11,.2);--cyan:#22d3ee;--purple:#a78bfa;--pink:#f472b6;--orange:#fb923c;--mono:'JetBrains Mono',monospace;--sans:'Space Grotesk',sans-serif;--radius:8px;--radius-lg:14px;--shadow:0 4px 20px rgba(0,0,0,.4);--shadow-glow:0 0 40px var(--accent-glow);--transition:.15s ease}
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:13px;min-height:100vh;-webkit-font-smoothing:antialiased}
-::-webkit-scrollbar{width:5px;height:5px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:var(--dim)}
-a{color:var(--accent);text-decoration:none;transition:color var(--transition)}
-a:hover{color:var(--text-bright);text-decoration:none}
+${SHIPYARD_THEME_VARS}
+${SHIPYARD_BASE_STYLES}
+body{font-size:14px;min-height:100vh}
 
 .wrap{max-width:1200px;margin:0 auto;padding:28px 20px}
 .hdr{display:flex;align-items:center;gap:14px;margin-bottom:24px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--border);position:relative}
 .hdr::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent-dim),transparent)}
 h1{font-family:var(--sans);font-size:24px;font-weight:700;letter-spacing:-.03em}
-h1 span{color:var(--accent);text-shadow:0 0 24px var(--accent-dim)}
+h1 span{color:var(--accent)}
 
 .top-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
 @media(max-width:820px){.top-row{grid-template-columns:1fr}}
 
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px 22px;box-shadow:var(--shadow)}
-.card-title{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--dim);margin-bottom:14px;font-family:var(--mono)}
+.card-title{font-size:11px;text-transform:uppercase;letter-spacing:1.6px;color:var(--dim);margin-bottom:14px;font-family:var(--mono)}
 
 .chip-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-.chip{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:6px 14px;font-size:11px;color:var(--dim);box-shadow:var(--shadow)}
+.chip{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:7px 14px;font-size:12px;color:var(--dim);box-shadow:var(--shadow)}
 .chip b{color:var(--text-bright);font-weight:600}
 .chip.ok b{color:var(--green)}
 .chip.warn b{color:var(--yellow)}
 .chip.bad b{color:var(--red)}
 
 .filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
-.filter-btn{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:6px 14px;font-size:11px;color:var(--dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:7px;transition:all var(--transition);font-family:var(--mono)}
+.filter-btn{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:7px 14px;font-size:12px;color:var(--dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:7px;transition:all var(--transition);font-family:var(--mono)}
 .filter-btn:hover{border-color:var(--border-bright);color:var(--text)}
 .filter-btn.active{border-color:var(--accent);color:var(--text-bright);background:var(--accent-glow);box-shadow:0 0 12px var(--accent-glow)}
 .filter-btn .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;box-shadow:0 0 6px currentColor}
 
-.chart-wrap{position:relative;width:100%;max-height:400px}
+.chart-wrap{position:relative;width:100%;max-height:420px}
 .chart-wrap canvas{width:100%!important}
 
 .snapshot-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px}
-.snapshot-form input{background:var(--bg2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:7px 12px;font-size:11px;font-family:var(--mono);transition:border-color var(--transition)}
+.snapshot-form input{background:var(--bg2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:8px 12px;font-size:12px;font-family:var(--mono);transition:border-color var(--transition)}
 .snapshot-form input:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 2px var(--accent-glow)}
-.snapshot-form button{background:var(--accent);color:#060a12;border:none;border-radius:var(--radius);padding:7px 16px;font-size:11px;font-weight:700;cursor:pointer;font-family:var(--mono);transition:all var(--transition);box-shadow:0 2px 12px var(--accent-dim)}
+.snapshot-form button{background:var(--accent);color:var(--text-inverse);border:none;border-radius:var(--radius);padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:var(--mono);transition:all var(--transition);box-shadow:var(--btn-accent-shadow)}
 .snapshot-form button:hover{opacity:.88;transform:translateY(-1px)}
 .snapshot-form button:active{transform:translateY(0)}
 .snapshot-form button:disabled{opacity:.4;cursor:not-allowed;transform:none}
-.snapshot-status{font-size:11px;color:var(--dim);margin-top:8px}
+.snapshot-status{font-size:12px;color:var(--dim);margin-top:8px}
 
-.empty-msg{text-align:center;padding:48px 24px;color:var(--dim);font-size:12px;line-height:1.9}
-.empty-msg code{background:var(--card2);padding:2px 8px;border-radius:4px;font-size:11px}
+.empty-msg{text-align:center;padding:48px 24px;color:var(--dim);font-size:13px;line-height:1.9}
+.empty-msg code{background:var(--card2);padding:2px 8px;border-radius:4px;font-size:12px}
 ${NAV_STYLES}
 </style>
 </head>
@@ -124,16 +123,37 @@ ${NAV_STYLES}
 </div>
 
 <script>
+function cssVar(name, fallback) {
+  var value = getComputedStyle(document.documentElement).getPropertyValue(name);
+  var trimmed = value ? value.trim() : '';
+  return trimmed || fallback || '';
+}
+
+function hexToRgba(hex, alpha) {
+  if (!hex || hex.charAt(0) !== '#') return hex;
+  var raw = hex.slice(1);
+  if (raw.length === 3) raw = raw.split('').map(function(ch) { return ch + ch; }).join('');
+  if (raw.length !== 6) return hex;
+  var r = parseInt(raw.slice(0, 2), 16);
+  var g = parseInt(raw.slice(2, 4), 16);
+  var b = parseInt(raw.slice(4, 6), 16);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+
 var CRITERIA = [
-  { key: 'typeSafety', label: 'Type Safety', color: '#818cf8' },
-  { key: 'testHealth', label: 'Test Health', color: '#10b981' },
-  { key: 'security', label: 'Security', color: '#ef4444' },
-  { key: 'runSpeed', label: 'Run Speed', color: '#f59e0b' },
-  { key: 'buildSpeed', label: 'Build Speed', color: '#fb923c' },
-  { key: 'tokenEfficiency', label: 'Token Efficiency', color: '#22d3ee' },
-  { key: 'editQuality', label: 'Edit Quality', color: '#a78bfa' },
-  { key: 'codeVolume', label: 'Code Volume', color: '#f472b6' }
+  { key: 'typeSafety', label: 'Type Safety', colorVar: '--bench-type-safety' },
+  { key: 'testHealth', label: 'Test Health', colorVar: '--bench-test-health' },
+  { key: 'security', label: 'Security', colorVar: '--bench-security' },
+  { key: 'runSpeed', label: 'Run Speed', colorVar: '--bench-run-speed' },
+  { key: 'buildSpeed', label: 'Build Speed', colorVar: '--bench-build-speed' },
+  { key: 'tokenEfficiency', label: 'Token Efficiency', colorVar: '--bench-token-efficiency' },
+  { key: 'editQuality', label: 'Edit Quality', colorVar: '--bench-edit-quality' },
+  { key: 'codeVolume', label: 'Code Volume', colorVar: '--bench-code-volume' }
 ];
+
+function criterionColor(criterion) {
+  return cssVar(criterion.colorVar, cssVar('--accent'));
+}
 
 var activeCriteria = {};
 CRITERIA.forEach(function(c) { activeCriteria[c.key] = true; });
@@ -146,8 +166,9 @@ function initFilters() {
   var container = document.getElementById('filters');
   var html = '';
   CRITERIA.forEach(function(c) {
+    var color = criterionColor(c);
     html += '<div class="filter-btn active" data-key="' + c.key + '" onclick="toggleCriterion(this)" tabindex="0" role="checkbox" aria-checked="true" aria-label="Toggle ' + c.label + '">';
-    html += '<span class="dot" style="background:' + c.color + '"></span>';
+    html += '<span class="dot" style="background:' + color + '"></span>';
     html += c.label;
     html += '</div>';
   });
@@ -192,40 +213,43 @@ function buildRadarDatasets(data, activeKeys) {
   var datasets = [];
 
   if (data.baseline) {
+    var baselineColor = cssVar('--red');
     datasets.push({
       label: data.baseline.label,
       data: activeKeys.map(function(k) { return getScore(data.baseline.scores, k); }),
-      borderColor: '#ef4444',
-      backgroundColor: 'rgba(239,68,68,0.08)',
-      borderWidth: 2,
-      pointRadius: 4,
-      pointBackgroundColor: '#ef4444'
+      borderColor: baselineColor,
+      backgroundColor: hexToRgba(baselineColor, 0.08),
+      borderWidth: 2.4,
+      pointRadius: 4.5,
+      pointBackgroundColor: baselineColor
     });
   }
 
   if (data.snapshots.length > 0) {
     var latest = data.snapshots[data.snapshots.length - 1];
+    var snapshotColor = cssVar('--green');
     datasets.push({
       label: latest.label + ' (snapshot)',
       data: activeKeys.map(function(k) { return getScore(latest.scores, k); }),
-      borderColor: '#10b981',
-      backgroundColor: 'rgba(16,185,129,0.12)',
-      borderWidth: 2,
-      pointRadius: 4,
-      pointBackgroundColor: '#10b981'
+      borderColor: snapshotColor,
+      backgroundColor: hexToRgba(snapshotColor, 0.12),
+      borderWidth: 2.4,
+      pointRadius: 4.5,
+      pointBackgroundColor: snapshotColor
     });
   }
 
   if (data.runs.length > 0) {
     var lastRun = data.runs[data.runs.length - 1];
+    var runColor = cssVar('--bench-type-safety');
     datasets.push({
       label: 'Latest Run',
       data: activeKeys.map(function(k) { return getScore(lastRun.scores, k); }),
-      borderColor: '#818cf8',
-      backgroundColor: 'rgba(129,140,248,0.10)',
-      borderWidth: 2,
-      pointRadius: 4,
-      pointBackgroundColor: '#818cf8'
+      borderColor: runColor,
+      backgroundColor: hexToRgba(runColor, 0.1),
+      borderWidth: 2.4,
+      pointRadius: 4.5,
+      pointBackgroundColor: runColor
     });
   }
 
@@ -250,16 +274,17 @@ function buildLineDatasets(data, activeKeys) {
       if (CRITERIA[i].key === key) { crit = CRITERIA[i]; break; }
     }
     if (!crit) return;
+    var color = criterionColor(crit);
 
     datasets.push({
       label: crit.label,
       data: data.runs.map(function(r) { return getScore(r.scores, key); }),
-      borderColor: crit.color,
-      backgroundColor: crit.color + '18',
-      borderWidth: 2,
-      pointRadius: 3,
-      pointBackgroundColor: crit.color,
-      tension: 0.3,
+      borderColor: color,
+      backgroundColor: hexToRgba(color, 0.1),
+      borderWidth: 2.4,
+      pointRadius: 4,
+      pointBackgroundColor: color,
+      tension: 0.34,
       fill: false
     });
   });
@@ -318,6 +343,11 @@ function initCharts(data) {
   benchData = data;
   var activeKeys = getActiveKeys();
   var activeLabels = getActiveLabels();
+  var textColor = cssVar('--text');
+  var dimColor = cssVar('--dim');
+  var borderColor = cssVar('--border');
+  var sans = cssVar('--sans');
+  var mono = cssVar('--mono');
 
   var radarCtx = document.getElementById('radarChart').getContext('2d');
   radarChart = new Chart(radarCtx, {
@@ -330,16 +360,16 @@ function initCharts(data) {
       responsive: true,
       maintainAspectRatio: true,
       plugins: {
-        legend: { position: 'bottom', labels: { color: '#e2e8f0', font: { family: "'JetBrains Mono', monospace", size: 11 }, padding: 16 } }
+        legend: { position: 'bottom', labels: { color: textColor, font: { family: sans, size: 12, weight: '600' }, padding: 16 } }
       },
       scales: {
         r: {
           beginAtZero: true,
           max: 100,
-          ticks: { stepSize: 20, color: '#6b7a90', backdropColor: 'transparent', font: { size: 9 } },
-          grid: { color: '#2a3250' },
-          angleLines: { color: '#2a3250' },
-          pointLabels: { color: '#e2e8f0', font: { family: "'JetBrains Mono', monospace", size: 10 } }
+          ticks: { stepSize: 20, color: dimColor, backdropColor: 'transparent', font: { size: 10, family: mono } },
+          grid: { color: borderColor },
+          angleLines: { color: borderColor },
+          pointLabels: { color: textColor, font: { family: sans, size: 12, weight: '600' } }
         }
       }
     }
@@ -357,11 +387,11 @@ function initCharts(data) {
       responsive: true,
       maintainAspectRatio: true,
       plugins: {
-        legend: { position: 'bottom', labels: { color: '#e2e8f0', font: { family: "'JetBrains Mono', monospace", size: 11 }, padding: 16 } }
+        legend: { position: 'bottom', labels: { color: textColor, font: { family: sans, size: 12, weight: '600' }, padding: 16 } }
       },
       scales: {
-        x: { ticks: { color: '#6b7a90', font: { size: 9 }, maxRotation: 45 }, grid: { color: '#2a3250' } },
-        y: { min: 0, max: 100, ticks: { stepSize: 20, color: '#6b7a90', font: { size: 9 } }, grid: { color: '#2a3250' } }
+        x: { ticks: { color: dimColor, font: { size: 10, family: mono }, maxRotation: 45 }, grid: { color: borderColor } },
+        y: { min: 0, max: 100, ticks: { stepSize: 20, color: dimColor, font: { size: 10, family: mono } }, grid: { color: borderColor } }
       },
       interaction: { mode: 'index', intersect: false }
     }

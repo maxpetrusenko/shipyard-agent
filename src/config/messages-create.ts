@@ -6,6 +6,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { getRunAbortSignal } from '../runtime/run-signal.js';
 import { emitTextChunk } from '../tools/hooks.js';
+import { OPS } from '../server/ops.js';
 
 // ---------------------------------------------------------------------------
 // Cache metrics
@@ -56,6 +57,8 @@ export async function messagesCreate(
   // Log cache utilization when prompt caching is active
   const cm = extractCacheMetrics(response);
   if (cm.cacheRead > 0 || cm.cacheCreation > 0) {
+    OPS.increment('shipyard.llm.cache_read_tokens', cm.cacheRead);
+    OPS.increment('shipyard.llm.cache_write_tokens', cm.cacheCreation);
     const total = response.usage.input_tokens + cm.cacheRead;
     const pct = total > 0 ? Math.round((cm.cacheRead / total) * 100) : 0;
     console.log(

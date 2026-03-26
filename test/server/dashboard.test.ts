@@ -53,7 +53,10 @@ describe('GET /dashboard', () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).not.toContain('if (hasExternalTrace) {');
-    expect(html).toContain('dbgEsc(snapshot.openTraceUrl)');
+    expect(html).toContain('Open external trace');
+    expect(html).toContain('Open local debug JSON');
+    expect(html).toContain('External LangSmith trace');
+    expect(html).toContain('Local reconstructed timeline');
   });
 
   it('does not render resolved model details in the debug modal', async () => {
@@ -62,6 +65,15 @@ describe('GET /dashboard', () => {
     const html = await res.text();
     expect(html).not.toContain('Resolved models');
     expect(html).not.toContain('dbgModelsHtml(snapshot.resolvedModels)');
+  });
+
+  it('labels selected ui mode separately from resolved thread kind in debug modal', async () => {
+    const res = await fetch(`${baseUrl}/dashboard`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("dbgRow('Selected UI mode', dbgEsc(snapshot.requestedUiMode || '—'))");
+    expect(html).toContain("dbgRow('Resolved thread kind', dbgEsc(snapshot.threadKind || '—'))");
+    expect(html).toContain("dbgRow('Submitted run mode', dbgEsc(snapshot.runMode || '—'))");
   });
 
   it('persists the selected mode across reloads', async () => {
@@ -81,21 +93,20 @@ describe('GET /dashboard', () => {
     expect(html).not.toContain("btn.dataset.action = 'stop'");
   });
 
-  it('uses the selected mode to decide whether a thread is a follow-up target', async () => {
+  it('treats any selected thread as a follow-up target', async () => {
     const res = await fetch(`${baseUrl}/dashboard`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('return uiEl.value === r.threadKind;');
+    expect(html).toContain('return !!(r && r.threadKind);');
   });
 
-  it('uses only the composer model in follow-up requests', async () => {
+  it('sends mode and model in follow-up requests', async () => {
     const res = await fetch(`${baseUrl}/dashboard`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("var followupBody = { instruction: inst }");
+    expect(html).toContain('if (uiEl && uiEl.value) followupBody.uiMode = uiEl.value;');
     expect(html).toContain("followupBody.model = followupModelEl.value");
-    expect(html).not.toContain('shipyard_model_prefs');
-    expect(html).not.toContain('followupBody.models');
   });
 
   it('preserves richer run history when dashboard merges updates', async () => {

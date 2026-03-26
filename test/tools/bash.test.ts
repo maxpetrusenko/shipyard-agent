@@ -92,6 +92,24 @@ describe('dangerous command blocking', () => {
     expect(result.message).toContain('Blocked');
   });
 
+  it('blocks broad git add -A', async () => {
+    const result = await runBash({ command: 'git add -A' });
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('Blocked');
+  });
+
+  it('blocks git stash', async () => {
+    const result = await runBash({ command: 'git stash push -m snapshot' });
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('Blocked');
+  });
+
+  it('blocks git apply heredoc usage', async () => {
+    const result = await runBash({ command: "git apply -p0 << 'PATCH'\n***\nPATCH" });
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('Blocked');
+  });
+
   it('blocks mkfs commands', async () => {
     const result = await runBash({ command: 'mkfs.ext4 /dev/sda1' });
     expect(result.success).toBe(false);

@@ -155,7 +155,7 @@ export async function runWorker(
     try {
       if (isOpenAiModelId(model)) {
         const client = getOpenAIClient();
-        const usageAcc = { input: 0, output: 0 };
+        const usageAcc = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
         const conversation: OpenAI.Chat.ChatCompletionMessageParam[] = [
           { role: 'user', content: `## Subtask (${subtaskId})\n${instruction}` },
         ];

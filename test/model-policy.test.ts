@@ -37,9 +37,9 @@ describe('getResolvedModelConfig', () => {
 
   it('applies openai family defaults when env unset', () => {
     const p = getResolvedModelConfig('planning', { modelFamily: 'openai' });
-    expect(p.model).toBe('gpt-5.3-codex');
+    expect(p.model).toBe('gpt-5.4');
     const coding = getResolvedModelConfig('coding', { modelFamily: 'openai' });
-    expect(coding.model).toBe('gpt-5-mini');
+    expect(coding.model).toBe('gpt-5.4-mini');
   });
 
   it('prefers per-stage override over family', () => {
@@ -66,9 +66,9 @@ describe('getResolvedModelConfig', () => {
 
   it('applies single run model override to chat', () => {
     const c = getResolvedModelConfig('chat', {
-      legacyCodingOverride: 'gpt-5-mini',
+      legacyCodingOverride: 'gpt-5.4-mini',
     });
-    expect(c.model).toBe('gpt-5-mini');
+    expect(c.model).toBe('gpt-5.4-mini');
   });
 
   it('applies single run model override to planning when no stage override is provided', () => {
@@ -87,7 +87,7 @@ describe('getModelConfig', () => {
 
   it('uses defaults when env unset', () => {
     const c = getModelConfig('planning');
-    expect(c.model).toBe('gpt-5.3-codex');
+    expect(c.model).toBe('gpt-5.4');
     expect(c.temperature).toBe(0.3);
   });
 
@@ -111,18 +111,18 @@ describe('isOpenAiModelId', () => {
 });
 
 describe('estimateCost', () => {
-  it('includes gpt-5.3-codex rates', () => {
-    const usd = estimateCost('gpt-5.3-codex', 1_000_000, 1_000_000);
-    expect(usd).toBeCloseTo(1.25 + 10, 5);
+  it('includes gpt-5.4 rates', () => {
+    const usd = estimateCost('gpt-5.4', 1_000_000, 1_000_000);
+    expect(usd).toBeCloseTo(2.5 + 10, 5);
   });
 
-  it('includes gpt-5.1-codex rates', () => {
-    const usd = estimateCost('gpt-5.1-codex', 1_000_000, 1_000_000);
-    expect(usd).toBeCloseTo(1.25 + 10, 5);
+  it('includes gpt-5.4-nano rates', () => {
+    const usd = estimateCost('gpt-5.4-nano', 1_000_000, 1_000_000);
+    expect(usd).toBeCloseTo(0.1 + 0.4, 5);
   });
 
-  it('includes gpt-5-mini rates', () => {
-    const usd = estimateCost('gpt-5-mini', 1_000_000, 1_000_000);
+  it('includes gpt-5.4-mini rates', () => {
+    const usd = estimateCost('gpt-5.4-mini', 1_000_000, 1_000_000);
     expect(usd).toBeCloseTo(0.25 + 2, 5);
   });
 });

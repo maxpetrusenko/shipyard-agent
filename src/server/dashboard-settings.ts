@@ -2,9 +2,11 @@
 // Same modal pattern as dashboard-debug.ts.
 // Includes all settings business logic (keys, checkpoints, GitHub, benchmarks).
 
+import { SHIPYARD_BADGE_STYLES } from './html-shared.js';
+
 export function getSettingsModalStyles(): string {
   return `
-.settings-modal{position:fixed;inset:0;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.3);backdrop-filter:blur(6px);opacity:0;pointer-events:none;transition:opacity var(--transition)}
+.settings-modal{position:fixed;inset:0;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;background:var(--overlay-backdrop);backdrop-filter:blur(6px);opacity:0;pointer-events:none;transition:opacity var(--transition)}
 .settings-modal.open{opacity:1;pointer-events:auto}
 .settings-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);width:min(560px,92vw);max-height:min(80vh,700px);overflow-y:auto;box-shadow:var(--shadow-lg);transform:translateY(12px);transition:transform var(--transition)}
 .settings-modal.open .settings-card{transform:translateY(0)}
@@ -34,11 +36,7 @@ export function getSettingsModalStyles(): string {
 .settings-status:empty{display:none}
 .settings-status-ok{background:var(--green-dim);color:var(--green)}
 .settings-status-err{background:var(--red-dim);color:var(--red)}
-.side-badge{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;border:1px solid var(--border);font-size:var(--text-xs);text-transform:uppercase;letter-spacing:.08em}
-.side-badge.ok{color:var(--green);border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.12)}
-.side-badge.warn{color:var(--yellow);border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.12)}
-.side-badge.off{color:var(--red);border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.12)}
-.side-alert{font-size:var(--text-sm);line-height:1.4;color:var(--red);background:var(--red-dim);border:1px solid rgba(220,38,38,.2);border-radius:var(--radius);padding:8px 9px}
+.side-alert{font-size:var(--text-sm);line-height:1.4;color:var(--red);background:var(--red-dim);border:1px solid var(--danger-border-soft);border-radius:var(--radius);padding:8px 9px}
 .side-checklist{font-size:var(--text-sm);color:var(--dim);line-height:1.45;padding-left:16px}
 .side-checklist li{margin:3px 0}
 .provider-row{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:var(--radius);background:var(--bg);border:1px solid var(--border);font-size:var(--text-base);font-family:var(--mono)}
@@ -48,15 +46,16 @@ export function getSettingsModalStyles(): string {
 .provider-name{font-weight:600;text-transform:uppercase;letter-spacing:.04em;min-width:64px;color:var(--text)}
 .provider-detail{color:var(--dim);flex:1}
 .provider-remediation{font-size:var(--text-sm);color:var(--red);margin-top:2px}.ack-preview{font-family:var(--mono);font-size:var(--text-sm);color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;max-height:200px;overflow-y:auto;line-height:1.45;white-space:pre-wrap;word-break:break-word;margin-top:8px}
-#ackTemplateInput{min-height:80px}`;
+#ackTemplateInput{min-height:80px}
+${SHIPYARD_BADGE_STYLES}`;
 }
 
 export function getSettingsModalHtml(): string {
   return `
-<div class="settings-modal" id="settingsModal" role="dialog" aria-modal="true" aria-label="Settings">
+<div class="settings-modal" id="settingsModal" role="dialog" aria-modal="true" aria-label="Config">
   <div class="settings-card">
     <div class="settings-hd">
-      <h2>Settings</h2>
+      <h2>Config</h2>
       <button type="button" class="settings-close" data-action="closeSettings" aria-label="Close settings">&times;</button>
     </div>
     <div class="settings-body">

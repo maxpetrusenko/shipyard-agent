@@ -19,11 +19,11 @@ START -> plan -> execute -> verify -> review
 | Node | Model | Purpose |
 |------|-------|---------|
 | `plan` | GPT-5.3 Codex (default) | Decompose instruction into steps, explore codebase |
-| `execute` | GPT-5 Mini (default) | Execute current step via tool calls (25 rounds max) |
+| `execute` | GPT-5.4 Mini (default) | Execute current step via tool calls (25 rounds max) |
 | `verify` | bash | Run lint (if configured) + `tsc --noEmit`; run tests on final step |
 | `review` | GPT-5.3 Codex (default) | Quality gate: continue / done / retry / escalate |
 | `error_recovery` | logic | Decide retry (with file rollback) vs abort |
-| `report` | GPT-5 Mini (default) | Summarize results/cost + policy-driven next actions |
+| `report` | GPT-5.4 Mini (default) | Summarize results/cost + policy-driven next actions |
 
 Tools: `read_file`, `edit_file` (4-tier surgical edit with fuzzy fallback), `write_file`, `bash`, `grep`, `glob`, `ls`, `spawn_agent`, `ask_user`, `commit_and_open_pr`, `inject_context`.
 

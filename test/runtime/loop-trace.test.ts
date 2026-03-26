@@ -34,10 +34,11 @@ vi.mock('../../src/graph/builder.js', () => ({
 vi.mock('../../src/runtime/langsmith.js', () => ({
   isTracingEnabled: () => true,
   canTrace: () => true,
-  buildTraceUrl: () => 'private-trace-url',
+  buildTraceUrl: () =>
+    'https://smith.langchain.com/o/default/projects/p/shipyard/r/fallback-run',
   resolveLangSmithRunUrl: async () => {
     await new Promise((r) => setTimeout(r, 100));
-    return 'public-trace-url';
+    return 'https://smith.langchain.com/public/shared-run/r';
   },
   getLangSmithApiKey: () => 'key',
   getTraceProject: () => 'shipyard',
@@ -72,7 +73,9 @@ describe('InstructionLoop trace finalization', () => {
 
     const run = loop.getRun(runId);
     expect(run?.phase).toBe('done');
-    expect(run?.traceUrl).toBe('private-trace-url');
+    expect(run?.traceUrl).toBe(
+      'https://smith.langchain.com/o/default/projects/p/shipyard/r/fallback-run',
+    );
   });
 
   it('upgrades failed runs to a public trace URL in the background', async () => {
@@ -84,12 +87,16 @@ describe('InstructionLoop trace finalization', () => {
 
     const initialRun = loop.getRun(runId);
     expect(initialRun?.phase).toBe('error');
-    expect(initialRun?.traceUrl).toBe('private-trace-url');
+    expect(initialRun?.traceUrl).toBe(
+      'https://smith.langchain.com/o/default/projects/p/shipyard/r/fallback-run',
+    );
 
     await new Promise((r) => setTimeout(r, 150));
 
     const updatedRun = loop.getRun(runId);
     expect(updatedRun?.phase).toBe('error');
-    expect(updatedRun?.traceUrl).toBe('public-trace-url');
+    expect(updatedRun?.traceUrl).toBe(
+      'https://smith.langchain.com/public/shared-run/r',
+    );
   });
 });

@@ -7,6 +7,11 @@ import { getRunAbortSignal } from '../runtime/run-signal.js';
 
 export { abortError };
 
+export interface OpenAiCacheMetrics {
+  cacheRead: number;
+  cacheCreation: number;
+}
+
 /**
  * Newer OpenAI Chat Completions models reject `max_tokens` and require
  * `max_completion_tokens` instead (e.g. GPT-5 family, o-series).
@@ -84,14 +89,29 @@ export async function chatCompletionCreateWithRetry(
   }
 }
 
+/**
+ * Chat Completions surfaces cached prompt reads, but not separate cache writes.
+ */
+export function extractOpenAiCacheMetrics(
+  usage: OpenAI.CompletionUsage | undefined,
+): OpenAiCacheMetrics {
+  return {
+    cacheRead: usage?.prompt_tokens_details?.cached_tokens ?? 0,
+    cacheCreation: 0,
+  };
+}
+
 /** Accumulate prompt/completion tokens from a chat completion response. */
 export function addChatCompletionUsage(
-  acc: { input: number; output: number },
+  acc: { input: number; output: number; cacheRead: number; cacheCreation: number },
   usage: OpenAI.CompletionUsage | undefined,
 ): void {
   if (!usage) return;
   acc.input += usage.prompt_tokens ?? 0;
   acc.output += usage.completion_tokens ?? 0;
+  const cache = extractOpenAiCacheMetrics(usage);
+  acc.cacheRead += cache.cacheRead;
+  acc.cacheCreation += cache.cacheCreation;
 }
 
 export function parseToolArguments(

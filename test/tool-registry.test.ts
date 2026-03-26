@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TOOL_SCHEMAS } from '../src/tools/index.js';
+import { TOOL_SCHEMAS, getExecutionToolSchemas } from '../src/tools/index.js';
 
 describe('tool registry', () => {
   const toolNames = TOOL_SCHEMAS.map((t) => t.name);
@@ -41,5 +41,15 @@ describe('tool registry', () => {
       expect(tool.input_schema.required).toBeInstanceOf(Array);
       expect((tool.input_schema.required as string[]).length).toBeGreaterThan(0);
     }
+  });
+
+  it('hides commit_and_open_pr from execution tools unless the user explicitly asks for it', () => {
+    const names = getExecutionToolSchemas('Update README.md').map((tool) => tool.name);
+    expect(names).not.toContain('commit_and_open_pr');
+  });
+
+  it('keeps commit_and_open_pr available when the user explicitly asks for a PR', () => {
+    const names = getExecutionToolSchemas('Update README.md, commit it, push it, and open a PR.').map((tool) => tool.name);
+    expect(names).toContain('commit_and_open_pr');
   });
 });

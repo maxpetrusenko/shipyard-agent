@@ -1,5 +1,11 @@
 import type { Request, Response } from 'express';
-import { NAV_STYLES, topNav } from './html-shared.js';
+import {
+  NAV_STYLES,
+  SHIPYARD_BADGE_STYLES,
+  SHIPYARD_BASE_STYLES,
+  SHIPYARD_THEME_VARS,
+  topNav,
+} from './html-shared.js';
 
 export function settingsGithubHandler() {
   return (_req: Request, res: Response) => {
@@ -17,16 +23,16 @@ const PAGE_HTML = `<!doctype html>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#060a12;--bg2:#0a0e17;--card:#111827;--card2:#1a2035;--border:#2a3250;--border-bright:#3a4570;--text:#e2e8f0;--text-bright:#f1f5f9;--dim:#6b7a90;--muted:#4a5568;--accent:#818cf8;--accent-dim:rgba(129,140,248,.25);--accent-glow:rgba(129,140,248,.12);--green:#10b981;--red:#ef4444;--yellow:#f59e0b;--mono:'JetBrains Mono',monospace;--sans:'Space Grotesk',sans-serif;--radius:8px;--radius-lg:14px;--shadow:0 4px 20px rgba(0,0,0,.4);--transition:.15s ease}
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:13px;min-height:100vh;-webkit-font-smoothing:antialiased}
+${SHIPYARD_THEME_VARS}
+${SHIPYARD_BASE_STYLES}
+body{font-size:13px;min-height:100vh}
 .wrap{max-width:1280px;margin:0 auto;padding:26px 20px}
 .hdr{display:flex;align-items:center;gap:14px;margin-bottom:18px;flex-wrap:wrap;padding-bottom:14px;border-bottom:1px solid var(--border)}
 h1{font-family:var(--sans);font-size:24px;font-weight:700;letter-spacing:-.03em}
 h1 span{color:var(--accent)}
 .layout{display:grid;grid-template-columns:220px 1fr;gap:16px}
 @media(max-width:980px){.layout{grid-template-columns:1fr}}
-.side{border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px;background:var(--card);height:fit-content}
+.side{border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px;background:var(--card);height:fit-content;box-shadow:var(--shadow)}
 .side-hd{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin:2px 0 8px}
 .side a{display:block;border:1px solid transparent;color:var(--dim);text-decoration:none;border-radius:var(--radius);padding:8px 10px;font-size:11px}
 .side a.active{border-color:var(--accent);background:var(--accent-glow);color:var(--text)}
@@ -34,10 +40,6 @@ h1 span{color:var(--accent)}
 .title{font-size:16px;font-family:var(--sans);font-weight:700;margin-bottom:4px}
 .sub{font-size:11px;color:var(--dim);margin-bottom:14px}
 .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.status-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;border:1px solid var(--border)}
-.status-badge.ok{color:var(--green);border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.12)}
-.status-badge.off{color:var(--red);border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.12)}
-.status-badge.warn{color:var(--yellow);border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.12)}
 .sec{border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--card2);margin-bottom:12px}
 .sec-hd{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px}
 .label{display:block;font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.06em}
@@ -45,12 +47,13 @@ h1 span{color:var(--accent)}
 .textarea{min-height:110px;resize:vertical}
 .btn{border:none;padding:7px 12px;border-radius:var(--radius);font-family:var(--mono);font-size:11px;cursor:pointer;font-weight:700;transition:all var(--transition)}
 .btn:hover{opacity:.9;transform:translateY(-1px)}
-.btn-p{background:var(--accent);color:#fff}
+.btn-p{background:var(--accent);color:var(--text-inverse)}
 .btn-g{background:var(--accent-glow);border:1px solid var(--border);color:var(--accent)}
-.btn-d{background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.35);color:#f87171}
+.btn-d{background:var(--red-dim);border:1px solid var(--danger-border-strong);color:var(--red)}
 .note{font-size:10px;color:var(--dim);line-height:1.4;margin-top:6px}
 .status{font-size:11px;color:var(--dim);line-height:1.4;white-space:pre-wrap}
-.alert{font-size:11px;line-height:1.4;color:#fca5a5;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:var(--radius);padding:8px 10px;margin-top:8px}
+.alert{font-size:11px;line-height:1.4;color:var(--red);background:var(--danger-bg-soft);border:1px solid var(--danger-border-soft);border-radius:var(--radius);padding:8px 10px;margin-top:8px}
+${SHIPYARD_BADGE_STYLES}
 ${NAV_STYLES}
 </style>
 </head>
