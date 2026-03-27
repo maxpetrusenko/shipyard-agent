@@ -26,35 +26,27 @@ import {
   evaluateCandidateEditPath,
   isDiscoveryToolName,
 } from '../guards.js';
+import {
+  createExecutionIssue,
+  decideNoEditProgressAction,
+  deriveBlockingReasonFromToolResult,
+  formatExecuteWatchdogError,
+  shouldFastTrackNoEditStall,
+  type ExecuteProgressDiagnostics,
+} from './execute-progress.js';
 import type {
   ShipyardStateType,
+  ExecutionIssue,
   FileEdit,
   ToolCallRecord,
   LLMMessage,
 } from '../state.js';
 
-const MAX_NO_EDIT_TOOL_ROUNDS = 8;
-const MAX_FORCED_EDIT_NUDGES = 1;
-const EXECUTE_OPENAI_COMPACTION_MAX_CHARS = 100_000;
-
-function forcedEditNudge(
-  discoveryCallsBeforeFirstEdit: number,
-  discoveryCallLimit: number | null,
-): string {
-  const limitMsg =
-    discoveryCallLimit != null
-      ? `${discoveryCallsBeforeFirstEdit}/${discoveryCallLimit}`
-      : `${discoveryCallsBeforeFirstEdit}`;
-  return (
-    `You are drifting in discovery with no file edits.\n` +
-    `Discovery calls before first edit: ${limitMsg}.\n` +
-    `Now do this immediately:\n` +
-    `1) Pick ONE concrete target file.\n` +
-    `2) Call edit_file with a minimal bugfix in that file.\n` +
-    `3) If blocked, return one blocker and 2 concrete options.\n` +
-    `Do not run more broad scans before the edit attempt.`
-  );
+function deriveMaxNoEditToolRounds(stepCount: number): number {
+  return Math.min(20, 10 + Math.max(0, stepCount - 1) * 2);
 }
+const MAX_FORCED_EDIT_NUDGES = 2;
+const EXECUTE_OPENAI_COMPACTION_MAX_CHARS = 100_000;
 
 export async function runOpenAiExecuteLoop(params: {
   state: ShipyardStateType;
@@ -85,7 +77,13 @@ export async function runOpenAiExecuteLoop(params: {
   const newEdits: FileEdit[] = [...state.fileEdits];
   const newHistory: ToolCallRecord[] = [...state.toolCallHistory];
   const newMessages: LLMMessage[] = [...state.messages];
-  const maxToolRounds = 25;
+  // Scale tool rounds with step count: complex plans need more rounds per step.
+  // Base 25, +2 per step beyond 5, capped at 40.
+  const maxToolRounds = Math.min(40, 25 + Math.max(0, state.steps.length - 5) * 2);
+  const maxNoEditRounds = deriveMaxNoEditToolRounds(state.steps.length);
+  const stepEditBaseline = state.fileEdits.length;
+  const currentStepDescription =
+    state.steps[state.currentStepIndex]?.description ?? stepPrompt;
   let noEditToolRounds = 0;
   const discoveryCallLimit = deriveDiscoveryCallLimit(state.instruction);
   const firstEditDeadlineMs = deriveFirstEditDeadlineMs(state.instruction);
@@ -95,17 +93,25 @@ export async function runOpenAiExecuteLoop(params: {
       ? state.toolCallHistory.filter((t) => isDiscoveryToolName(t.tool_name)).length
       : 0;
   let guardrailViolation: string | null = null;
+  let lastBlockingReason: string | null = null;
   let forcedEditNudges = 0;
+  const snapshotExecuteDiagnostics = (
+    stopReason: ExecuteProgressDiagnostics['stopReason'],
+  ): ExecuteProgressDiagnostics => ({
+    noEditToolRounds,
+    discoveryCallsBeforeFirstEdit,
+    lastBlockingReason,
+    stopReason,
+  });
 
   const buildReturn = (
     fullText: string,
     finalSteps: ShipyardStateType['steps'],
+    stopReason: ExecuteProgressDiagnostics['stopReason'] = 'step_complete',
   ): Partial<ShipyardStateType> => {
     newMessages.push({ role: 'assistant', content: fullText });
     const snapshotJson = overlay.dirty
-      ? JSON.stringify(
-          Object.fromEntries(overlay.trackedFiles().map((f) => [f, ''])),
-        )
+      ? overlay.serialize()
       : state.fileOverlaySnapshots ?? null;
     return {
       phase: 'verifying',
@@ -120,6 +126,7 @@ export async function runOpenAiExecuteLoop(params: {
         cacheCreation: usageAcc.cacheCreation,
       },
       fileOverlaySnapshots: snapshotJson,
+      executeDiagnostics: snapshotExecuteDiagnostics(stopReason),
     };
   };
 
@@ -188,6 +195,7 @@ export async function runOpenAiExecuteLoop(params: {
             if (elapsed > firstEditDeadlineMs) {
               guardrailViolation =
                 `Watchdog: first edit deadline exceeded (${elapsed}ms > ${firstEditDeadlineMs}ms).`;
+              lastBlockingReason = guardrailViolation;
               return { success: false, message: guardrailViolation };
             }
           }
@@ -199,6 +207,7 @@ export async function runOpenAiExecuteLoop(params: {
             ) {
               guardrailViolation =
                 `Watchdog: discovery tool calls before first edit exceeded limit (${discoveryCallsBeforeFirstEdit}/${discoveryCallLimit}).`;
+              lastBlockingReason = guardrailViolation;
               return { success: false, message: guardrailViolation };
             }
           }
@@ -216,18 +225,60 @@ export async function runOpenAiExecuteLoop(params: {
               });
               if (!scopeCheck.ok) {
                 guardrailViolation = `Watchdog: ${scopeCheck.reason ?? 'edit scope violation.'}`;
+                lastBlockingReason = guardrailViolation;
                 return { success: false, message: guardrailViolation };
               }
             }
           }
-          return dispatchTool(name, input, hooks, overlay);
+          const result = await dispatchTool(name, input, hooks, overlay);
+          const blockingReason = deriveBlockingReasonFromToolResult(name, result);
+          if (blockingReason) {
+            lastBlockingReason = blockingReason;
+          } else if (
+            (name === 'edit_file' || name === 'write_file') &&
+            result['success'] === true
+          ) {
+            lastBlockingReason = null;
+          }
+          return result;
         },
         {
           unsupportedToolMessage: 'Unsupported tool call type for Shipyard',
         },
       );
       if (guardrailViolation) {
-        throw new Error(guardrailViolation);
+        const nextAction = `Resolve guardrail blocker and retry one in-scope edit_file call. Blocker: ${guardrailViolation}`;
+        const issue = createExecutionIssue({
+          kind: 'guardrail',
+          message: formatExecuteWatchdogError(
+            snapshotExecuteDiagnostics('guardrail_violation'),
+            nextAction,
+          ),
+          nextAction,
+          stopReason: 'guardrail_violation',
+        });
+        const failedSteps = updatedSteps.map((s, i) =>
+          i === state.currentStepIndex ? { ...s, status: 'failed' as const } : s,
+        );
+        const snapshotJson = overlay.dirty
+          ? overlay.serialize()
+          : state.fileOverlaySnapshots ?? null;
+        return {
+          phase: 'verifying',
+          steps: failedSteps,
+          fileEdits: newEdits,
+          toolCallHistory: newHistory,
+          messages: newMessages,
+          tokenUsage: {
+            input: usageAcc.input,
+            output: usageAcc.output,
+            cacheRead: usageAcc.cacheRead,
+            cacheCreation: usageAcc.cacheCreation,
+          },
+          fileOverlaySnapshots: snapshotJson,
+          executeDiagnostics: snapshotExecuteDiagnostics('guardrail_violation'),
+          executionIssue: issue,
+        };
       }
 
       if (newEdits.length === editsBefore) {
@@ -236,16 +287,33 @@ export async function runOpenAiExecuteLoop(params: {
         noEditToolRounds = 0;
       }
 
-      if (noEditToolRounds >= MAX_NO_EDIT_TOOL_ROUNDS) {
-        if (newEdits.length === 0 && forcedEditNudges < MAX_FORCED_EDIT_NUDGES) {
+      if (
+        shouldFastTrackNoEditStall({
+          noEditToolRounds,
+          lastBlockingReason,
+        })
+      ) {
+        noEditToolRounds = maxNoEditRounds;
+      }
+
+      if (noEditToolRounds >= maxNoEditRounds) {
+        const action = decideNoEditProgressAction({
+          noEditToolRounds,
+          maxNoEditToolRounds: maxNoEditRounds,
+          forcedEditNudges,
+          maxForcedEditNudges: MAX_FORCED_EDIT_NUDGES,
+          editsInCurrentExecuteStep: Math.max(0, newEdits.length - stepEditBaseline),
+          discoveryCallsBeforeFirstEdit,
+          discoveryCallLimit,
+          stepDescription: currentStepDescription,
+          lastBlockingReason,
+        });
+        if (action.kind === 'nudge') {
           forcedEditNudges += 1;
           noEditToolRounds = 0;
           conversation.push({
             role: 'user',
-            content: forcedEditNudge(
-              discoveryCallsBeforeFirstEdit,
-              discoveryCallLimit,
-            ),
+            content: action.nudgeMessage,
           });
           newMessages.push({
             role: 'assistant',
@@ -254,9 +322,46 @@ export async function runOpenAiExecuteLoop(params: {
           });
           continue;
         }
-        throw new Error(
-          `Watchdog: execution stalled after ${MAX_NO_EDIT_TOOL_ROUNDS} consecutive no-edit tool rounds.`,
-        );
+        if (action.kind === 'validated_noop') {
+          const finalSteps = updatedSteps.map((s, i) =>
+            i === state.currentStepIndex ? { ...s, status: 'done' as const } : s,
+          );
+          return buildReturn(
+            `NO_EDIT_JUSTIFIED: ${action.reason}\nSTEP_COMPLETE`,
+            finalSteps,
+            'validated_noop',
+          );
+        }
+        if (action.kind === 'stall') {
+          const issue = createExecutionIssue({
+            kind: 'watchdog',
+            message: formatExecuteWatchdogError(action.diagnostics, action.nextAction),
+            nextAction: action.nextAction,
+            stopReason: 'stalled_no_edit_rounds',
+          });
+          const failedSteps = updatedSteps.map((s, i) =>
+            i === state.currentStepIndex ? { ...s, status: 'failed' as const } : s,
+          );
+          const snapshotJson = overlay.dirty
+            ? overlay.serialize()
+            : state.fileOverlaySnapshots ?? null;
+          return {
+            phase: 'verifying',
+            steps: failedSteps,
+            fileEdits: newEdits,
+            toolCallHistory: newHistory,
+            messages: newMessages,
+            tokenUsage: {
+              input: usageAcc.input,
+              output: usageAcc.output,
+              cacheRead: usageAcc.cacheRead,
+              cacheCreation: usageAcc.cacheCreation,
+            },
+            fileOverlaySnapshots: snapshotJson,
+            executeDiagnostics: action.diagnostics,
+            executionIssue: issue,
+          };
+        }
       }
       continue;
     }
@@ -276,7 +381,36 @@ export async function runOpenAiExecuteLoop(params: {
     break;
   }
 
-  throw new Error(
-    `Watchdog: execution exceeded max tool rounds (${maxToolRounds}) without completion.`,
+  const maxRoundMsg = `Execution exceeded max tool rounds (${maxToolRounds}). Either return STEP_COMPLETE with rationale or perform one concrete edit_file call.`;
+  const issue = createExecutionIssue({
+    kind: 'max_tool_rounds',
+    message: formatExecuteWatchdogError(
+      snapshotExecuteDiagnostics('max_tool_rounds'),
+      maxRoundMsg,
+    ),
+    nextAction: maxRoundMsg,
+    stopReason: 'max_tool_rounds',
+  });
+  const failedSteps = updatedSteps.map((s, i) =>
+    i === state.currentStepIndex ? { ...s, status: 'failed' as const } : s,
   );
+  const snapshotJson = overlay.dirty
+    ? overlay.serialize()
+    : state.fileOverlaySnapshots ?? null;
+  return {
+    phase: 'verifying',
+    steps: failedSteps,
+    fileEdits: newEdits,
+    toolCallHistory: newHistory,
+    messages: newMessages,
+    tokenUsage: {
+      input: usageAcc.input,
+      output: usageAcc.output,
+      cacheRead: usageAcc.cacheRead,
+      cacheCreation: usageAcc.cacheCreation,
+    },
+    fileOverlaySnapshots: snapshotJson,
+    executeDiagnostics: snapshotExecuteDiagnostics('max_tool_rounds'),
+    executionIssue: issue,
+  };
 }

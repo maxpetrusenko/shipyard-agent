@@ -18,7 +18,11 @@ import {
   type ReviewDecision,
   type ContextEntry,
   type LLMMessage,
+  type ExecuteDiagnostics,
+  type ExecutionIssue,
+  type ExecuteStopReason,
 } from '../../src/graph/state.js';
+import { checkPlanComplexity } from '../../src/graph/nodes/plan.js';
 
 // ---------------------------------------------------------------------------
 // Phase type
@@ -198,6 +202,83 @@ describe('LLMMessage', () => {
 });
 
 // ---------------------------------------------------------------------------
+// ExecutionIssue
+// ---------------------------------------------------------------------------
+
+describe('ExecutionIssue', () => {
+  it('has expected shape', () => {
+    const issue: ExecutionIssue = {
+      kind: 'guardrail',
+      recoverable: true,
+      message: 'Scope violation',
+      nextAction: 'Retry with scoped edit',
+      stopReason: 'guardrail_violation',
+    };
+    expect(issue.kind).toBe('guardrail');
+    expect(issue.recoverable).toBe(true);
+    expect(issue.stopReason).toBe('guardrail_violation');
+  });
+
+  it('accepts all valid kind values', () => {
+    const kinds: ExecutionIssue['kind'][] = ['guardrail', 'watchdog', 'max_tool_rounds', 'coordination'];
+    expect(kinds).toHaveLength(4);
+  });
+
+  it('accepts all ExecuteStopReason values', () => {
+    const reasons: ExecuteStopReason[] = [
+      'step_complete', 'validated_noop', 'stalled_no_edit_rounds',
+      'guardrail_violation', 'max_tool_rounds',
+    ];
+    expect(reasons).toHaveLength(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// VerificationResult extended fields
+// ---------------------------------------------------------------------------
+
+describe('VerificationResult extended fields', () => {
+  it('accepts baseline diff fields', () => {
+    const result: VerificationResult = {
+      passed: false,
+      error_count: 5,
+      preExistingErrorCount: 3,
+      newErrorCount: 2,
+      baselineFingerprint: 'abc123',
+    };
+    expect(result.preExistingErrorCount).toBe(3);
+    expect(result.newErrorCount).toBe(2);
+    expect(result.baselineFingerprint).toBe('abc123');
+  });
+
+  it('is backward compatible without extended fields', () => {
+    const result: VerificationResult = {
+      passed: true,
+      error_count: 0,
+    };
+    expect(result.preExistingErrorCount).toBeUndefined();
+    expect(result.newErrorCount).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExecuteDiagnostics
+// ---------------------------------------------------------------------------
+
+describe('ExecuteDiagnostics', () => {
+  it('has expected shape', () => {
+    const diag: ExecuteDiagnostics = {
+      noEditToolRounds: 3,
+      discoveryCallsBeforeFirstEdit: 6,
+      lastBlockingReason: null,
+      stopReason: 'step_complete',
+    };
+    expect(diag.noEditToolRounds).toBe(3);
+    expect(diag.stopReason).toBe('step_complete');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ShipyardState annotation
 // ---------------------------------------------------------------------------
 
@@ -230,12 +311,14 @@ describe('ShipyardState', () => {
       'runStartedAt',
       'workerResults',
       'loopDiagnostics',
+      'executeDiagnostics',
       'modelHint',
       'runMode',
       'gateRoute',
       'modelOverride',
       'modelFamily',
       'modelOverrides',
+      'executionIssue',
     ];
     // If any of these didn't exist on the type, TS would error at compile time.
     // At runtime, just verify the array is populated.
@@ -246,6 +329,53 @@ describe('ShipyardState', () => {
 // ---------------------------------------------------------------------------
 // Default state construction
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Plan complexity warning
+// ---------------------------------------------------------------------------
+
+describe('checkPlanComplexity', () => {
+  it('returns null for small plans', () => {
+    const steps: PlanStep[] = Array.from({ length: 3 }, (_, i) => ({
+      index: i,
+      description: `step ${i}`,
+      files: [`/src/file${i}.ts`],
+      status: 'pending' as const,
+    }));
+    expect(checkPlanComplexity(steps)).toBeNull();
+  });
+
+  it('warns when steps exceed 7', () => {
+    const steps: PlanStep[] = Array.from({ length: 8 }, (_, i) => ({
+      index: i,
+      description: `step ${i}`,
+      files: [`/src/file${i}.ts`],
+      status: 'pending' as const,
+    }));
+    const warning = checkPlanComplexity(steps);
+    expect(warning).toContain('[Plan Warning]');
+    expect(warning).toContain('8 steps');
+  });
+
+  it('warns when unique files exceed 20', () => {
+    const files = Array.from({ length: 21 }, (_, i) => `/src/file${i}.ts`);
+    const steps: PlanStep[] = [
+      { index: 0, description: 'big step', files, status: 'pending' },
+    ];
+    const warning = checkPlanComplexity(steps);
+    expect(warning).toContain('[Plan Warning]');
+    expect(warning).toContain('21 files');
+  });
+
+  it('deduplicates files across steps', () => {
+    const steps: PlanStep[] = [
+      { index: 0, description: 's1', files: ['/src/a.ts', '/src/b.ts'], status: 'pending' },
+      { index: 1, description: 's2', files: ['/src/a.ts', '/src/c.ts'], status: 'pending' },
+    ];
+    // 3 unique files, 2 steps — should not warn
+    expect(checkPlanComplexity(steps)).toBeNull();
+  });
+});
 
 describe('default state values', () => {
   it('can construct a valid minimal state object', () => {
@@ -273,12 +403,14 @@ describe('default state values', () => {
       estimatedCost: null,
       workerResults: [],
       loopDiagnostics: null,
+      executeDiagnostics: null,
       modelHint: null,
       runMode: 'auto',
       gateRoute: 'plan',
       modelOverride: null,
       modelFamily: null,
       modelOverrides: null,
+      executionIssue: null,
     };
 
     expect(state.runId).toBe('test-123');

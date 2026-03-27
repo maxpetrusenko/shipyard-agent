@@ -219,3 +219,97 @@ describe('trackedFiles / dirty', () => {
     expect(overlay.trackedFiles()).toContain(fp);
   });
 });
+
+// ---------------------------------------------------------------------------
+// serialize / deserialize
+// ---------------------------------------------------------------------------
+
+describe('serialize / deserialize', () => {
+  it('round-trips existing file snapshots', async () => {
+    const fp = testFile('ser.ts');
+    await writeFile(fp, 'original');
+
+    const overlay = new FileOverlay();
+    await overlay.snapshot(fp);
+
+    const json = overlay.serialize();
+    const parsed = JSON.parse(json) as Record<string, string | null>;
+    expect(parsed[fp]).toBe('original');
+  });
+
+  it('marks created files as null in serialized output', async () => {
+    const fp = testFile('created-ser.ts');
+    const overlay = new FileOverlay();
+    await overlay.snapshot(fp); // ENOENT
+
+    const json = overlay.serialize();
+    const parsed = JSON.parse(json) as Record<string, string | null>;
+    expect(parsed[fp]).toBe(null);
+  });
+
+  it('deserialize + rollbackAll restores original content', async () => {
+    const fp = testFile('deser.ts');
+    await writeFile(fp, 'before');
+
+    const overlay = new FileOverlay();
+    await overlay.snapshot(fp);
+    const json = overlay.serialize();
+
+    // Mutate file on disk (simulates agent edits)
+    await writeFile(fp, 'after');
+
+    // Deserialize into a fresh overlay and rollback
+    const restored = FileOverlay.deserialize(json);
+    await restored.rollbackAll();
+
+    const content = await readFile(fp, 'utf-8');
+    expect(content).toBe('before');
+  });
+
+  it('deserialize + rollback deletes created files', async () => {
+    const fp = testFile('deser-created.ts');
+    const overlay = new FileOverlay();
+    await overlay.snapshot(fp); // ENOENT → created
+    const json = overlay.serialize();
+
+    // Create the file (simulates agent creating it)
+    await writeFile(fp, 'agent wrote this');
+
+    const restored = FileOverlay.deserialize(json);
+    await restored.rollbackAll();
+
+    try {
+      await readFile(fp, 'utf-8');
+      expect.fail('File should have been deleted on rollback');
+    } catch (err: unknown) {
+      expect((err as NodeJS.ErrnoException).code).toBe('ENOENT');
+    }
+  });
+
+  it('handles mixed existing + created files', async () => {
+    const existing = testFile('mix-existing.ts');
+    const created = testFile('mix-created.ts');
+    await writeFile(existing, 'original-mix');
+
+    const overlay = new FileOverlay();
+    await overlay.snapshot(existing);
+    await overlay.snapshot(created); // ENOENT
+
+    const json = overlay.serialize();
+
+    // Mutate existing, create new
+    await writeFile(existing, 'mutated');
+    await writeFile(created, 'new content');
+
+    const restored = FileOverlay.deserialize(json);
+    await restored.rollbackAll();
+
+    expect(await readFile(existing, 'utf-8')).toBe('original-mix');
+    try {
+      await readFile(created, 'utf-8');
+      expect.fail('Created file should be deleted');
+    } catch (err: unknown) {
+      expect((err as NodeJS.ErrnoException).code).toBe('ENOENT');
+    }
+  });
+});

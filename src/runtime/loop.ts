@@ -37,6 +37,7 @@ import type {
   ContextEntry,
   LLMMessage,
   LoopDiagnostics,
+  ExecuteDiagnostics,
   PlanStep,
   VerificationResult,
   ToolCallRecord,
@@ -68,6 +69,7 @@ import {
   resolveGraphSoftBudget,
   withHardRecursionStop,
 } from './loop-guard.js';
+import { parseExecuteDiagnosticsFromError } from '../graph/nodes/execute-progress.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -153,6 +155,8 @@ export interface RunResult {
     requested_at?: string | null;
   } | null;
   loopDiagnostics?: LoopDiagnostics | null;
+  executeDiagnostics?: ExecuteDiagnostics | null;
+  errorClassification?: 'transient' | 'scope' | 'watchdog' | 'recursion' | 'abort' | 'unknown' | null;
   savedAt?: string;
   nextActions?: NextAction[];
 }
@@ -567,6 +571,7 @@ export class InstructionLoop {
           modelOverrides: modelOverrides ?? null,
         }),
         loopDiagnostics: null,
+        executeDiagnostics: null,
         savedAt: queuedAtIso,
         nextActions: [],
       });
@@ -1053,6 +1058,7 @@ export class InstructionLoop {
       modelOverrides: meta?.modelOverrides ?? existing?.modelOverrides ?? null,
       resolvedModels,
       loopDiagnostics: existing?.loopDiagnostics ?? null,
+      executeDiagnostics: existing?.executeDiagnostics ?? null,
       completionStatus: 'completed',
       cancellation: null,
       savedAt: new Date(now).toISOString(),
@@ -1158,6 +1164,7 @@ export class InstructionLoop {
           modelOverrides: item.modelOverrides ?? null,
           resolvedModels,
           loopDiagnostics: priorSnap?.loopDiagnostics ?? null,
+          executeDiagnostics: priorSnap?.executeDiagnostics ?? null,
           savedAt: new Date().toISOString(),
           nextActions: [],
         }
@@ -1185,6 +1192,7 @@ export class InstructionLoop {
           modelOverrides: item.modelOverrides ?? null,
           resolvedModels,
           loopDiagnostics: null,
+          executeDiagnostics: null,
           savedAt: new Date().toISOString(),
           nextActions: [],
         };
@@ -1222,6 +1230,10 @@ export class InstructionLoop {
           state.loopDiagnostics !== undefined
             ? state.loopDiagnostics
             : current.loopDiagnostics ?? null,
+        executeDiagnostics:
+          state.executeDiagnostics !== undefined
+            ? state.executeDiagnostics
+            : current.executeDiagnostics ?? null,
         durationMs: priorDuration + (Date.now() - startedAt),
         threadKind: current.threadKind,
       });
@@ -1233,7 +1245,10 @@ export class InstructionLoop {
     const softBudget = resolveGraphSoftBudget(recursionLimit);
 
     try {
-      await captureRunBaseline(item.id, WORK_DIR);
+      // Fire baseline capture in parallel with graph setup — git ops are fast (~1s).
+      // The slow verification fingerprint runs in the background and is awaited
+      // by the execute node before any file modifications (see execute.ts).
+      void captureRunBaseline(item.id, WORK_DIR).catch(() => {});
       const checkpointer = await this.ensureCheckpointerReady();
       const graph = createShipyardGraph({ checkpointer });
 
@@ -1256,7 +1271,7 @@ export class InstructionLoop {
         messages: ensureRunMessages(item.instruction, [...seedMsgs]),
         error: null,
         retryCount: 0,
-        maxRetries: 3,
+        maxRetries: 8,
         tokenUsage: null,
         traceUrl: null,
         runStartedAt: startedAt,
@@ -1272,6 +1287,8 @@ export class InstructionLoop {
           ? { ...item.modelOverrides }
           : null,
         loopDiagnostics: null,
+        executeDiagnostics: null,
+        executionIssue: null,
       };
       const loopGuard = createLoopGuard({
         recursionLimit,
@@ -1424,6 +1441,10 @@ export class InstructionLoop {
             latestLoopDiagnostics ??
             current?.loopDiagnostics ??
             null,
+          executeDiagnostics:
+            finalState.executeDiagnostics ??
+            current?.executeDiagnostics ??
+            null,
           completionStatus: hasCompletedActions
             ? 'cancelled_with_completed_actions'
             : 'cancelled',
@@ -1496,6 +1517,10 @@ export class InstructionLoop {
             latestLoopDiagnostics ??
             current?.loopDiagnostics ??
             null,
+          executeDiagnostics:
+            finalState.executeDiagnostics ??
+            current?.executeDiagnostics ??
+            null,
           completionStatus: finalState.phase === 'done' ? 'completed' : 'failed',
           cancellation: null,
           savedAt: new Date().toISOString(),
@@ -1531,6 +1556,20 @@ export class InstructionLoop {
         (err instanceof Error &&
           (err.name === 'AbortError' ||
             /abort|cancel/i.test(msg)));
+
+      // Classify the error for observability
+      const errorClassification: RunResult['errorClassification'] = aborted
+        ? 'abort'
+        : recursionLimitHit
+          ? 'recursion'
+          : watchdogAbort
+            ? 'watchdog'
+            : /scope|outside explicit|outside planned/i.test(msg)
+              ? 'scope'
+              : /rate.?limit|timeout|ECONNREFUSED|ENOTFOUND|503|429/i.test(msg)
+                ? 'transient'
+                : 'unknown';
+
       const cancelSource = this.cancelRequested
         ? (this.cancelSource ?? 'unknown')
         : watchdogAbort
@@ -1550,6 +1589,7 @@ export class InstructionLoop {
       const recursionDiagnostics = recursionLimitHit
         ? withHardRecursionStop(diagnosticsBase, recursionLimit)
         : null;
+      const parsedExecuteDiagnostics = parseExecuteDiagnosticsFromError(msg);
       const effectiveDiagnostics = recursionDiagnostics ?? diagnosticsBase;
       const errorMsg = aborted
         ? 'Run cancelled by user'
@@ -1592,6 +1632,11 @@ export class InstructionLoop {
         modelOverrides: item.modelOverrides ?? null,
         resolvedModels,
         loopDiagnostics: effectiveDiagnostics,
+        executeDiagnostics:
+          finalState?.executeDiagnostics ??
+          prev?.executeDiagnostics ??
+          parsedExecuteDiagnostics,
+        errorClassification,
         completionStatus: aborted
           ? ((prev?.toolCallHistory?.length ?? 0) + (prev?.fileEdits?.length ?? 0) > 0
             ? 'cancelled_with_completed_actions'
@@ -1630,6 +1675,7 @@ export class InstructionLoop {
         verificationResult: runResult.verificationResult,
         reviewFeedback: runResult.reviewFeedback,
         loopDiagnostics: runResult.loopDiagnostics ?? null,
+        executeDiagnostics: runResult.executeDiagnostics ?? null,
       });
       this.resolveTraceUrlInBackground(item.id);
     } finally {

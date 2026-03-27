@@ -19,6 +19,7 @@ import {
   constrainPlanStepsToScope,
   deriveScopeConstraints,
 } from '../guards.js';
+import { traceParser } from '../../runtime/trace-helpers.js';
 import type { ShipyardStateType, PlanStep, LLMMessage } from '../state.js';
 
 const PLAN_TOOL_NAMES = new Set([
@@ -156,12 +157,15 @@ export async function runOpenAiPlanLoop(params: {
     const planMatch = textContent.match(/<plan>([\s\S]*?)<\/plan>/);
     if (planMatch) {
       try {
-        const parsed = JSON.parse(planMatch[1]!) as Array<{
-          index: number;
-          description: string;
-          files: string[];
-        }>;
-        steps = parsed.map((s) => ({
+        const parsed = await traceParser('plan_extraction', async () => {
+          const result = JSON.parse(planMatch[1]!) as Array<{
+            index: number;
+            description: string;
+            files: string[];
+          }>;
+          return { steps: result, stepCount: result.length };
+        }, textContent);
+        steps = parsed.steps.map((s) => ({
           ...s,
           status: 'pending' as const,
         }));

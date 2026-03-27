@@ -39,6 +39,7 @@ export interface RunDebugSnapshot {
   fileEditCount: number;
   messageCount: number;
   loopDiagnostics: RunResult['loopDiagnostics'] | null;
+  executeDiagnostics: RunResult['executeDiagnostics'] | null;
 }
 
 const MODEL_ROLES = Object.keys(MODEL_CONFIGS) as ModelRole[];
@@ -136,5 +137,6 @@ export function buildRunDebugSnapshot(
     fileEditCount: run.fileEdits.length,
     messageCount: run.messages.length,
     loopDiagnostics: run.loopDiagnostics ?? null,
+    executeDiagnostics: run.executeDiagnostics ?? null,
   };
 }

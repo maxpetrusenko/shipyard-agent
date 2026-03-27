@@ -175,6 +175,12 @@ export async function editFile(params: EditFileParams): Promise<EditFileResult> 
       // File doesn't exist — skip tiers 1-3, fall through to tier 4
       content = '';
       fileExists = false;
+    } else if (code === 'EISDIR') {
+      return {
+        success: false,
+        tier: 1,
+        message: `Cannot edit directory as file: ${file_path}. Use the 'ls' tool to inspect directories and choose a concrete file.`,
+      };
     } else {
       throw err;
     }

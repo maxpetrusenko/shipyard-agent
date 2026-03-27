@@ -89,9 +89,20 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Resolve a public LangSmith trace URL for a run.
+ * Whether public trace sharing is explicitly opted in.
+ * Default: false (internal workspace URLs only).
+ */
+export function isPublicTraceEnabled(): boolean {
+  return process.env['SHIPYARD_TRACE_PUBLIC'] === 'true';
+}
+
+/**
+ * Resolve a LangSmith trace URL for a run.
  *
- * Strategy (idempotent):
+ * By default returns an internal workspace URL. When SHIPYARD_TRACE_PUBLIC=true,
+ * creates a public share link via the LangSmith API.
+ *
+ * Public strategy (idempotent):
  * 1. Try readRunSharedLink — reuse existing public link
  * 2. If 404 (not shared yet), call shareRun — creates public link
  * 3. Retry up to 5 times with exponential backoff (handles transient 404s
@@ -104,6 +115,11 @@ export async function resolveLangSmithRunUrl(
   retryDelayMs = 250,
 ): Promise<string | null> {
   if (!runId || !canTrace()) return null;
+
+  // Default: internal workspace URL (no public sharing)
+  if (!isPublicTraceEnabled()) {
+    return buildTraceUrl(runId);
+  }
 
   const lsClient = client ?? new Client({
     apiKey: getLangSmithApiKey() ?? undefined,

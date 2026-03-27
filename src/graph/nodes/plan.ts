@@ -34,12 +34,22 @@ import {
   constrainPlanStepsToScope,
   deriveScopeConstraints,
 } from '../guards.js';
+import { traceParser } from '../../runtime/trace-helpers.js';
 import {
   buildContextBlock,
   type ShipyardStateType,
   type PlanStep,
   type LLMMessage,
 } from '../state.js';
+
+function buildCompletedStepsSummary(steps: PlanStep[]): string {
+  const completed = steps.filter((s) => s.status === 'done');
+  if (completed.length === 0) return '';
+  const lines = completed.map(
+    (s) => `  - Step ${s.index}: ${s.description} [files: ${s.files.join(', ') || 'none'}]`,
+  );
+  return `Previously completed steps (${completed.length}/${steps.length}):\n${lines.join('\n')}`;
+}
 
 const PLAN_SYSTEM = `You are Shipyard, an autonomous coding agent. You are in the PLANNING phase.
 
@@ -70,6 +80,24 @@ Hard scope rules:
 - If the instruction names explicit target files, plan ONLY those files.
 - Do not add unrelated files when the instruction already pins the target path.
 - If the explicit target already appears satisfied, keep the plan minimal and focused on confirming that no-op.
+
+## CRITICAL: Shared file safety (hub file protection)
+
+Before editing any file, check how many other files import it:
+  grep -rl "from.*<filename>" <workdir>/src --include="*.ts" | wc -l
+
+If a file is imported by >8 other files, it is a "hub file". NEVER change its exported symbols directly.
+
+Instead, use the adapter/re-export pattern:
+1. Create a new implementation file alongside it (e.g. auth-v2.ts)
+2. Update the hub file to re-export from the new file (preserving ALL existing export names)
+3. Migrate consumers in batches if needed
+4. Remove old code only after all consumers are migrated
+
+This prevents 700+ cascade type errors from breaking downstream importers.
+
+Common hub files to watch for: auth.ts, visibility.ts, types.ts, index.ts, utils.ts, config.ts, middleware.ts.
+When in doubt, check with grep before planning edits to any shared utility or middleware file.
 
 For each step, specify:
 - A clear description of what to do
@@ -140,6 +168,62 @@ function finalizePlan(instruction: string, steps: PlanStep[]): PlanStep[] {
   );
 }
 
+/**
+ * When replanning, merge completed step status from the previous plan.
+ * Matches old completed steps to new steps by file overlap (≥50%).
+ * Ensures at least one step remains pending (since we're replanning for a reason).
+ */
+export function mergeCompletedSteps(
+  oldSteps: PlanStep[],
+  newSteps: PlanStep[],
+): { steps: PlanStep[]; firstPendingIndex: number } {
+  const completedOld = oldSteps.filter((s) => s.status === 'done');
+  if (completedOld.length === 0 || newSteps.length === 0) {
+    return { steps: newSteps, firstPendingIndex: 0 };
+  }
+
+  // Track which old steps have been matched to avoid double-matching
+  const matchedOld = new Set<number>();
+
+  const merged = newSteps.map((newStep) => {
+    if (newStep.files.length === 0) return newStep;
+    const match = completedOld.find((oldStep, idx) => {
+      if (matchedOld.has(idx)) return false;
+      if (oldStep.files.length === 0) return false;
+      const overlap = newStep.files.filter((f) => oldStep.files.includes(f));
+      return overlap.length / Math.max(newStep.files.length, 1) >= 0.5;
+    });
+    if (match) {
+      matchedOld.add(completedOld.indexOf(match));
+      return { ...newStep, status: 'done' as const };
+    }
+    return newStep;
+  });
+
+  // Safety: if ALL steps would be marked done, keep the last one pending
+  // (we're replanning because something needs fixing)
+  const allDone = merged.every((s) => s.status === 'done');
+  if (allDone && merged.length > 0) {
+    merged[merged.length - 1] = { ...merged[merged.length - 1]!, status: 'pending' as const };
+  }
+
+  const firstPending = merged.findIndex((s) => s.status !== 'done');
+  return {
+    steps: merged,
+    firstPendingIndex: firstPending === -1 ? 0 : firstPending,
+  };
+}
+
+export function checkPlanComplexity(steps: PlanStep[]): string | null {
+  const uniqueFiles = new Set(steps.flatMap((s) => s.files));
+  const stepCount = steps.length;
+  const fileCount = uniqueFiles.size;
+  if (stepCount > 7 || fileCount > 20) {
+    return `[Plan Warning] This plan has ${stepCount} steps targeting ${fileCount} files. Consider decomposing into smaller runs.`;
+  }
+  return null;
+}
+
 export async function planNode(
   state: ShipyardStateType,
 ): Promise<Partial<ShipyardStateType>> {
@@ -148,13 +232,19 @@ export async function planNode(
   // Build context from injected contexts (separate cache breakpoint)
   const contextBlock = buildContextBlock(state.contexts);
 
+  // Build completed-steps context for replan
+  const isReplan = !!state.reviewFeedback;
+  const completedStepsSummary = isReplan
+    ? buildCompletedStepsSummary(state.steps)
+    : '';
+
   if (isOpenAiModelId(config.model)) {
     const rawSystem = contextBlock
       ? `${PLAN_SYSTEM}\n\n# Injected Context\n\n${contextBlock}`
       : PLAN_SYSTEM;
     let initialUserText = state.instruction;
     if (state.reviewFeedback) {
-      initialUserText = `${state.instruction}\n\nPrevious attempt feedback: ${state.reviewFeedback}\n\nPlease revise your plan based on the feedback above.`;
+      initialUserText = `${state.instruction}\n\nPrevious attempt feedback: ${state.reviewFeedback}\n\n${completedStepsSummary}\n\nPlease revise your plan based on the feedback above. Steps already completed do not need to be re-done unless the feedback specifically requires reworking them.`;
     }
     const {
       steps,
@@ -171,10 +261,28 @@ export async function planNode(
         initialUserText,
         runId: state.runId,
       });
+    const finalizedSteps = finalizePlan(state.instruction, steps);
+
+    // Merge completed step status from prior plan
+    const { steps: mergedSteps, firstPendingIndex } = isReplan
+      ? mergeCompletedSteps(state.steps, finalizedSteps)
+      : { steps: finalizedSteps, firstPendingIndex: 0 };
+
+    const complexityWarning = checkPlanComplexity(mergedSteps);
+    if (complexityWarning) {
+      newMessages.push({ role: 'assistant', content: complexityWarning });
+    }
+    if (isReplan) {
+      const doneCount = mergedSteps.filter((s) => s.status === 'done').length;
+      newMessages.push({
+        role: 'assistant',
+        content: `[Replan] Preserved ${doneCount}/${mergedSteps.length} completed steps from prior plan. Resuming from step ${firstPendingIndex}.`,
+      });
+    }
     return {
       phase: 'executing',
-      steps: finalizePlan(state.instruction, steps),
-      currentStepIndex: 0,
+      steps: mergedSteps,
+      currentStepIndex: firstPendingIndex,
       messages: newMessages,
       tokenUsage: {
         input: inputTokens,
@@ -211,7 +319,7 @@ export async function planNode(
     });
     messages.push({
       role: 'user',
-      content: 'Please revise your plan based on the feedback above.',
+      content: `${completedStepsSummary}\n\nPlease revise your plan based on the feedback above. Steps already completed do not need to be re-done unless the feedback specifically requires reworking them.`,
     });
   }
 
@@ -274,12 +382,15 @@ export async function planNode(
     const planMatch = fullText.match(/<plan>([\s\S]*?)<\/plan>/);
     if (planMatch) {
       try {
-        const parsed = JSON.parse(planMatch[1]!) as Array<{
-          index: number;
-          description: string;
-          files: string[];
-        }>;
-        steps = parsed.map((s) => ({
+        const parsed = await traceParser('plan_extraction', async () => {
+          const result = JSON.parse(planMatch[1]!) as Array<{
+            index: number;
+            description: string;
+            files: string[];
+          }>;
+          return { steps: result, stepCount: result.length };
+        }, fullText);
+        steps = parsed.steps.map((s) => ({
           ...s,
           status: 'pending' as const,
         }));
@@ -322,10 +433,27 @@ export async function planNode(
   }
   steps = finalizePlan(state.instruction, steps);
 
+  // Merge completed step status from prior plan
+  const { steps: mergedSteps, firstPendingIndex } = isReplan
+    ? mergeCompletedSteps(state.steps, steps)
+    : { steps, firstPendingIndex: 0 };
+
+  const complexityWarning = checkPlanComplexity(mergedSteps);
+  if (complexityWarning) {
+    newMessages.push({ role: 'assistant', content: complexityWarning });
+  }
+  if (isReplan) {
+    const doneCount = mergedSteps.filter((s) => s.status === 'done').length;
+    newMessages.push({
+      role: 'assistant',
+      content: `[Replan] Preserved ${doneCount}/${mergedSteps.length} completed steps from prior plan. Resuming from step ${firstPendingIndex}.`,
+    });
+  }
+
   return {
     phase: 'executing',
-    steps,
-    currentStepIndex: 0,
+    steps: mergedSteps,
+    currentStepIndex: firstPendingIndex,
     messages: newMessages,
     tokenUsage: tokens.snapshot(),
     modelHint: 'sonnet',

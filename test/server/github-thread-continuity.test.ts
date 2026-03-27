@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { createHmac } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createApp } from '../../src/app.js';
 import { InstructionLoop } from '../../src/runtime/loop.js';
 
 async function startServer(): Promise<{ server: Server; baseUrl: string }> {
+  process.env['SHIPYARD_WEBHOOK_DEDUPE_FILE'] = join(
+    mkdtempSync(join(tmpdir(), 'shipyard-gh-thread-')),
+    'dedupe.json',
+  );
   const app = createApp(new InstructionLoop());
   const server = createServer(app);
   await new Promise<void>((resolve) => {
@@ -46,6 +53,7 @@ async function postWebhook(
 afterEach(() => {
   delete process.env['SHIPYARD_GITHUB_WEBHOOK_SECRET'];
   delete process.env['GITHUB_WEBHOOK_SECRET'];
+  delete process.env['SHIPYARD_WEBHOOK_DEDUPE_FILE'];
 });
 
 describe('GitHub thread continuity', () => {

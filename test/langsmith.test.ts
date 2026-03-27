@@ -134,9 +134,25 @@ describe('langsmith tracing helpers', () => {
       expect(await resolveLangSmithRunUrl('')).toBeNull();
     });
 
-    it('prefers existing shared link over workspace app URL', async () => {
+    it('returns internal workspace URL by default (no public sharing)', async () => {
       process.env['LANGCHAIN_TRACING_V2'] = 'true';
       process.env['LANGCHAIN_API_KEY'] = 'key';
+      delete process.env['SHIPYARD_TRACE_PUBLIC'];
+
+      const mockClient = {
+        readRunSharedLink: async () => { throw new Error('should not be called'); },
+        shareRun: async () => { throw new Error('should not be called'); },
+      };
+
+      const url = await resolveLangSmithRunUrl('run-1', mockClient);
+      expect(url).toContain('/o/default/projects/p/');
+      expect(url).toContain('/r/run-1');
+    });
+
+    it('prefers existing shared link over workspace app URL when public enabled', async () => {
+      process.env['LANGCHAIN_TRACING_V2'] = 'true';
+      process.env['LANGCHAIN_API_KEY'] = 'key';
+      process.env['SHIPYARD_TRACE_PUBLIC'] = 'true';
 
       const mockClient = {
         getRunUrl: async () => 'https://smith.langchain.com/o/real/projects/p/real/r/run-1?poll=true',
@@ -148,9 +164,10 @@ describe('langsmith tracing helpers', () => {
       expect(url).toBe('https://smith.langchain.com/public/abc/r');
     });
 
-    it('creates new share link when none exists', async () => {
+    it('creates new share link when none exists and public enabled', async () => {
       process.env['LANGCHAIN_TRACING_V2'] = 'true';
       process.env['LANGCHAIN_API_KEY'] = 'key';
+      process.env['SHIPYARD_TRACE_PUBLIC'] = 'true';
 
       const mockClient = {
         readRunSharedLink: async () => { const e = new Error('not found'); (e as any).status = 404; throw e; },
@@ -161,9 +178,10 @@ describe('langsmith tracing helpers', () => {
       expect(url).toBe('https://smith.langchain.com/public/new-token/r');
     });
 
-    it('returns null on persistent failure', async () => {
+    it('returns null on persistent failure when public enabled', async () => {
       process.env['LANGCHAIN_TRACING_V2'] = 'true';
       process.env['LANGCHAIN_API_KEY'] = 'key';
+      process.env['SHIPYARD_TRACE_PUBLIC'] = 'true';
 
       const mockClient = {
         readRunSharedLink: async () => { throw new Error('server error'); },

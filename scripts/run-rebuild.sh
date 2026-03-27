@@ -143,6 +143,18 @@ echo "============================================" | tee -a "$LOG_FILE"
 
 START_ALL=$(date +%s)
 
+# Bootstrap target dependencies once if needed so Shipyard verification can run.
+if [ ! -d "${TARGET}/node_modules" ]; then
+  echo "$(date '+%H:%M:%S') [BOOTSTRAP] installing target dependencies in ${TARGET}" | tee -a "$LOG_FILE"
+  (cd "${TARGET}" && pnpm install) | tee -a "$LOG_FILE"
+fi
+
+# Build shared workspace artifacts expected by api tests/import resolution.
+if [ -f "${TARGET}/shared/package.json" ] && [ ! -f "${TARGET}/shared/dist/index.js" ]; then
+  echo "$(date '+%H:%M:%S') [BOOTSTRAP] building @ship/shared in ${TARGET}" | tee -a "$LOG_FILE"
+  (cd "${TARGET}" && pnpm --filter @ship/shared build) | tee -a "$LOG_FILE"
+fi
+
 # Verify server is up
 if ! curl -sf "${BASE_URL}/health" > /dev/null; then
   echo "ERROR: Server not running at ${BASE_URL}" | tee -a "$LOG_FILE"

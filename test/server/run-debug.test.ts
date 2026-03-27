@@ -41,6 +41,7 @@ function makeRun() {
     modelOverride: null,
     modelFamily: null,
     modelOverrides: null,
+    executionIssue: null,
     resolvedModels: null,
   };
 }

@@ -86,6 +86,45 @@ describe('shouldRequireEdits', () => {
   it('does not require edits for informational asks', () => {
     expect(shouldRequireEdits('Explain how this module works')).toBe(false);
   });
+
+  it('does not require edits for "describe" prefixed instructions', () => {
+    expect(shouldRequireEdits('Describe how the auth system works')).toBe(false);
+  });
+
+  it('does not require edits for "how do I" questions', () => {
+    expect(shouldRequireEdits('How do I add a new endpoint?')).toBe(false);
+  });
+
+  it('does not require edits for "what is" questions', () => {
+    expect(shouldRequireEdits('What is the purpose of this module?')).toBe(false);
+  });
+
+  it('requires edits when informational prefix combined with imperative edit verb', () => {
+    expect(shouldRequireEdits('Explain the auth flow and then fix the login bug')).toBe(true);
+  });
+
+  it('requires edits for "document" with explicit file path', () => {
+    expect(shouldRequireEdits('Document the public API in README.md')).toBe(true);
+  });
+
+  it('requires edits for "review and update" instructions', () => {
+    expect(shouldRequireEdits('Review this file and update the docs')).toBe(true);
+  });
+
+  it('does not require edits for purely informational review', () => {
+    // No edit verb — just "review" with no action words
+    expect(shouldRequireEdits('Review the code quality of this file')).toBe(false);
+  });
+
+  it('requires edits for "please add" style instructions', () => {
+    expect(shouldRequireEdits('Please add a logout button')).toBe(true);
+  });
+
+  it('requires edits for create/write/remove verbs', () => {
+    expect(shouldRequireEdits('Create a new test file for auth')).toBe(true);
+    expect(shouldRequireEdits('Remove the deprecated function')).toBe(true);
+    expect(shouldRequireEdits('Write a helper for date parsing')).toBe(true);
+  });
 });
 
 describe('discovery and deadline guardrails', () => {
@@ -98,7 +137,7 @@ describe('discovery and deadline guardrails', () => {
 
   it('applies stricter default first-edit deadline for single-file prompts', () => {
     const ms = deriveFirstEditDeadlineMs('Make exactly one file change only.');
-    expect(ms).toBe(75_000);
+    expect(ms).toBe(120_000);
   });
 
   it('parses explicit first-edit deadline override', () => {
@@ -215,5 +254,55 @@ describe('repo target guards', () => {
       '/Users/max/Desktop/Gauntlet/ship-agent',
     );
     expect(mismatch).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression tests for known failure classes
+// ---------------------------------------------------------------------------
+
+describe('failure class regressions', () => {
+  it('scope guard allows instruction-mentioned files even if planner omits them', () => {
+    // Failure class: "Edited files outside planned scope" (run 8d8aa0da)
+    // Root cause: planner only listed routes/ files in steps, not src/services/
+    const result = evaluateScopeGuard({
+      instruction: 'Create routes/files.ts and src/services/upload.ts and src/services/uploadTracker.ts',
+      fileEdits: [
+        { file_path: '/repo/routes/files.ts', tier: 1, old_string: '', new_string: 'x', timestamp: 0 },
+        { file_path: '/repo/src/services/upload.ts', tier: 1, old_string: '', new_string: 'x', timestamp: 0 },
+        { file_path: '/repo/src/services/uploadTracker.ts', tier: 1, old_string: '', new_string: 'x', timestamp: 0 },
+      ],
+      steps: [
+        { index: 0, description: 'Create routes', files: ['routes/files.ts'], status: 'done' },
+      ],
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('extension list .exe/.bat/.sh is NOT parsed as file paths', () => {
+    // Failure class: discovery limit 14/8 (run 71f0cdaf)
+    const constraints = deriveScopeConstraints(
+      'blocks dangerous extensions like .exe/.bat/.sh/.dll/.jar/.ps1',
+    );
+    expect(constraints.explicitFiles.length).toBe(0);
+    expect(constraints.strictSingleFile).toBe(false);
+  });
+
+  it('first-edit deadline is at least 120s for scoped instructions', () => {
+    // Failure class: first edit deadline exceeded 52s > 45s (run 09fcf7fe)
+    const singleFile = deriveFirstEditDeadlineMs('Fix only src/foo.ts');
+    expect(singleFile).toBeGreaterThanOrEqual(120_000);
+
+    const multiFile = deriveFirstEditDeadlineMs(
+      'Create routes/files.ts and src/services/upload.ts',
+    );
+    expect(multiFile).toBeGreaterThanOrEqual(150_000);
+  });
+
+  it('non-scoped edit instructions get a fallback deadline', () => {
+    // Previously null = no deadline; agent could explore forever
+    const deadline = deriveFirstEditDeadlineMs('Implement file uploads and comments for Ship.');
+    expect(deadline).not.toBeNull();
+    expect(deadline).toBeGreaterThanOrEqual(120_000);
   });
 });

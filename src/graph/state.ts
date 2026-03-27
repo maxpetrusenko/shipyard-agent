@@ -51,9 +51,30 @@ export interface VerificationResult {
   typecheck_output?: string;
   test_output?: string;
   error_count: number;
+  /** Errors that existed before this run (baseline). */
+  preExistingErrorCount?: number;
+  /** Errors introduced by this run (error_count - preExistingErrorCount). */
+  newErrorCount?: number;
+  /** Hash of pre-run verification output for diffing. */
+  baselineFingerprint?: string;
 }
 
 export type ReviewDecision = 'continue' | 'done' | 'retry' | 'escalate';
+
+export type ExecuteStopReason =
+  | 'step_complete'
+  | 'validated_noop'
+  | 'stalled_no_edit_rounds'
+  | 'guardrail_violation'
+  | 'max_tool_rounds';
+
+export interface ExecutionIssue {
+  kind: 'guardrail' | 'watchdog' | 'max_tool_rounds' | 'coordination';
+  recoverable: boolean;
+  message: string;
+  nextAction: string | null;
+  stopReason: ExecuteStopReason | null;
+}
 
 export interface LoopDiagnostics {
   graphStepCount: number;
@@ -66,6 +87,19 @@ export interface LoopDiagnostics {
   noProgressStreak: number;
   repeatedReviewVerifyCount: number;
   successfulToolOutcomes: number;
+}
+
+export interface ExecuteDiagnostics {
+  noEditToolRounds: number;
+  discoveryCallsBeforeFirstEdit: number;
+  lastBlockingReason: string | null;
+  stopReason:
+    | 'step_complete'
+    | 'validated_noop'
+    | 'stalled_no_edit_rounds'
+    | 'guardrail_violation'
+    | 'max_tool_rounds'
+    | null;
 }
 
 export interface ContextEntry {
@@ -123,6 +157,9 @@ export const ShipyardState = Annotation.Root({
   retryCount: Annotation<number>,
   maxRetries: Annotation<number>,
 
+  // Execution issue (soft recovery signal from execute → verify → review)
+  executionIssue: Annotation<ExecutionIssue | null>,
+
   // Telemetry
   tokenUsage: Annotation<{
     input: number;
@@ -144,6 +181,7 @@ export const ShipyardState = Annotation.Root({
 
   // Graph loop observability
   loopDiagnostics: Annotation<LoopDiagnostics | null>,
+  executeDiagnostics: Annotation<ExecuteDiagnostics | null>,
 
   // Model routing hint
   modelHint: Annotation<'opus' | 'sonnet' | null>,

@@ -34,6 +34,7 @@ vi.mock('../../src/graph/builder.js', () => ({
 vi.mock('../../src/runtime/langsmith.js', () => ({
   isTracingEnabled: () => true,
   canTrace: () => true,
+  isPublicTraceEnabled: () => true,
   buildTraceUrl: () =>
     'https://smith.langchain.com/o/default/projects/p/shipyard/r/fallback-run',
   resolveLangSmithRunUrl: async () => {
@@ -49,6 +50,13 @@ vi.mock('../../src/runtime/persistence.js', () => ({
   saveRunToFile: () => {},
   loadRunsFromFiles: () => [],
   loadRunFromFile: () => null,
+}));
+
+vi.mock('../../src/runtime/run-baselines.js', () => ({
+  captureRunBaseline: async () => {},
+  clearRunBaseline: () => {},
+  detectObservedChangedFiles: async () => [],
+  getBaselineFingerprint: () => null,
 }));
 
 async function waitFor(predicate: () => boolean, timeoutMs = 750): Promise<void> {

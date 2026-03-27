@@ -4,14 +4,14 @@ import type {
   ToolCallRecord,
 } from '../graph/state.js';
 
-const DEFAULT_RECURSION_LIMIT = 80;
-const DEFAULT_SOFT_BUDGET = 56;
+const DEFAULT_RECURSION_LIMIT = 150;
+const DEFAULT_SOFT_BUDGET = 120;
 const MIN_RECURSION_LIMIT = 32;
 const MAX_RECURSION_LIMIT = 400;
 const MIN_SOFT_BUDGET = 12;
 const MAX_IDENTICAL_TRANSITIONS_WITHOUT_PROGRESS = 4;
-const MAX_NO_PROGRESS_STREAK = 9;
-const MAX_REVIEW_VERIFY_REPEAT_STREAK = 4;
+const MAX_NO_PROGRESS_STREAK = 15;
+const MAX_REVIEW_VERIFY_REPEAT_STREAK = 10;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -104,6 +104,7 @@ function reviewVerifySignature(
     state.reviewDecision ?? 'none',
     state.fileEdits.length,
     successfulToolOutcomes,
+    state.retryCount,
   ].join('|');
 }
 
@@ -112,10 +113,13 @@ function dynamicSoftBudget(
   baseSoftBudget: number,
   recursionLimit: number,
 ): number {
+  // Budget: 16 base + 6 rounds/step (read→edit→verify→review) + 4 per retry.
+  // Previous formula (12 + steps*4 + retries*3) was too aggressive for complex
+  // tasks — a 10-step plan would get 52 budget but need ~70 rounds.
   const expected =
-    12 +
-    state.steps.length * 4 +
-    Math.max(0, state.maxRetries) * 3;
+    16 +
+    state.steps.length * 6 +
+    Math.max(0, state.maxRetries) * 4;
   return clamp(
     Math.max(baseSoftBudget, expected),
     MIN_SOFT_BUDGET,
@@ -210,8 +214,7 @@ export function createLoopGuard(params: {
     const reviewVerifyPhase =
       nextState.phase === 'verifying' ||
       nextState.phase === 'reviewing' ||
-      transition === 'reviewing->planning' ||
-      transition === 'planning->executing';
+      transition === 'reviewing->planning';
     const repeatedReviewVerifyCount =
       reviewVerifyPhase && tracker.lastReviewVerifySignature === reviewSig
         ? tracker.diagnostics.repeatedReviewVerifyCount + 1

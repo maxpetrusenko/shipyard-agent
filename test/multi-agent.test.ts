@@ -1,8 +1,14 @@
 import { describe, it, expect } from 'vitest';
+import { resolve } from 'path';
 import { detectConflicts, mergeEdits } from '../src/multi-agent/merge.js';
-import { shouldCoordinate } from '../src/graph/nodes/coordinate.js';
+import {
+  shouldCoordinate,
+  extractSubtaskFiles,
+  markCompletedStepsFromWorkers,
+} from '../src/graph/nodes/coordinate.js';
 import type { WorkerResult } from '../src/multi-agent/worker.js';
 import type { ShipyardStateType } from '../src/graph/state.js';
+import type { SubTask } from '../src/multi-agent/supervisor.js';
 
 // ---------------------------------------------------------------------------
 // Helper: create a WorkerResult with defaults
@@ -226,6 +232,7 @@ describe('mergeEdits', () => {
 // ---------------------------------------------------------------------------
 
 describe('shouldCoordinate', () => {
+  const workFile = (...parts: string[]): string => resolve(process.cwd(), ...parts);
   const baseState: ShipyardStateType = {
     runId: 'test',
     traceId: 'trace',
@@ -266,9 +273,9 @@ describe('shouldCoordinate', () => {
     const state = {
       ...baseState,
       steps: [
-        { index: 0, description: 'step 1', files: ['/src/a.ts'], status: 'pending' as const },
-        { index: 1, description: 'step 2', files: ['/src/b.ts'], status: 'pending' as const },
-        { index: 2, description: 'step 3', files: ['/src/c.ts'], status: 'pending' as const },
+        { index: 0, description: 'step 1', files: [workFile('api', 'a.ts')], status: 'pending' as const },
+        { index: 1, description: 'step 2', files: [workFile('web', 'b.ts')], status: 'pending' as const },
+        { index: 2, description: 'step 3', files: [workFile('docs', 'c.ts')], status: 'pending' as const },
       ],
     };
     expect(shouldCoordinate(state)).toBe(true);
@@ -296,18 +303,29 @@ describe('shouldCoordinate', () => {
     expect(shouldCoordinate(state)).toBe(false);
   });
 
-  it('returns true when some steps are independent and some share', () => {
+  it('returns false when any file is owned by multiple steps', () => {
     const state = {
       ...baseState,
       steps: [
-        { index: 0, description: 'step 1', files: ['/src/a.ts'], status: 'pending' as const },
-        { index: 1, description: 'step 2', files: ['/src/b.ts'], status: 'pending' as const },
-        { index: 2, description: 'step 3', files: ['/src/a.ts'], status: 'pending' as const },
-        { index: 3, description: 'step 4', files: ['/src/c.ts'], status: 'pending' as const },
+        { index: 0, description: 'step 1', files: [workFile('api', 'a.ts')], status: 'pending' as const },
+        { index: 1, description: 'step 2', files: [workFile('web', 'b.ts')], status: 'pending' as const },
+        { index: 2, description: 'step 3', files: [workFile('api', 'a.ts')], status: 'pending' as const },
+        { index: 3, description: 'step 4', files: [workFile('docs', 'c.ts')], status: 'pending' as const },
       ],
     };
-    // Steps 0 and 1 are independent, so should coordinate
-    expect(shouldCoordinate(state)).toBe(true);
+    expect(shouldCoordinate(state)).toBe(false);
+  });
+
+  it('returns false when multiple steps own the same top-level root', () => {
+    const state = {
+      ...baseState,
+      steps: [
+        { index: 0, description: 'step 1', files: [workFile('api', 'routes', 'files.ts')], status: 'pending' as const },
+        { index: 1, description: 'step 2', files: [workFile('api', 'services', 'upload.ts')], status: 'pending' as const },
+        { index: 2, description: 'step 3', files: [workFile('web', 'src', 'hooks', 'useCommentsQuery.ts')], status: 'pending' as const },
+      ],
+    };
+    expect(shouldCoordinate(state)).toBe(false);
   });
 
   it('returns false for strict single-file instructions', () => {
@@ -321,5 +339,109 @@ describe('shouldCoordinate', () => {
       ],
     };
     expect(shouldCoordinate(state)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// markCompletedStepsFromWorkers
+// ---------------------------------------------------------------------------
+
+describe('markCompletedStepsFromWorkers', () => {
+  it('marks steps done when a successful worker claims overlapping files without edits', () => {
+    const steps = [
+      {
+        index: 0,
+        description: 'Wire upload tracker warning',
+        files: ['/repo/src/services/uploadTracker.ts'],
+        status: 'pending' as const,
+      },
+      {
+        index: 1,
+        description: 'Update editor integration',
+        files: ['/repo/web/src/components/editor/DocumentEditor.tsx'],
+        status: 'pending' as const,
+      },
+    ];
+    const subtasks: SubTask[] = [
+      {
+        id: 'worker-1',
+        description: 'Audit and confirm /repo/src/services/uploadTracker.ts already satisfies the contract.',
+        files: ['/repo/src/services/uploadTracker.ts'],
+      },
+      {
+        id: 'worker-2',
+        description: 'Edit /repo/web/src/components/editor/DocumentEditor.tsx for comment wiring.',
+        files: ['/repo/web/src/components/editor/DocumentEditor.tsx'],
+      },
+    ];
+    const results: WorkerResult[] = [
+      makeWorkerResult({
+        subtaskId: 'worker-1',
+        phase: 'done',
+        fileEdits: [],
+      }),
+      makeWorkerResult({
+        subtaskId: 'worker-2',
+        phase: 'done',
+        fileEdits: [],
+      }),
+    ];
+
+    const completed = markCompletedStepsFromWorkers(steps, subtasks, results);
+    expect(completed[0]!.status).toBe('done');
+    expect(completed[1]!.status).toBe('done');
+  });
+
+  it('does not mark steps done from failed workers', () => {
+    const steps = [
+      {
+        index: 0,
+        description: 'Wire comments hook',
+        files: ['/repo/src/hooks/useCommentsQuery.ts'],
+        status: 'pending' as const,
+      },
+    ];
+    const subtasks: SubTask[] = [
+      {
+        id: 'worker-1',
+        description: 'Inspect /repo/src/hooks/useCommentsQuery.ts',
+        files: ['/repo/src/hooks/useCommentsQuery.ts'],
+      },
+    ];
+    const results: WorkerResult[] = [
+      makeWorkerResult({
+        subtaskId: 'worker-1',
+        phase: 'error',
+        error: 'blocked',
+      }),
+    ];
+
+    const completed = markCompletedStepsFromWorkers(steps, subtasks, results);
+    expect(completed[0]!.status).toBe('pending');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractSubtaskFiles
+// ---------------------------------------------------------------------------
+
+describe('extractSubtaskFiles', () => {
+  it('extracts absolute file paths from subtask description', () => {
+    const desc = 'Edit /src/graph/nodes/verify.ts and /src/graph/state.ts to add types.';
+    const files = extractSubtaskFiles(desc);
+    expect(files).toContain('/src/graph/nodes/verify.ts');
+    expect(files).toContain('/src/graph/state.ts');
+    expect(files).toHaveLength(2);
+  });
+
+  it('returns empty for descriptions without paths', () => {
+    const desc = 'Add error handling to the coordinator node.';
+    expect(extractSubtaskFiles(desc)).toHaveLength(0);
+  });
+
+  it('deduplicates repeated paths', () => {
+    const desc = 'Read /src/a.ts then edit /src/a.ts to fix the bug.';
+    const files = extractSubtaskFiles(desc);
+    expect(files).toEqual(['/src/a.ts']);
   });
 });

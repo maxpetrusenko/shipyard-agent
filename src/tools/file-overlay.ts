@@ -91,4 +91,36 @@ export class FileOverlay {
   get dirty(): boolean {
     return this.snapshots.size > 0 || this.created.size > 0;
   }
+
+  /**
+   * Serialize overlay state (original content + created markers) to JSON.
+   * Existing files map to their original content; created files map to null.
+   */
+  serialize(): string {
+    const data: Record<string, string | null> = {};
+    for (const [path, content] of this.snapshots) {
+      data[path] = content;
+    }
+    for (const path of this.created) {
+      data[path] = null;
+    }
+    return JSON.stringify(data);
+  }
+
+  /**
+   * Restore overlay from serialized JSON, enabling rollback without
+   * re-reading (potentially mutated) disk state.
+   */
+  static deserialize(json: string): FileOverlay {
+    const data = JSON.parse(json) as Record<string, string | null>;
+    const overlay = new FileOverlay();
+    for (const [path, content] of Object.entries(data)) {
+      if (content === null) {
+        overlay.created.add(path);
+      } else {
+        overlay.snapshots.set(path, content);
+      }
+    }
+    return overlay;
+  }
 }

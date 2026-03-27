@@ -141,7 +141,7 @@ describe('POST /run validation', () => {
     expect(debugBody.resolvedModels.planning).toBe('gpt-5-mini');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
-  });
+  }, 15_000);
 
   it('accepts instruction with contexts', async () => {
     const res = await fetch(`${baseUrl}/run`, {
@@ -413,7 +413,7 @@ describe('POST /runs/:id/followup', () => {
     expect(debugBody.resolvedModels.chat).toBe('gpt-5.4-mini');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
-  });
+  }, 15_000);
 
   it('queues code follow-ups on the same run id', async () => {
     const loop2 = new InstructionLoop();

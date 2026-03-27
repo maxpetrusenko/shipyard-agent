@@ -219,4 +219,19 @@ describe('Error handling', () => {
     const content = await readFile(fp, 'utf-8');
     expect(content).toBe('created content\n');
   });
+
+  it('rejects directory paths instead of throwing EISDIR', async () => {
+    const dir = join(TEST_DIR, 'a-directory');
+    await mkdir(dir, { recursive: true });
+
+    const result = await editFile({
+      file_path: dir,
+      old_string: 'foo',
+      new_string: 'bar',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.tier).toBe(1);
+    expect(result.message).toContain('Cannot edit directory as file');
+  });
 });

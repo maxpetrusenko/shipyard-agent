@@ -89,6 +89,8 @@ Rules:
 - Use edit_file for surgical changes (preferred over write_file)
 - Use write_file only for new files
 - Make one logical change at a time
+- If converting an existing file into a wrapper, shim, or pure re-export, replace the entire file contents; do not prepend a new export onto the old implementation
+- If a file should only re-export another module, the final file must contain only the wrapper/re-export code plus any required header comments
 - When your subtask is complete, say "SUBTASK_COMPLETE" in your response
 - If you cannot complete the subtask, say "SUBTASK_BLOCKED: <reason>"`;
 

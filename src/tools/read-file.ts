@@ -30,6 +30,9 @@ export async function readFileWithLineNumbers(
     if (code === 'ENOENT') {
       return { success: false, message: `File not found: ${file_path}` };
     }
+    if (code === 'EISDIR') {
+      return { success: false, message: `Cannot read directory as file: ${file_path}. Use the 'ls' tool to list directory contents.` };
+    }
     throw err;
   }
 

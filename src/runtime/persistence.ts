@@ -16,6 +16,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -102,6 +103,8 @@ function serializeRun(result: RunResult): Record<string, unknown> {
     completionStatus: result.completionStatus ?? null,
     cancellation: result.cancellation ?? null,
     loopDiagnostics: result.loopDiagnostics ?? null,
+    executeDiagnostics: result.executeDiagnostics ?? null,
+    errorClassification: result.errorClassification ?? null,
     nextActions: result.nextActions ?? [],
     savedAt: new Date().toISOString(),
   };
@@ -119,7 +122,10 @@ export function saveRunToFile(
   if (!isFilePersistenceEnabled()) return null;
   ensureResultsDir(dir);
   const filePath = join(dir, `${result.runId}.json`);
-  writeFileSync(filePath, JSON.stringify(serializeRun(result), null, 2) + '\n');
+  // Atomic write: tmp file + rename prevents corruption if process crashes mid-write.
+  const tmpPath = `${filePath}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify(serializeRun(result), null, 2) + '\n');
+  renameSync(tmpPath, filePath);
   return filePath;
 }
 
@@ -263,13 +269,27 @@ function parseRunFile(filePath: string): RunResult | null {
         typeof data['loopDiagnostics'] === 'object'
           ? (data['loopDiagnostics'] as RunResult['loopDiagnostics'])
           : null,
+      executeDiagnostics:
+        data['executeDiagnostics'] &&
+        typeof data['executeDiagnostics'] === 'object'
+          ? (data['executeDiagnostics'] as RunResult['executeDiagnostics'])
+          : null,
+      errorClassification:
+        data['errorClassification'] === 'transient' ||
+        data['errorClassification'] === 'scope' ||
+        data['errorClassification'] === 'watchdog' ||
+        data['errorClassification'] === 'recursion' ||
+        data['errorClassification'] === 'abort' ||
+        data['errorClassification'] === 'unknown'
+          ? (data['errorClassification'] as RunResult['errorClassification'])
+          : null,
       nextActions: Array.isArray(data['nextActions'])
         ? (data['nextActions'] as RunResult['nextActions'])
         : [],
       savedAt: typeof data['savedAt'] === 'string' ? data['savedAt'] : undefined,
     };
-  } catch {
-    // Corrupt / unreadable file — skip silently
+  } catch (err) {
+    console.warn(`[persistence] skipping corrupt/unreadable file: ${filePath}`, err);
     return null;
   }
 }

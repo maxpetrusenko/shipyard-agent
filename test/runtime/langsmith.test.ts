@@ -130,9 +130,10 @@ describe('langsmith extended tests', () => {
   // -------------------------------------------------------------------------
 
   describe('resolveLangSmithRunUrl edge cases', () => {
-    it('retries on 404 then succeeds', async () => {
+    it('retries on 404 then succeeds when public enabled', async () => {
       process.env['LANGCHAIN_TRACING_V2'] = 'true';
       process.env['LANGCHAIN_API_KEY'] = 'key';
+      process.env['SHIPYARD_TRACE_PUBLIC'] = 'true';
 
       let attempts = 0;
       const mockClient = {
@@ -152,9 +153,10 @@ describe('langsmith extended tests', () => {
       expect(url).toBeTruthy();
     });
 
-    it('returns null after all retry attempts exhausted', async () => {
+    it('returns null after all retry attempts exhausted when public enabled', async () => {
       process.env['LANGCHAIN_TRACING_V2'] = 'true';
       process.env['LANGCHAIN_API_KEY'] = 'key';
+      process.env['SHIPYARD_TRACE_PUBLIC'] = 'true';
 
       const mockClient = {
         readRunSharedLink: async () => {
@@ -171,6 +173,20 @@ describe('langsmith extended tests', () => {
 
       const url = await resolveLangSmithRunUrl('run-exhaust', mockClient, 2, 0);
       expect(url).toBeNull();
+    });
+
+    it('returns internal URL when public disabled even when API would fail', async () => {
+      process.env['LANGCHAIN_TRACING_V2'] = 'true';
+      process.env['LANGCHAIN_API_KEY'] = 'key';
+      delete process.env['SHIPYARD_TRACE_PUBLIC'];
+
+      const mockClient = {
+        readRunSharedLink: async () => { throw new Error('should not be called'); },
+        shareRun: async () => { throw new Error('should not be called'); },
+      };
+
+      const url = await resolveLangSmithRunUrl('run-internal', mockClient, 2, 0);
+      expect(url).toContain('/r/run-internal');
     });
   });
 });

@@ -21,6 +21,7 @@ import { revertChanges } from './revert-changes.js';
 import type { ToolHooks } from './hooks.js';
 import { runBeforeHooks, runAfterHooks } from './hooks.js';
 import type { FileOverlay } from './file-overlay.js';
+import { traceToolCall } from '../runtime/trace-helpers.js';
 
 // ---------------------------------------------------------------------------
 // Anthropic tool schemas
@@ -306,7 +307,7 @@ export async function dispatchTool(
   if (hooks) await runBeforeHooks(hooks, ctx);
 
   const startTime = Date.now();
-  const result = await dispatchToolRaw(name, input);
+  const result = await traceToolCall(name, input, () => dispatchToolRaw(name, input));
   const duration = Date.now() - startTime;
 
   // After hooks

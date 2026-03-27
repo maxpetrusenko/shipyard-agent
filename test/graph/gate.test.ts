@@ -71,6 +71,7 @@ describe('gateNode', () => {
       modelOverride: 'gpt-5-mini',
       modelFamily: 'openai',
       modelOverrides: null,
+      executionIssue: null,
     });
 
     expect(result.phase).toBe('done');
@@ -127,6 +128,7 @@ describe('gateNode', () => {
       modelOverride: 'gpt-5-mini',
       modelFamily: 'openai',
       modelOverrides: null,
+      executionIssue: null,
     });
 
     expect(result.phase).toBe('done');
@@ -171,6 +173,7 @@ describe('gateNode', () => {
       modelOverride: 'gpt-5-mini',
       modelFamily: 'openai',
       modelOverrides: null,
+      executionIssue: null,
     });
 
     expect(result.phase).toBe('error');

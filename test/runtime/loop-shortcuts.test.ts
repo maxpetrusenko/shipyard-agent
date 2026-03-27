@@ -58,6 +58,13 @@ vi.mock('../../src/runtime/persistence.js', () => ({
   pgRowToRunSummary: () => null,
 }));
 
+vi.mock('../../src/runtime/run-baselines.js', () => ({
+  captureRunBaseline: async () => {},
+  clearRunBaseline: () => {},
+  detectObservedChangedFiles: async () => [],
+  getBaselineFingerprint: async () => null,
+}));
+
 import { InstructionLoop } from '../../src/runtime/loop.js';
 
 async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {

@@ -14,9 +14,11 @@
 3. Iterate on system prompts and tool schemas via conversation
 4. Run `vitest` and `tsc --noEmit` in-session to validate
 
-**Stack**: LangGraph (TypeScript) for the agent graph, Anthropic SDK for LLM calls, LangSmith for tracing, vitest for testing, Express + WebSocket for the server.
+**Stack**: LangGraph (TypeScript) for the agent graph, Anthropic SDK + OpenAI SDK for LLM calls, LangSmith for tracing, vitest for testing, Express + WebSocket for the server.
 
-**Tracing**: LangSmith integration added from the first working graph. Every node transition, tool call, and LLM invocation is traced automatically. Public share links resolved post-run for shareable traces.
+**Tracing**: LangSmith integration added from the first working graph. Every node transition, tool call, and LLM invocation is traced automatically. Public share links resolved post-run for shareable traces. Additional trace instrumentation via `trace-helpers.ts` (`traceIfEnabled`, `traceToolCall`, `traceDecision`, `traceParser`) with output redaction via `trace-redactors.ts`.
+
+**Test scale** (as of 2026-03-27): 805 tests across 68 files. 802 pass, 3 pre-existing failures in `github-thread-continuity.test.ts` (event dedup race condition). Vitest, ~24s.
 
 ---
 
@@ -143,8 +145,8 @@ Contexts are injected as markdown sections appended to system prompts. The label
 
 | Category | Estimate | Examples |
 |----------|----------|---------|
-| AI-generated | ~95% | Graph nodes, tool implementations, server routes, WebSocket handlers, test suites, state management, multi-agent scaffolding |
-| Hand-written | ~5% | `.env` configuration, `bench.sh` script tuning (awk/grep parsing, variable sanitization), `setup-target.sh`, model policy constants, `tsconfig.json` |
+| AI-generated | ~95% | Graph nodes (plan, execute, verify, review, error-recovery, gate, coordinate), tool implementations (4-tier edit, bash, grep, glob, file overlay, commit-and-open-pr, revert-changes), server routes + invoke routes + webhook handlers, dashboard (10 module files: sidebar, timeline, debug modal, settings, composer, retry, header, preferences, shortcuts, detail), run contract v1, trace helpers + redactors, LLM layer (Anthropic + OpenAI message compaction, tool dispatch), multi-agent scaffolding, 805 tests across 68 files |
+| Hand-written | ~5% | `.env` configuration, `bench.sh` script tuning (awk/grep parsing, variable sanitization), `setup-target.sh`, `run-rebuild.sh`, model policy constants, `tsconfig.json` |
 
 The hand-written portions were almost entirely operational: environment setup, shell script debugging (parsing test output reliably in bash), and configuration values. All TypeScript application code was AI-generated.
 
@@ -157,8 +159,10 @@ The hand-written portions were almost entirely operational: environment setup, s
 - **Boilerplate and scaffolding**: Express server, WebSocket handlers, route definitions, middleware, error handlers. Generated correctly on first attempt.
 - **Tool schemas and validation**: Zod schemas, TypeScript interfaces, tool dispatch patterns. The LLM produced well-typed, consistent schemas.
 - **System prompt engineering**: Iterating on prompts was fast. Claude Code could explain why a prompt phrasing would cause specific failure modes and propose alternatives.
-- **Test suites**: Generated comprehensive test cases including edge cases (empty strings, multiple matches, file-not-found) that matched the implementation.
+- **Test suites**: Generated comprehensive test cases including edge cases (empty strings, multiple matches, file-not-found) that matched the implementation. Scaled from 226 to 805 tests across 68 files as features were added.
 - **Architecture documentation**: PRESEARCH.md, CODEAGENT.md sections, mermaid diagrams, interface contracts. High-quality first drafts.
+- **Dashboard modules**: The 10-file server-rendered dashboard (sidebar, timeline, debug modal, settings, composer, retry, header, preferences, shortcuts, detail) was generated module-by-module with clean separation of concerns.
+- **Run contract and ingress unification**: The `RunIngressMeta` v1 schema with factory, validation, and migration was generated in a single pass with correct forward-compatibility semantics.
 
 ### Where AI Struggled
 
@@ -166,6 +170,7 @@ The hand-written portions were almost entirely operational: environment setup, s
 - **Getting the agent to complete full tasks end-to-end**: The agent would sometimes stop after partial completion, or loop on verification failures without making meaningful progress. Required careful `STEP_COMPLETE` signaling and retry limit enforcement.
 - **LangGraph API surface**: The TypeScript LangGraph SDK had some patterns (conditional edges, `Send()` for parallel dispatch) that required reading source code and examples rather than relying on the LLM's training data.
 - **Environment-specific issues**: OAuth token retrieval from macOS Keychain, Doppler secret injection, and LangSmith environment variable naming (modern `LANGSMITH_*` vs legacy `LANGCHAIN_*`) all required manual debugging.
+- **Multi-agent file conflicts**: The coordinator's merge step can fail when parallel workers edit the same file region. This surfaced during rebuild step 04 and required manual intervention to serialize workers on high-overlap files.
 
 ---
 
@@ -180,6 +185,36 @@ The hand-written portions were almost entirely operational: environment setup, s
 4. **Separate planning from execution**. Using Opus for planning/review and Sonnet for execution was the right split. Opus produces better plans and catches more issues in review. Sonnet is fast and cheap for mechanical tool use. Mixing both roles in one model led to worse outcomes than specialization.
 
 5. **Shell scripts need human attention**. AI-generated bash was the least reliable output. Variable quoting, pipe parsing, cross-platform date commands, and `set -euo pipefail` interactions all required hand-tuning. For operational scripts, expect 2-3 rounds of manual debugging.
+
+6. **Multi-agent coordination needs file-level awareness.** When the coordinator decomposes a task and dispatches parallel workers, it must account for file overlap. Region-level conflict detection works for non-overlapping edits on the same file, but overlapping regions cause merge failures. The fix is to serialize workers that touch the same file region, or reduce parallelism for tasks with high file overlap. This was discovered during the rebuild (step 04) when multiple workers tried to edit a shared routes file.
+
+7. **Run contract unification pays off early.** Having every ingress path (REST, invoke, webhook, retry) emit the same `RunIngressMeta` object made dashboard, persistence, and observability code simpler. Schema versioning and migration (`migrateSchema()`) was added from v1, which proved useful immediately when adding retry and batch ingress paths.
+
+---
+
+## Rebuild Progress
+
+*Updated 2026-03-27.*
+
+The Ship rebuild pipeline was attempted against fresh clones of `ship-refactored`, but the full rebuild was **not completed**. The final traced target was `/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c`.
+
+| Step | Status | Notes |
+|------|--------|-------|
+| 03 - database schema | **Completed with intervention** | Agent produced canonical schema/migration files; final export fixes were applied manually, then `pnpm type-check` and `pnpm test` passed on the rebuild target |
+| 04 - auth/session | **Blocked / incomplete** | Longest traced attempt failed on a coordinator merge conflict; later single-agent rerun exposed import-path + CSRF drift |
+| 05 - document CRUD | Not started | Blocked on 04 |
+| 06 - realtime collab | Not started | Blocked on 04/05 |
+| 07 - React frontend | Not started | Blocked on 04-06 |
+| 08 - TipTap editor | Not started | Blocked on 04-07 |
+| 09 - file uploads | Not started | Blocked on 04-08 |
+
+**Longest traced rebuild attempt**: run `a6ea2992-ae30-4f7f-a846-f400c9545b0f`, `744260ms` (12m 24s), `5,863,039` input tokens / `62,243` output tokens, failed on a coordinator merge conflict in `api/src/services/audit.ts`. Trace: `https://smith.langchain.com/o/default/projects/p/ship-agent/r/a6ea2992-ae30-4f7f-a846-f400c9545b0f`
+
+**What we did achieve**:
+- real traced rebuild attempts against fresh Ship clones
+- a validated step 03 rebuild on the rerun target
+- runtime fixes to polling, multi-agent coordination gating, and rebuild bootstrapping
+- a concrete diagnosis of the remaining step 04 blockers (`@ship/shared` import-path drift and `/api/auth` CSRF wiring)
 
 ---
 

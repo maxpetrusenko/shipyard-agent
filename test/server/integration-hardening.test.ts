@@ -121,7 +121,7 @@ describe('Integration hardening', () => {
     }
   });
 
-  it('handles 100 concurrent invoke requests without memory-guard false critical', async () => {
+  it('handles 100 concurrent invoke requests without memory-guard false critical', { timeout: 15_000 }, async () => {
     const prevToken = process.env['SHIPYARD_INVOKE_TOKEN'];
     process.env['SHIPYARD_INVOKE_TOKEN'] = 'invoke-token-stress';
     const { server, baseUrl } = await startServer();

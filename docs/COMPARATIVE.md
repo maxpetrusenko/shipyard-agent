@@ -6,7 +6,7 @@
 
 ## 1. Executive Summary
 
-Ship-agent is a LangGraph-based autonomous coding agent that decomposes natural-language instructions into multi-step plans, executes them via surgical file edits, verifies correctness through automated typecheck and test runs, and gates quality with an Opus-powered review loop. The architecture routes Opus 4.6 for planning and review (high reasoning) and Sonnet 4.5 for execution and verification (speed), connected through a 6-node state graph: plan, execute, verify, review, error_recovery, and report. File editing uses a 4-tier anchor-based cascade (exact match, whitespace-normalized, fuzzy Levenshtein, full rewrite) implemented in 252 lines of TypeScript. Multi-agent coordination follows a supervisor/worker pattern with conflict detection and merge logic. The rebuild of the Ship app was directed entirely through this agent, with 9 structured instruction files covering strict TypeScript, tool modularization, database schema, auth, CRUD APIs, realtime collaboration, React frontend, rich-text editing, and file uploads. The agent produced approximately 4,058 lines of source code across 38 files, backed by 248 test cases across 18 test files. The process exposed real limitations: the agent under-completed broad codebase-wide tasks, struggled with cross-file refactors, and the bench harness had persistent shell-scripting failures. These are documented honestly below.
+Ship-agent is a LangGraph-based autonomous coding agent that decomposes natural-language instructions into multi-step plans, executes them via surgical file edits, verifies correctness through automated typecheck and test runs, and gates quality with an LLM-powered review loop. The architecture defaults to OpenAI-first routing (GPT-5.4 for planning and review, GPT-5.4-mini for execution) with Anthropic (Opus 4.6 / Sonnet 4.5) available as a switchable model family, connected through a 6-node state graph: plan, execute, verify, review, error_recovery, and report. File editing uses a 4-tier anchor-based cascade (exact match, whitespace-normalized, fuzzy Levenshtein, full rewrite) implemented in TypeScript. Multi-agent coordination follows a supervisor/worker pattern with conflict detection and merge logic (known merge conflict issue actively being hardened). The codebase currently contains approximately 25,500 lines of source code across 116 files, backed by 805 test cases across 68 test files (802 passing, 3 failing as of 2026-03-27). The rebuild of the Ship app is directed through this agent, with 9 structured instruction files covering strict TypeScript, tool modularization, database schema, auth, CRUD APIs, realtime collaboration, React frontend, rich-text editing, and file uploads. The rebuild pipeline is actively running against a ship-refactored clone: Step 03 (database schema) is complete, Step 04 (auth) is retrying, Steps 05-09 are queued. The process has exposed real limitations: the agent under-completes broad codebase-wide tasks, struggles with cross-file refactors, and multi-agent parallel writes to shared files cause conflicts. These are documented honestly below.
 
 ---
 
@@ -26,13 +26,13 @@ The agent-built version, by contrast, emerged incrementally. Each instruction fi
 
 3. **Defensive prompting over defensive code.** The review node (`src/graph/nodes/review.ts`, lines 17-37) contains extensive completeness heuristics in the system prompt: "If the instruction says 'all files' but only 1-3 were edited, that is INCOMPLETE." A human developer does not need prompt engineering to remember to check all files. This defensive layer exists because the agent, left unchecked, stops after touching one or two files on codebase-wide tasks.
 
-4. **Flat file structure.** The agent created 38 source files organized into `graph/`, `tools/`, `multi-agent/`, `config/`, `server/`, `runtime/`, and `context/` directories. This is a reasonable structure, but it was assembled directory-by-directory as features were added, not designed upfront. A human would likely co-locate related concerns differently (e.g., keeping `hooks.ts` and `file-overlay.ts` inside the `graph/` directory rather than `tools/`, since they serve graph execution).
+4. **Flat file structure.** The agent created 116 source files organized into `graph/`, `tools/`, `multi-agent/`, `config/`, `server/`, `runtime/`, `llm/`, `context/`, and `constants/` directories. This is a reasonable structure, but it was assembled directory-by-directory as features were added, not designed upfront. A human would likely co-locate related concerns differently (e.g., keeping `hooks.ts` and `file-overlay.ts` inside the `graph/` directory rather than `tools/`, since they serve graph execution).
 
 5. **No shared type package.** The agent did not create a separate `types/` or `shared/` package for interfaces used across modules. Instead, `src/graph/state.ts` exports types (`FileEdit`, `ToolCallRecord`, `ContextEntry`) that are imported by tools, multi-agent modules, and server code. A human designing for a monorepo would extract these into a standalone package to enforce dependency direction.
 
 ### What the agent got right
 
-The LangGraph state annotation pattern (`src/graph/state.ts`) cleanly separates concerns: 24 state fields covering identity, phase tracking, plan steps, execution history, verification results, review decisions, context injection, error tracking, and telemetry. This is well-structured and would not look out of place in a human-authored codebase.
+The LangGraph state annotation pattern (`src/graph/state.ts`) cleanly separates concerns with typed state fields covering identity, phase tracking, plan steps, execution history, verification results, review decisions, context injection, error tracking, model routing, and telemetry. This is well-structured and would not look out of place in a human-authored codebase.
 
 The conditional edge routing (`src/graph/edges.ts`) is minimal and correct: 3 functions, 52 lines, mapping review decisions to graph transitions. No over-engineering.
 
@@ -44,12 +44,13 @@ The conditional edge routing (`src/graph/edges.ts`) is minimal and correct: 3 fu
 
 | Metric | Value | Source |
 |--------|-------|--------|
-| Source code produced | 4,058 LOC across 38 files | `wc -l src/**/*.ts` |
-| Test cases | 248 across 18 test files | `grep -c 'it(\|test(' test/**/*.test.ts` |
-| Baseline target tests (Ship) | 721 passing | `results/baseline.json` |
+| Source code produced | ~25,500 LOC across 116 files | `find src -name '*.ts' -exec cat {} + \| wc -l` |
+| Test cases | 805 across 68 test files (802 passing, 3 failing) | `npx vitest run` as of 2026-03-27 |
 | Type-check status | Clean (`pnpm type-check` passes) | Verify node runs `pnpm type-check 2>&1` on every cycle |
 | Instruction files | 9 structured tasks | `instructions/*.md` |
-| Bench runs recorded | 35 result files | `results/*.json` |
+| Rebuild status | Step 03 done, Step 04 retrying, Steps 05-09 queued | Pipeline running against ship-refactored clone |
+| Model routing | OpenAI-first default (GPT-5.4 / 5.4-mini), Anthropic switchable | `src/config/model-policy.ts` |
+| Dashboard | Server-rendered HTML with WebSocket live updates | `src/server/dashboard*.ts`, `src/server/ws.ts` |
 
 ### Edit tier distribution (design target vs. observed)
 
@@ -123,7 +124,7 @@ A human developer using TypeScript's `F2` rename refactoring does this atomicall
 
 ### 4.4 Limited single-pass codebase understanding
 
-The plan node (`src/graph/nodes/plan.ts`) explores the codebase via tool calls (read_file, grep, glob, ls). It has 30 tool rounds (line 97) to build its understanding. For a codebase with 38 source files, this is sufficient. For a larger codebase (500+ files), the agent would need to read selectively, and its file selection is guided by grep patterns that may miss relevant code.
+The plan node (`src/graph/nodes/plan.ts`) explores the codebase via tool calls (read_file, grep, glob, ls). It has 30 tool rounds to build its understanding. For the current codebase (116 source files, ~25.5K LOC), this is generally sufficient but sometimes misses distant dependencies. For a larger codebase (500+ files), the agent would need to read selectively, and its file selection is guided by grep patterns that may miss relevant code.
 
 The agent has no persistent codebase index. Every new instruction starts fresh. It cannot say "I know from previous runs that the database types are in `shared/types/database.ts`." Context injection partially addresses this (the `contexts` field in state), but injected context is ephemeral and must be re-provided.
 
@@ -135,9 +136,9 @@ The Anthropic client (`src/config/client.ts`) handles OAuth token retrieval from
 
 The review node sometimes approves incomplete work when the verification (typecheck + tests) passes. Typecheck passing does not mean the instruction was fully satisfied. The review prompt attempts to catch this with completeness heuristics, but Opus can be convinced by a partial implementation that "looks done" if the remaining work would not cause type errors.
 
-### 4.7 No streaming output
+### 4.7 Streaming partially implemented
 
-The server returns results only after the full run completes. During a 5-15 minute codebase-wide task, the user sees only polling phase updates ("planning", "executing", "verifying"). There is no streaming of individual tool calls or partial results. The WebSocket handler (`src/server/ws.ts`) supports `state_update` messages, but the graph nodes do not emit incremental updates mid-execution.
+The server now uses `graph.stream()` with WebSocket live updates (`src/server/ws.ts`) and a server-rendered dashboard with real-time timeline views (`src/server/dashboard-timeline.ts`). Phase transitions and state updates are pushed to connected clients. However, individual tool call outputs within an execution step are not yet streamed granularly -- the user sees phase-level updates ("planning", "executing step 3/7", "verifying") rather than token-by-token or per-tool-call output.
 
 ---
 
@@ -167,9 +168,9 @@ Every file in `src/` follows the same patterns: JSDoc block comment at the top e
 
 ### 5.3 Exhaustive test generation
 
-248 test cases across 18 test files. The agent generates edge-case tests that a human might skip: empty string inputs, multiple match scenarios, file-not-found paths, malformed JSON recovery, WebSocket invalid frames. The `test/tools/bash.test.ts` file alone has 22 test cases covering every blocked pattern (`rm -rf /`, fork bombs, pipe-into-sh, etc.).
+805 test cases across 68 test files (802 passing, 3 failing as of 2026-03-27). The agent generates edge-case tests that a human might skip: empty string inputs, multiple match scenarios, file-not-found paths, malformed JSON recovery, WebSocket invalid frames, XSS injection, security hardening, deduplication regressions, and audit logging. The `test/tools/bash.test.ts` file alone has 22 test cases covering every blocked pattern (`rm -rf /`, fork bombs, pipe-into-sh, etc.).
 
-The test generation is fast because the agent can produce test scaffolding in one tool-call round. A human writing 22 bash safety tests would spend 30-60 minutes; the agent generates them in one execution cycle.
+The test generation is fast because the agent can produce test scaffolding in one tool-call round. A human writing 22 bash safety tests would spend 30-60 minutes; the agent generates them in one execution cycle. The growth from ~248 to 805 tests happened incrementally as new server modules (dashboard, auth scopes, dedupe store, error budget, memory guard, etc.) were added and each module got dedicated test coverage.
 
 ### 5.4 Zero typos in boilerplate
 
@@ -177,7 +178,7 @@ No misspelled variable names, no mismatched bracket counts, no off-by-one errors
 
 ### 5.5 Structured documentation generation
 
-PRESEARCH.md (1209 lines), CODEAGENT.md (366 lines), and AI-DEV-LOG.md (183 lines) were all generated through agent sessions. The documentation is comprehensive, internally consistent, and includes concrete code examples, interface definitions, and decision rationale. A human writing this volume of documentation would spend a full day; the agent produced it as a side effect of the development conversation.
+PRESEARCH.md (1200+ lines), CODEAGENT.md, AI-DEV-LOG.md, AI-COST.md, COMPARATIVE.md (this file), and README.md were all generated or updated through agent sessions. The documentation is comprehensive, internally consistent, and includes concrete code examples, interface definitions, and decision rationale. A human writing this volume of documentation would spend a full day; the agent produced it as a side effect of the development conversation.
 
 ### 5.6 Hook-based instrumentation
 
@@ -187,19 +188,19 @@ The tool hooks system (`src/tools/hooks.ts`, 163 lines) cleanly separates record
 
 ## 6. Trade-off Analysis
 
-### 6.1 Opus for planning/review vs. cheaper model
+### 6.1 Model routing: multi-provider with tiered reasoning
 
-**Decision**: Use Opus 4.6 ($15/M input, $75/M output) for planning and review; Sonnet 4.5 ($3/M input, $15/M output) for execution and verification.
+**Decision**: Default to OpenAI-first routing (GPT-5.4 for planning/review, GPT-5.4-mini for execution/verification/chat) with Anthropic (Opus 4.6 / Sonnet 4.5) as a switchable model family. Per-stage model overrides are supported via env vars (`SHIPYARD_PLANNING_MODEL`, etc.) or API request parameters.
 
-**Defined in**: `src/config/model-policy.ts`, lines 14-40.
+**Defined in**: `src/config/model-policy.ts` -- `MODEL_CONFIGS`, `FAMILY_DEFAULT_MODELS`, `getResolvedModelConfig()`.
 
-**Was it the right call?** Yes. The planning phase requires multi-step reasoning: read the instruction, explore the codebase via tool calls, identify all affected files, decompose into ordered steps. Sonnet produces narrower plans (fewer files, fewer steps) that lead to the under-completion problem described in Section 4.1. Opus plans are more thorough, especially for codebase-wide tasks.
+**Was it the right call?** Yes. The planning phase requires multi-step reasoning: read the instruction, explore the codebase via tool calls, identify all affected files, decompose into ordered steps. Cheaper models produce narrower plans (fewer files, fewer steps) that lead to the under-completion problem described in Section 4.1. GPT-5.4 and Opus plans are more thorough, especially for codebase-wide tasks.
 
-The review phase benefits from Opus for the same reason: it must judge whether the instruction was *fully* satisfied, not just whether the code compiles. Sonnet tends to approve partial implementations.
+The review phase benefits from the same tier of model: it must judge whether the instruction was *fully* satisfied, not just whether the code compiles. Smaller models tend to approve partial implementations.
 
-**Cost impact**: On Max plan, zero incremental cost. On standard API pricing, Opus calls represent approximately 20% of total calls but 60% of total cost. This split is worth it: saving $0.10 per run by downgrading review would increase the retry rate and total cost.
+**Cost impact**: On Max plan (Anthropic family), zero incremental cost. On standard API pricing with OpenAI defaults: GPT-5.4 ($2.50/M input, $10/M output) is significantly cheaper than Opus ($15/M input, $75/M output) while providing comparable planning quality. GPT-5.4-mini ($0.25/M input, $2/M output) handles execution at very low cost.
 
-**What would change**: If targeting cost-sensitive production use, the fast-path review optimization (line 50 of `review.ts` skips Opus when steps remain and verification passed) could be extended. Most runs hit the fast path for intermediate steps, only invoking Opus on the final review.
+**What would change**: The `getRateLimitFallbackModel()` function already handles cross-model failover within each provider. Cross-provider failover (e.g., OpenAI rate-limited, fall back to Anthropic) is not yet implemented but the architecture supports it.
 
 ### 6.2 Anchor-based editing vs. AST-based editing
 
@@ -265,9 +266,9 @@ Prefix caching matters even on Max plan: cached prefixes process faster (lower l
 
 ### 7.2 Implement context compaction earlier
 
-The context compaction mechanism (structured summary using the OpenCode pattern, described in PRESEARCH.md Section 9) was designed but not fully wired into the runtime loop. For runs with 10+ execution cycles, the conversation history grows and eventually hits the context window. The `checkBudget()` function was designed (`PRESEARCH.md`, lines 766-773) but compaction was deferred as a post-MVP feature.
+Context compaction is now implemented (`src/llm/message-compaction.ts`, `src/llm/openai-message-compaction.ts`) and wired into the runtime loop. For runs with 10+ execution cycles, the conversation history is compacted to prevent context window exhaustion. Both Anthropic and OpenAI message formats have dedicated compaction logic.
 
-In hindsight, compaction should have been implemented alongside the verify-retry loop, because retry loops are the primary source of context bloat: each retry adds the full plan, execute, verify, and review conversation to the history.
+In hindsight, compaction should have been implemented alongside the verify-retry loop from the start, because retry loops are the primary source of context bloat: each retry adds the full plan, execute, verify, and review conversation to the history. The late addition required touching multiple call sites.
 
 ### 7.3 Use git worktrees for worker isolation
 
@@ -283,11 +284,9 @@ The agent is accessible only via REST API (`POST /api/run`) and WebSocket (`/ws`
 
 The CLI could also support `--watch` mode (re-run on file changes), `--dry-run` (show plan without executing), and `--interactive` (approve each step). These modes are natural for a CLI but awkward to retrofit onto a REST API.
 
-### 7.5 Add streaming output
+### 7.5 Add streaming output -- partially addressed
 
-The current architecture completes the full graph before returning results. The WebSocket handler supports `state_update` messages, but nodes do not emit incremental updates. A 10-minute run produces no feedback until completion.
-
-LangGraph supports streaming via `app.stream()`. Each node transition and tool call can be streamed to the client as it happens. This would require changing from `app.invoke()` to `app.stream()` in the runtime loop and wiring the stream events to the WebSocket handler.
+The runtime now uses `graph.stream()` instead of `graph.invoke()`, and WebSocket live updates push phase transitions to connected clients. The server-rendered dashboard (`src/server/dashboard.ts`, `src/server/dashboard-timeline.ts`) shows real-time run progress. However, granular per-tool-call streaming within execution steps is not yet implemented. For a 10-minute run, the user now sees phase-level progress but not individual tool call outputs as they happen.
 
 ### 7.6 Persistent codebase index
 

@@ -53,6 +53,7 @@ function baseState() {
     modelOverride: null,
     modelFamily: null,
     modelOverrides: null,
+    executionIssue: null,
   } as const;
 }
 
@@ -77,5 +78,22 @@ describe('reportNode PR fallback', () => {
     expect(commitAndOpenPrMock).not.toHaveBeenCalled();
     const last = out.messages?.at(-1)?.content ?? '';
     expect(last).toContain('PR: created during execute step');
+  });
+
+  it('preserves fatal runs as error instead of marking them done', async () => {
+    hasSuccessfulPrToolCallMock.mockReturnValue(false);
+
+    const out = await reportNode({
+      ...baseState(),
+      phase: 'error',
+      reviewDecision: 'escalate',
+      reviewFeedback: 'Explicit target missing after repository search.',
+      error: 'Fatal: max retries (3) exhausted. Last error: explicit target missing.',
+    } as any);
+
+    expect(out.phase).toBe('error');
+    const last = out.messages?.at(-1)?.content ?? '';
+    expect(last).toContain('Outcome: FAILED');
+    expect(last).toContain('Fatal: max retries');
   });
 });

@@ -22,6 +22,9 @@ export function normalizePath(value: string): string {
 function looksLikePathToken(token: string): boolean {
   if (!token.includes('/')) return false;
   if (token.startsWith('http://') || token.startsWith('https://')) return false;
+  // Reject extension lists like ".exe/.bat/.sh/.dll" where every segment starts with "."
+  const segments = token.split('/').filter(Boolean);
+  if (segments.length > 0 && segments.every((s) => s.startsWith('.'))) return false;
   return /\.[a-zA-Z0-9]{1,8}$/.test(token);
 }
 
@@ -116,8 +119,11 @@ export function evaluateScopeGuard(
 
   if (constraints.disallowUnrelatedFiles) {
     const planned = uniquePlannedPaths(state.steps);
-    if (planned.length > 0) {
-      const outsidePlan = edited.filter((p) => !pathMatchesAny(p, planned));
+    // Merge explicit instruction files into the allowed set — if the instruction
+    // names a file it's always in-scope even if the planner omitted it from steps.
+    const allowed = [...planned, ...constraints.explicitFiles];
+    if (allowed.length > 0) {
+      const outsidePlan = edited.filter((p) => !pathMatchesAny(p, allowed));
       if (outsidePlan.length > 0) {
         return {
           ok: false,
@@ -130,12 +136,32 @@ export function evaluateScopeGuard(
   return { ok: true, reason: null };
 }
 
+// Truly read-only prefixes — "document" and "review" are ambiguous (can imply edits) so excluded
+const INFORMATIONAL_PREFIXES = [
+  /^\s*(explain|describe|how\s+do\s+i|what\s+is|what\s+are|list\s|show\s|tell\s+me|summarize|outline|overview|analyze)\b/i,
+];
+
+const EDIT_INTENT_PATTERNS = [
+  /\b(make|apply|add|update|change|edit|modify|fix|refactor|implement|create|write|remove|delete|replace|rename|move|insert|patch|document)\b/,
+  /\bbugfix\b/,
+  /\bplease\b.*\b(make|apply|add|update|change|edit|modify|fix|refactor|implement)\b/,
+];
+
 export function shouldRequireEdits(instruction: string): boolean {
   const text = instruction.toLowerCase();
-  return anyInstructionMatch(text, [
-    /\b(make|apply|add|update|change|edit|modify|fix|refactor|implement)\b/,
-    /\bbugfix\b/,
-  ]);
+  const hasEditIntent = anyInstructionMatch(text, EDIT_INTENT_PATTERNS);
+  if (!hasEditIntent) return false;
+  // Informational prefix bypasses unless there's also explicit file path or edit verb
+  const isInformational = INFORMATIONAL_PREFIXES.some((p) => p.test(text));
+  if (isInformational) {
+    // File path in instruction → almost certainly an edit task
+    if (parseExplicitFiles(text).length > 0) return true;
+    // Conjunctive edit verb alongside informational prefix
+    return anyInstructionMatch(text, [
+      /\b(?:and|then|also)\s+(?:make|apply|add|update|change|edit|modify|fix|refactor|implement)\b/,
+    ]);
+  }
+  return true;
 }
 
 export function constrainPlanStepsToScope(
@@ -182,8 +208,8 @@ export function deriveDiscoveryCallLimit(instruction: string): number | null {
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   const constraints = deriveScopeConstraints(instruction);
-  if (constraints.strictSingleFile) return 8;
-  if (constraints.disallowUnrelatedFiles) return 10;
+  if (constraints.strictSingleFile) return 12;
+  if (constraints.disallowUnrelatedFiles) return 18;
   return null;
 }
 
@@ -201,8 +227,11 @@ export function deriveFirstEditDeadlineMs(instruction: string): number | null {
     }
   }
   const constraints = deriveScopeConstraints(instruction);
-  if (constraints.strictSingleFile) return 75_000;
-  if (constraints.disallowUnrelatedFiles) return 90_000;
+  if (constraints.strictSingleFile) return 120_000;
+  if (constraints.disallowUnrelatedFiles) return 150_000;
+  // Non-scoped edit instructions still get a generous deadline to prevent
+  // infinite exploration loops (was null → no limit, which let runs stall).
+  if (shouldRequireEdits(instruction)) return 180_000;
   return null;
 }
 
@@ -286,7 +315,8 @@ export function evaluateCandidateEditPath(params: {
   }
   if (constraints.disallowUnrelatedFiles) {
     const planned = uniquePlannedPaths(params.steps);
-    if (planned.length > 0 && !pathMatchesAny(candidate, planned)) {
+    const allowed = [...planned, ...constraints.explicitFiles];
+    if (allowed.length > 0 && !pathMatchesAny(candidate, allowed)) {
       return {
         ok: false,
         reason: `Refusing edit outside planned scope: ${candidate}`,

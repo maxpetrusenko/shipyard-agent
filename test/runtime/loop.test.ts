@@ -14,7 +14,12 @@ let liveFeedListener:
   | null = null;
 let liveToolDetail: string | null = null;
 let streamDelayMs = 0;
-let streamScenario: 'done' | 'recursion_error' | 'soft_budget_loop' | 'review_verify_loop' = 'done';
+let streamScenario:
+  | 'done'
+  | 'recursion_error'
+  | 'soft_budget_loop'
+  | 'review_verify_loop'
+  | 'watchdog_execute_diag' = 'done';
 
 async function waitFor(
   predicate: () => boolean,
@@ -57,6 +62,12 @@ vi.mock('../../src/graph/builder.js', () => ({
             throw err;
           }
 
+          if (streamScenario === 'watchdog_execute_diag') {
+            throw new Error(
+              'Watchdog: execution stalled after 8 consecutive no-edit tool rounds. Next action: run one edit_file call. Execute diagnostics: {"noEditToolRounds":8,"discoveryCallsBeforeFirstEdit":13,"lastBlockingReason":"edit_file: Refusing edit outside explicit targets: /tmp/a.ts","stopReason":"stalled_no_edit_rounds"}',
+            );
+          }
+
           if (liveToolDetail) {
             liveFeedListener?.({
               type: 'tool',
@@ -83,7 +94,7 @@ vi.mock('../../src/graph/builder.js', () => ({
           }
 
           if (streamScenario === 'review_verify_loop') {
-            for (let i = 0; i < 5; i += 1) {
+            for (let i = 0; i < 7; i += 1) {
               yield {
                 verify: {
                   phase: 'reviewing',
@@ -140,6 +151,13 @@ vi.mock('../../src/runtime/persistence.js', () => ({
   saveRunToFile: () => {},
   loadRunsFromFiles: () => [],
   loadRunFromFile: () => null,
+}));
+
+vi.mock('../../src/runtime/run-baselines.js', () => ({
+  captureRunBaseline: async () => {},
+  clearRunBaseline: () => {},
+  detectObservedChangedFiles: async () => [],
+  getBaselineFingerprint: () => null,
 }));
 
 // ---------------------------------------------------------------------------
@@ -489,6 +507,31 @@ describe('InstructionLoop', () => {
       expect(run?.error).toContain('no progress');
       expect(run?.loopDiagnostics?.stopReason).toBe('no_progress');
       expect(run?.loopDiagnostics?.noProgressReason).toContain('review/verify');
+    });
+
+    it('captures execute watchdog diagnostics from stalled error output', async () => {
+      streamScenario = 'watchdog_execute_diag';
+      const id = loop.submit('implement auth', undefined, false, 'code');
+      await waitFor(() => loop.getRun(id)?.phase === 'error');
+
+      const run = loop.getRun(id) as any;
+      expect(run?.error).toContain('Watchdog: execution stalled');
+      expect(run?.executeDiagnostics?.noEditToolRounds).toBe(8);
+      expect(run?.executeDiagnostics?.discoveryCallsBeforeFirstEdit).toBe(13);
+      expect(run?.executeDiagnostics?.lastBlockingReason).toContain(
+        'Refusing edit outside explicit targets',
+      );
+      expect(run?.executeDiagnostics?.stopReason).toBe('stalled_no_edit_rounds');
+      expect(run?.errorClassification).toBe('watchdog');
+    });
+
+    it('classifies recursion limit errors', async () => {
+      streamScenario = 'recursion_error';
+      const id = loop.submit('implement auth', undefined, false, 'code');
+      await waitFor(() => loop.getRun(id)?.phase === 'error');
+
+      const run = loop.getRun(id) as any;
+      expect(run?.errorClassification).toBe('recursion');
     });
 
     it('lets ask follow-ups adopt fresh model settings', async () => {

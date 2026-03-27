@@ -1,12 +1,15 @@
 # AGENTS.MD
 
-Max owns this. Start: say hi + 1 motivating line.
 Work style: telegraph; noun-phrases ok; drop grammar; min tokens.
-At every stop, output: Progress: X% / 100% (against original plan), Scope additions: (user-requested), and Agent additions: (all agent-initiated work with [related] or [unrelated] tags; no omissions).
+
 
 ## Agent Protocol
 - Contact: Max Petrusenko (@maxpetrusenko, max.petrusenko@gmail.com).
-- If prompt ambiguous -> propose 3 interpretations. try to actually think what user would want and ask again ( re frame )
+- If prompt ambiguous -> propose 3 interpretations -> iterate promp quality until 10\10 -> ask again if not clear. 
+  - example my prompt:  fix every issue one by one .let me know when done.
+  - example your reply: Process issues one by one → diagnose root cause → implement fix → validate (tests + edge cases) → confirm no regressions → proceed to next → final completion report (fixes, validations, residual risks)
+  - example new app: requirements → presearch → design sketch → synthesis doc → PRD/MVP boundary → architecture → implementation readiness → epics/stories → dev implementation
+  - example iteration : tracer bullets concept -> iterate until 10\10
 - Workspace: `/Users/maxpetrusenko/Desktop/Projects`.
 - if need embeddigns us Gemini Embedding 2 https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-embedding-2/
 - `/Users/maxpetrusenko/Desktop/Projects/manager`: private ops (domains/DNS, redirects/workers, runbooks).
