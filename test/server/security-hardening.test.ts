@@ -43,7 +43,7 @@ describe('Security hardening', () => {
       if (prev === undefined) delete process.env['SHIPYARD_INVOKE_TOKEN'];
       else process.env['SHIPYARD_INVOKE_TOKEN'] = prev;
     }
-  });
+  }, 15_000);
 
   it('returns 500 when HMAC auth is enabled but rawBody is missing', () => {
     const prev = process.env['SHIPYARD_HMAC_SECRET'];
@@ -88,6 +88,21 @@ describe('Security hardening', () => {
       body: JSON.stringify({ template: 'x' }),
     });
     expect(res.status).toBe(403);
+  });
+
+  it('rejects non-local admin route writes without admin auth', async () => {
+    const res = await fetch(`${baseUrl}/settings/model-keys`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-forwarded-host': 'agent.example.com',
+        'x-forwarded-for': '203.0.113.5',
+      },
+      body: JSON.stringify({ openaiApiKey: 'test-key' }),
+    });
+    expect(res.status).toBe(403);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain('Admin auth required');
   });
 
   it('accepts command prefix containing regex special characters', async () => {

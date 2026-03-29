@@ -9,11 +9,13 @@ import 'dotenv/config';
 import { createServer } from 'node:http';
 import { createApp } from './app.js';
 import { InstructionLoop } from './runtime/loop.js';
+import { drainLoopOnShutdown } from './runtime/shutdown.js';
 import { attachWebSocket } from './server/ws.js';
 import { loadEnv } from './config/env.js';
 
 const env = loadEnv();
 const loop = new InstructionLoop();
+let shuttingDown = false;
 
 // Optional: wire pg Pool for persistence if DB URL is configured
 if (env.SHIPYARD_DB_URL) {
@@ -47,8 +49,27 @@ server.listen(env.SHIPYARD_PORT, () => {
 // Graceful shutdown
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {
   process.on(sig, () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log(`\nReceived ${sig}. Shutting down...`);
-    loop.cancel('shutdown_signal');
-    server.close(() => process.exit(0));
+    void (async () => {
+      await drainLoopOnShutdown(loop, { timeoutMs: 4_500, cancelWaitMs: 750 });
+      server.close(() => process.exit(0));
+    })();
+    // Force exit after 5s if in-flight work doesn't finish
+    setTimeout(() => {
+      console.log('Forced exit after timeout');
+      process.exit(1);
+    }, 5_000).unref();
   });
 }
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal] unhandled rejection:', reason);
+  process.exit(1);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] uncaught exception:', err);
+  process.exit(1);
+});

@@ -40,6 +40,8 @@ const BLOCKED_PATTERNS = [
   /\bgit\s+apply\b/,     // prefer structured file tools
   /\bgit\s+reset\s+--hard\b/, // destructive
   /\bgit\s+clean\s+-[^\n]*f/, // destructive
+  /\bperl\b[^\n]*\s-[^\n]*i[^\n]*/, // in-place perl rewrites; use file tools
+  /\bsed\b[^\n]*\s-i(?:[\s'"=]|$)/, // in-place sed rewrites; use file tools
 ];
 
 export function runBash(params: BashParams): Promise<BashResult> {
@@ -86,7 +88,7 @@ export function runBash(params: BashParams): Promise<BashResult> {
           const killed = (error as NodeJS.ErrnoException & { killed?: boolean }).killed;
           finish({
             success: false,
-            exit_code: error.code as unknown as number ?? 1,
+            exit_code: typeof error.code === 'number' ? error.code : 1,
             stdout: truncatedStdout,
             stderr: truncatedStderr,
             message: killed ? `Command timed out after ${timeout}ms` : error.message,
@@ -112,6 +114,12 @@ export function runBash(params: BashParams): Promise<BashResult> {
       } catch {
         /* ignore */
       }
+      const killTimer = setTimeout(() => {
+        if (child.exitCode === null && !child.killed) {
+          try { child.kill('SIGKILL'); } catch { /* ignore */ }
+        }
+      }, 5000);
+      child.on('exit', () => clearTimeout(killTimer));
       finish({
         success: false,
         exit_code: 1,

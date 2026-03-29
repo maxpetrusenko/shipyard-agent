@@ -28,6 +28,15 @@ interface RateBucket {
 function createRateLimiter(windowMs: number) {
   const buckets = new Map<string, RateBucket>();
 
+  // Evict expired buckets every 60s to prevent unbounded memory growth
+  const evictInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [key, bucket] of buckets) {
+      if (now >= bucket.resetAt) buckets.delete(key);
+    }
+  }, 60_000);
+  evictInterval.unref();
+
   return function rateLimit(limit: number, scope = 'default') {
     return (req: Request, res: Response, next: NextFunction): void => {
       const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
@@ -97,6 +106,8 @@ export function createApp(loop: InstructionLoop): express.Application {
   app.post('/api/runs/:id/confirm', limiter(30, 'confirm'));
   app.post('/api/runs/:id/resume', limiter(30, 'resume'));
   app.post('/api/settings/model-keys', limiter(30, 'settings-model-keys'));
+  app.post('/api/github/installations', limiter(30, 'github-installations'));
+  app.post('/api/github/install/select', limiter(30, 'github-install-select'));
   app.post('/api/github/repos', limiter(60, 'github-repos'));
   app.post('/api/github/connect', limiter(20, 'github-connect'));
   app.post('/api/github/install/logout', limiter(30, 'github-install-logout'));
@@ -117,6 +128,7 @@ export function createApp(loop: InstructionLoop): express.Application {
   // Global error handler
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     console.error('[api] unhandled error:', err);
+    if (res.headersSent) return;
     res.status(500).json({ error: 'Internal server error' });
   });
 

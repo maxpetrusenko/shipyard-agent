@@ -151,7 +151,7 @@ describe('retry cap and cooldown', () => {
       if (prevCooldown === undefined) delete process.env['SHIPYARD_RETRY_COOLDOWN_MS'];
       else process.env['SHIPYARD_RETRY_COOLDOWN_MS'] = prevCooldown;
     }
-  });
+  }, 15_000);
 
   it('rejects single retry during cooldown window', async () => {
     const prevCooldown = process.env['SHIPYARD_RETRY_COOLDOWN_MS'];

@@ -1,5 +1,4 @@
 // Settings modal — replaces sidebar Config tab.
-// Same modal pattern as dashboard-debug.ts.
 // Includes all settings business logic (keys, checkpoints, GitHub, benchmarks).
 
 import { SHIPYARD_BADGE_STYLES } from './html-shared.js';
@@ -46,6 +45,12 @@ export function getSettingsModalStyles(): string {
 .provider-name{font-weight:600;text-transform:uppercase;letter-spacing:.04em;min-width:64px;color:var(--text)}
 .provider-detail{color:var(--dim);flex:1}
 .provider-remediation{font-size:var(--text-sm);color:var(--red);margin-top:2px}.ack-preview{font-family:var(--mono);font-size:var(--text-sm);color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;max-height:200px;overflow-y:auto;line-height:1.45;white-space:pre-wrap;word-break:break-word;margin-top:8px}
+.connector-stack{display:flex;flex-direction:column;gap:10px}
+.connector-card{background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01));border:1px solid var(--border);border-radius:var(--radius);padding:10px 11px}
+.connector-card-hd{font-size:var(--text-sm);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text);margin-bottom:6px}
+.connector-card-copy{font-size:var(--text-sm);color:var(--dim);line-height:1.45;margin-bottom:8px}
+.connector-meta{margin-top:6px;padding:8px 10px;border:1px dashed var(--border);border-radius:var(--radius);background:var(--bg);font-size:var(--text-sm);color:var(--dim);line-height:1.45}
+.connector-meta strong{color:var(--text)}
 #ackTemplateInput{min-height:80px}
 ${SHIPYARD_BADGE_STYLES}`;
 }
@@ -103,10 +108,10 @@ export function getSettingsModalHtml(): string {
         </div>
       </div>
 
-      <!-- Section 2: GitHub -->
+      <!-- Section 2: Connectors -->
       <div class="settings-section" data-settings-section="github">
         <div class="settings-sec-hd" data-action="toggleSettingsSection" data-section="github" role="button" aria-expanded="false">
-          <span class="settings-sec-title">GitHub</span>
+          <span class="settings-sec-title">Connectors</span>
           <span class="settings-sec-chev">&#9654;</span>
         </div>
         <div class="settings-sec-bd">
@@ -115,31 +120,46 @@ export function getSettingsModalHtml(): string {
             <span id="ghAuthStatus" class="settings-note"></span>
           </div>
           <div id="ghSetupAlert" class="side-alert" style="display:none;margin-bottom:8px"></div>
-          <div class="settings-row" style="margin-bottom:8px">
-            <button type="button" class="btn btn-p" style="font-size:10px;padding:5px 12px" data-action="startGithubOAuth">Connect GitHub</button>
-            <button type="button" class="btn btn-d" style="font-size:10px;padding:5px 12px" data-action="logoutGithubOAuth">Disconnect</button>
-          </div>
-          <div class="settings-field">
-            <label class="settings-label" for="ghRepoSearchInput">Search repositories</label>
-            <div class="settings-row">
-              <input class="settings-input" id="ghRepoSearchInput" type="text" placeholder="org/repo..." style="flex:1">
-              <button type="button" class="btn btn-g" style="font-size:10px;padding:5px 10px" data-action="loadGithubRepos">Search</button>
+          <div class="connector-stack">
+            <div class="connector-card">
+              <div class="connector-card-hd">Authorize</div>
+              <div class="connector-card-copy">Open GitHub, grant all repos or a selected set, then this panel pulls the installation and repos back in.</div>
+              <div class="settings-row">
+                <button type="button" class="btn btn-p" style="font-size:10px;padding:5px 12px" data-action="startGithubOAuth">Open GitHub</button>
+                <button type="button" class="btn btn-d" style="font-size:10px;padding:5px 12px" data-action="logoutGithubOAuth">Disconnect</button>
+              </div>
+              <div id="ghFlowHint" class="connector-meta">If GitHub leaves the popup on <code>settings/installations</code>, come back here. Installations hydrate automatically and selecting one binds it to this session.</div>
+            </div>
+            <div class="connector-card">
+              <div class="connector-card-hd">Installation Access</div>
+              <div class="connector-card-copy">Pick the installation tied to the repos you granted. Selecting one here auto-loads repos.</div>
+              <div class="settings-row">
+                <select id="ghInstallSel" class="settings-input" style="cursor:pointer;flex:1"><option value="">(load installations first)</option></select>
+                <button type="button" class="btn btn-g" style="font-size:10px;padding:5px 10px" data-action="loadGithubInstallations">Refresh</button>
+                <button type="button" class="btn btn-g" style="font-size:10px;padding:5px 10px" data-action="useGithubInstallation">Bind</button>
+              </div>
+              <div id="ghInstallMeta" class="connector-meta">No installation loaded yet.</div>
+            </div>
+            <div class="connector-card">
+              <div class="connector-card-hd">Granted Repositories</div>
+              <div class="connector-card-copy">Leave search blank to load every repo granted to the selected installation.</div>
+              <div class="settings-row">
+                <input class="settings-input" id="ghRepoSearchInput" type="text" placeholder="Optional filter, blank = all granted repos" style="flex:1">
+                <button type="button" class="btn btn-g" style="font-size:10px;padding:5px 10px" data-action="loadGithubRepos">Load Repos</button>
+              </div>
+              <div id="ghRepoMeta" class="connector-meta">No repos loaded yet.</div>
+              <div class="settings-field" style="margin-top:8px;margin-bottom:0">
+                <label class="settings-label" for="ghRepoSel">Repository</label>
+                <select id="ghRepoSel" class="settings-input" style="cursor:pointer"><option value="">(load repos first)</option></select>
+              </div>
+              <div class="settings-row" style="margin-top:8px">
+                <button type="button" class="btn btn-p" style="font-size:10px;padding:5px 12px" data-action="connectGithubRepo">Connect Repo</button>
+              </div>
             </div>
           </div>
-          <div class="settings-field">
-            <label class="settings-label" for="ghRepoSel">Repository</label>
-            <select id="ghRepoSel" class="settings-input" style="cursor:pointer"><option value="">(load repos first)</option></select>
-          </div>
-          <div class="settings-row">
-            <button type="button" class="btn btn-p" style="font-size:10px;padding:5px 12px" data-action="connectGithubRepo">Connect Repo</button>
-          </div>
           <div id="ghStatus" class="settings-status"></div>
-          <div class="settings-field" style="margin-top:8px">
-            <label class="settings-label" for="ghTokenInput">GitHub PAT (fallback)</label>
-            <input class="settings-input" id="ghTokenInput" type="password" placeholder="ghp_..." autocomplete="off">
-          </div>
           <div style="margin-top:8px">
-            <button type="button" class="btn btn-g" style="font-size:10px;padding:4px 10px" data-action="toggleGithubAppConfig">Advanced: GitHub App</button>
+            <button type="button" class="btn btn-g" style="font-size:10px;padding:4px 10px" data-action="toggleGithubAppConfig">GitHub App Config</button>
           </div>
           <div id="ghAppCfgWrap" style="display:none;margin-top:8px">
             <div class="settings-field"><label class="settings-label" for="ghAppSlugInput">App slug</label><input class="settings-input" id="ghAppSlugInput" placeholder="my-app"></div>
@@ -233,7 +253,8 @@ export function getSettingsModalScript(): string {
 function openSettings() {
   var modal = document.getElementById('settingsModal');
   if (modal) modal.classList.add('open');
-  refreshSettingsStatus();
+  githubHydrationAttempted = false;
+  refreshSettingsStatus().then(function(){ return maybeHydrateGithubConnector(true); });
   refreshProviderReadiness();
   refreshCheckpoints();
   refreshBenchmarkSummary();
@@ -275,21 +296,86 @@ function settingsStatusText() {
     '\\ncodex cli: ' + codex;
 }
 
+var GH_INSTALLATION_STORAGE = 'shipyard_dashboard_github_installation';
+var githubInstallPollTimer = 0;
+var githubInstallPollUntil = 0;
+var githubHydrationAttempted = false;
+var githubVisibleInstallations = [];
+var githubVisibleRepos = [];
+
+function stopGithubInstallPolling() {
+  if (githubInstallPollTimer) {
+    window.clearInterval(githubInstallPollTimer);
+    githubInstallPollTimer = 0;
+  }
+}
+
+function startGithubInstallPolling(popupRef) {
+  stopGithubInstallPolling();
+  githubInstallPollUntil = Date.now() + 90 * 1000;
+  githubInstallPollTimer = window.setInterval(function(){
+    if (Date.now() >= githubInstallPollUntil || (popupRef && popupRef.closed)) {
+      stopGithubInstallPolling();
+    }
+    void loadGithubInstallations({ quiet: true, autoSelectSingle: true, autoUsePreferred: true });
+  }, 2500);
+}
+
+function normalizeGithubInstallLoadOptions(opts) {
+  if (opts === true) return { quiet: false, autoSelectSingle: true, autoUsePreferred: true };
+  return {
+    quiet: !!(opts && opts.quiet),
+    autoSelectSingle: !!(opts && opts.autoSelectSingle),
+    autoUsePreferred: !!(opts && opts.autoUsePreferred),
+  };
+}
+
+function githubRepoAccessLabel(repositorySelection) {
+  return repositorySelection === 'all' ? 'all repos' : 'selected repos';
+}
+
+function selectedGithubInstallation() {
+  var installSel = document.getElementById('ghInstallSel');
+  var installationId = String(settingsStatus.githubInstallationId || (installSel ? installSel.value : '') || '');
+  if (!installationId) return null;
+  for (var i = 0; i < githubVisibleInstallations.length; i++) {
+    if (String(githubVisibleInstallations[i].id) === installationId) return githubVisibleInstallations[i];
+  }
+  return null;
+}
+
+function githubInstallationSummary(inst) {
+  if (!inst) return '';
+  return inst.account_login + ' · ' + githubRepoAccessLabel(inst.repository_selection) + ' · #' + inst.id;
+}
+
 function renderSettingsStatus() {
   var ghStatus = document.getElementById('ghStatus');
   var ghAuth = document.getElementById('ghAuthStatus');
   var ghConnBadge = document.getElementById('ghConnBadge');
   var ghSetupAlert = document.getElementById('ghSetupAlert');
+  var ghFlowHint = document.getElementById('ghFlowHint');
   var ghStepServer = document.getElementById('ghStepServer');
   var ghStepAuth = document.getElementById('ghStepAuth');
   var ghStepRepo = document.getElementById('ghStepRepo');
   var providerStatus = document.getElementById('providerStatus');
   var oauthBtn = document.querySelector('[data-action="startGithubOAuth"]');
+  var installSel = document.getElementById('ghInstallSel');
+  var ghInstallMeta = document.getElementById('ghInstallMeta');
+  var ghRepoMeta = document.getElementById('ghRepoMeta');
   var repoSel = document.getElementById('ghRepoSel');
+  var activeInstall = selectedGithubInstallation();
+  var installSummary = githubInstallationSummary(activeInstall);
+  var hasInstallSel = !!(installSel && installSel.value);
   var hasRepoSel = !!(repoSel && repoSel.value);
+  var installMissing = Array.isArray(settingsStatus.githubInstallMissing) ? settingsStatus.githubInstallMissing : [];
+  var appMissing = Array.isArray(settingsStatus.githubAppMissing) ? settingsStatus.githubAppMissing : [];
+  var callbackUrl = settingsStatus.githubInstallCallbackUrl || '/api/github/install/callback';
   if (ghAuth) {
-    if (!settingsStatus.githubInstallConfigured) {
-      ghAuth.textContent = 'GitHub App install flow not configured. Add GITHUB_APP_SLUG and setup URL.';
+    if (installMissing.length > 0) {
+      ghAuth.textContent = 'GitHub App install flow blocked. Missing ' + installMissing.join(', ') + '.';
+    } else if (!settingsStatus.githubAppConfigured) {
+      ghAuth.textContent = 'GitHub App install is live, but token exchange is missing ' + appMissing.join(', ') + '.';
     } else if (settingsStatus.githubConnected && settingsStatus.githubInstallationId) {
       ghAuth.textContent = 'GitHub App installed' + (settingsStatus.githubLogin ? (' as @' + settingsStatus.githubLogin) : '') + ' (installation #' + settingsStatus.githubInstallationId + ')';
     } else if (settingsStatus.githubConnected) {
@@ -299,17 +385,56 @@ function renderSettingsStatus() {
     }
   }
   setBadge(ghConnBadge, settingsStatus.githubConnected ? 'Connected' : 'Disconnected', settingsStatus.githubConnected ? 'ok' : 'off');
-  if (ghStepServer) ghStepServer.textContent = settingsStatus.githubInstallConfigured ? 'Server config: GitHub App install ready' : 'Server config: missing GITHUB_APP_SLUG / setup URL';
-  if (ghStepAuth) ghStepAuth.textContent = settingsStatus.githubConnected ? ('GitHub auth: @' + (settingsStatus.githubLogin || 'connected')) : 'GitHub auth: not connected';
+  if (settingsStatus.githubConnected) stopGithubInstallPolling();
+  if (ghStepServer) {
+    if (installMissing.length > 0) ghStepServer.textContent = 'Server config: missing ' + installMissing.join(', ');
+    else if (appMissing.length > 0) ghStepServer.textContent = 'Server config: install ok, token exchange missing ' + appMissing.join(', ');
+    else ghStepServer.textContent = 'Server config: GitHub App install ready';
+  }
+  if (ghStepAuth) ghStepAuth.textContent = settingsStatus.githubConnected
+    ? ('GitHub auth: installation #' + (settingsStatus.githubInstallationId || 'connected'))
+    : (hasInstallSel ? ('GitHub auth: installation #' + installSel.value + ' selected') : 'GitHub auth: not connected');
   if (ghStepRepo) ghStepRepo.textContent = hasRepoSel ? ('Repository selected: ' + repoSel.value) : 'Repository selected: none';
   if (oauthBtn) {
     oauthBtn.disabled = false;
-    oauthBtn.title = settingsStatus.githubInstallConfigured ? 'Install/select repos via GitHub App' : 'Configure GitHub App first';
+    oauthBtn.title = installMissing.length === 0 ? 'Install/select repos via GitHub App' : 'Configure GitHub App first';
+  }
+  if (ghFlowHint) {
+    if (settingsStatus.githubConnected && settingsStatus.githubInstallationId) {
+      ghFlowHint.innerHTML = 'GitHub install bound. Change repo access in GitHub any time, then come back and click <strong>Refresh</strong> or <strong>Load Repos</strong>.';
+    } else if (githubInstallPollTimer) {
+      ghFlowHint.innerHTML = 'Watching GitHub for install updates now. If the popup stays on <code>settings/installations</code>, save there, then come back here. This panel keeps polling for 90 seconds.';
+    } else {
+      ghFlowHint.innerHTML = 'If GitHub leaves the popup on <code>settings/installations</code>, come back here. Installations hydrate automatically and selecting one binds it to this session.';
+    }
+  }
+  if (ghInstallMeta) {
+    if (settingsStatus.githubConnected && settingsStatus.githubInstallationId && installSummary) {
+      ghInstallMeta.innerHTML = '<strong>Bound installation:</strong> ' + esc(installSummary) + '.';
+    } else if (settingsStatus.githubConnected && settingsStatus.githubInstallationId) {
+      ghInstallMeta.innerHTML = '<strong>Bound installation:</strong> #' + settingsStatus.githubInstallationId + '. Repo access is ready.';
+    } else if (hasInstallSel && installSummary) {
+      ghInstallMeta.innerHTML = '<strong>Pending bind:</strong> ' + esc(installSummary) + '. Repos load automatically after bind.';
+    } else if (hasInstallSel) {
+      ghInstallMeta.innerHTML = '<strong>Pending bind:</strong> installation #' + installSel.value + '. Repos load automatically after bind.';
+    } else {
+      ghInstallMeta.innerHTML = 'No installation loaded yet. Open GitHub, or click <strong>Refresh</strong> if you already granted access.';
+    }
+  }
+  if (ghRepoMeta) {
+    if (hasRepoSel && githubVisibleRepos.length > 0 && activeInstall) {
+      ghRepoMeta.innerHTML = '<strong>Ready to connect:</strong> ' + esc(repoSel.value) + '. ' + githubVisibleRepos.length + ' granted repo(s) visible from ' + esc(activeInstall.account_login) + '.';
+    } else if (hasRepoSel) {
+      ghRepoMeta.innerHTML = '<strong>Ready to connect:</strong> ' + esc(repoSel.value) + '.';
+    } else if (githubVisibleRepos.length > 0 && activeInstall) {
+      ghRepoMeta.innerHTML = '<strong>Granted repos loaded:</strong> ' + githubVisibleRepos.length + ' visible from ' + esc(activeInstall.account_login) + ' (' + esc(githubRepoAccessLabel(activeInstall.repository_selection)) + ').';
+    } else if (settingsStatus.githubConnected) ghRepoMeta.innerHTML = 'Installation bound. Click <strong>Load Repos</strong>, or leave search blank to pull every granted repo.';
+    else ghRepoMeta.innerHTML = 'Bind an installation first. Blank search loads every granted repo from that installation.';
   }
   if (ghSetupAlert) {
-    if (!settingsStatus.githubInstallConfigured) {
+    if (installMissing.length > 0 || appMissing.length > 0) {
       ghSetupAlert.style.display = 'block';
-      ghSetupAlert.textContent = 'Proper auth setup: 1) set GITHUB_APP_SLUG, 2) set GitHub App Setup URL to /api/github/install/callback, 3) set GITHUB_APP_CLIENT_ID (or GITHUB_APP_ID) + GITHUB_APP_PRIVATE_KEY. Optional identity link: GITHUB_APP_CLIENT_SECRET.';
+      ghSetupAlert.textContent = 'GitHub App setup: Setup URL = ' + callbackUrl + '. Missing install vars: ' + (installMissing.length ? installMissing.join(', ') : 'none') + '. Missing token vars: ' + (appMissing.length ? appMissing.join(', ') : 'none') + '. Optional identity link: GITHUB_APP_CLIENT_SECRET.';
     } else {
       ghSetupAlert.style.display = 'none';
       ghSetupAlert.textContent = '';
@@ -391,7 +516,10 @@ function refreshSettingsStatus() {
         githubOAuthConfigured: !!data.githubOAuthConfigured,
         githubInstallConfigured: !!data.githubInstallConfigured,
         githubAppConfigured: !!data.githubAppConfigured,
+        githubInstallMissing: Array.isArray(data.githubInstallMissing) ? data.githubInstallMissing : [],
+        githubAppMissing: Array.isArray(data.githubAppMissing) ? data.githubAppMissing : [],
         githubAppSlug: data.githubAppSlug || null,
+        githubInstallCallbackUrl: data.githubInstallCallbackUrl || null,
         githubInstallationId: data.githubInstallationId || null,
         cacheReadTokens: cacheRead || 0,
         cacheWriteTokens: cacheWrite || 0,
@@ -401,8 +529,9 @@ function refreshSettingsStatus() {
       };
       WORK_DIR = settingsStatus.workDir || WORK_DIR;
       renderSettingsStatus();
+      return maybeHydrateGithubConnector(false);
     })
-    .catch(function(){});
+    .catch(function(e){ console.warn('refreshSettingsStatus failed:', e); });
 }
 
 function saveModelKeys() {
@@ -517,7 +646,10 @@ function startGithubOAuth() {
     setSettingsStatus(st, 'Popup blocked. Allow popups and retry.', 'err');
     return;
   }
-  setSettingsStatus(st, 'Waiting for GitHub App install...', '');
+  githubHydrationAttempted = true;
+  setSettingsStatus(st, 'Popup opened. If GitHub stays on install settings, this panel keeps refreshing installations and binds one when you pick it.', '');
+  startGithubInstallPolling(w);
+  window.setTimeout(function(){ void loadGithubInstallations({ quiet: true, autoSelectSingle: true, autoUsePreferred: true }); }, 1200);
 }
 
 function toggleGithubAppConfig() {
@@ -565,7 +697,14 @@ function logoutGithubOAuth() {
         return;
       }
       setSettingsStatus(st, 'Disconnected GitHub OAuth session.', 'ok');
+      saveDashboardPref(GH_INSTALLATION_STORAGE, '');
+      githubHydrationAttempted = false;
+      githubVisibleInstallations = [];
+      githubVisibleRepos = [];
+      stopGithubInstallPolling();
       refreshSettingsStatus();
+      var installSel = document.getElementById('ghInstallSel');
+      if (installSel) installSel.innerHTML = '<option value="">(load installations first)</option>';
       var sel = document.getElementById('ghRepoSel');
       if (sel) sel.innerHTML = '<option value="">(load repos first)</option>';
     })
@@ -574,8 +713,88 @@ function logoutGithubOAuth() {
     });
 }
 
-function githubFallbackToken() {
-  return '';
+function loadGithubInstallations(autoSelectSingle) {
+  var opts = normalizeGithubInstallLoadOptions(autoSelectSingle);
+  var sel = document.getElementById('ghInstallSel');
+  var st = document.getElementById('ghStatus');
+  if (!opts.quiet) setSettingsStatus(st, 'Loading installations...', '');
+  return fetch('/api/github/installations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: '{}',
+  })
+    .then(function(res){
+      return res.json().then(function(body){ return { ok: res.ok, body: body }; });
+    })
+    .then(function(x){
+      if (!x.ok) throw new Error(x.body && x.body.error ? x.body.error : 'Failed to load installations');
+      var data = x.body || {};
+      var installs = Array.isArray(data.installations) ? data.installations : [];
+      githubVisibleInstallations = installs;
+      if (sel) {
+        sel.innerHTML = installs.length
+          ? installs.map(function(inst){
+              var label = inst.account_login + ' · ' + githubRepoAccessLabel(inst.repository_selection || 'selected') + ' · #' + inst.id;
+              return '<option value="' + esc(inst.id) + '">' + esc(label) + '</option>';
+            }).join('')
+          : '<option value="">(no installations found)</option>';
+        var preferred = String(settingsStatus.githubInstallationId || loadDashboardPref(GH_INSTALLATION_STORAGE) || '');
+        if (preferred) {
+          for (var i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value === preferred) sel.value = preferred;
+          }
+        }
+        if ((!preferred || !sel.value) && opts.autoSelectSingle && installs.length === 1) {
+          sel.value = String(installs[0].id);
+        }
+        if (sel.value && (opts.autoUsePreferred || (opts.autoSelectSingle && installs.length === 1))) {
+          return useGithubInstallation(true);
+        }
+      }
+      renderSettingsStatus();
+      if (!opts.quiet) setSettingsStatus(st, installs.length ? ('Loaded ' + installs.length + ' installations.') : 'No installations found.', installs.length ? 'ok' : 'err');
+      return false;
+    })
+    .catch(function(err){
+      if (!opts.quiet) setSettingsStatus(st, 'Installation load failed: ' + err.message, 'err');
+      return false;
+    });
+}
+
+function useGithubInstallation(autoLoadRepos) {
+  var sel = document.getElementById('ghInstallSel');
+  var st = document.getElementById('ghStatus');
+  var installationId = sel ? sel.value : '';
+  if (!installationId) {
+    setSettingsStatus(st, 'Select an installation first.', 'err');
+    return Promise.resolve(false);
+  }
+  saveDashboardPref(GH_INSTALLATION_STORAGE, installationId);
+  githubVisibleRepos = [];
+  var repoSel = document.getElementById('ghRepoSel');
+  if (repoSel) repoSel.innerHTML = '<option value="">(loading repos after bind)</option>';
+  setSettingsStatus(st, 'Using installation #' + installationId + '...', '');
+  renderSettingsStatus();
+  return fetch('/api/github/install/select', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ installationId: Number(installationId) }),
+  })
+    .then(function(res){
+      return res.json().then(function(body){ return { ok: res.ok, body: body }; });
+    })
+    .then(function(x){
+      if (!x.ok) throw new Error(x.body && x.body.error ? x.body.error : 'Failed to select installation');
+      setSettingsStatus(st, 'Using installation #' + installationId + '.', 'ok');
+      return refreshSettingsStatus().then(function(){
+        if (autoLoadRepos) return loadGithubRepos().then(function(){ return true; });
+        return true;
+      });
+    })
+    .catch(function(err){
+      setSettingsStatus(st, 'Installation select failed: ' + err.message, 'err');
+      return false;
+    });
 }
 
 function loadGithubRepos() {
@@ -584,7 +803,7 @@ function loadGithubRepos() {
   var sel = document.getElementById('ghRepoSel');
   var st = document.getElementById('ghStatus');
   setSettingsStatus(st, 'Loading repositories...', '');
-  fetch('/api/github/repos', {
+  return fetch('/api/github/repos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
     body: JSON.stringify({ query: query }),
@@ -596,6 +815,7 @@ function loadGithubRepos() {
       if (!x.ok) throw new Error(x.body && x.body.error ? x.body.error : 'Failed to load repositories');
       var data = x.body || {};
       var repos = Array.isArray(data.repos) ? data.repos : [];
+      githubVisibleRepos = repos;
       if (sel) {
         sel.innerHTML = repos.length
           ? repos.map(function(r){ return '<option value="' + esc(r.full_name) + '">' + esc(r.full_name) + '</option>'; }).join('')
@@ -607,12 +827,31 @@ function loadGithubRepos() {
           if (sel.options[i].value === saved) sel.value = saved;
         }
       }
+      if (sel && !sel.value && repos.length === 1) {
+        sel.value = repos[0].full_name;
+        saveDashboardPref(GH_REPO_STORAGE, repos[0].full_name);
+      }
       renderSettingsStatus();
-      setSettingsStatus(st, repos.length ? ('Loaded ' + repos.length + ' repos.') : 'No repos found. Try a different query.', repos.length ? 'ok' : 'err');
+      setSettingsStatus(st, repos.length ? ('Loaded ' + repos.length + ' repos.') : 'No repos found. Try a different query, or leave search blank for all granted repos.', repos.length ? 'ok' : 'err');
+      return repos;
     })
     .catch(function(err){
+      githubVisibleRepos = [];
       setSettingsStatus(st, 'Repo load failed: ' + err.message, 'err');
+      return [];
     });
+}
+
+function maybeHydrateGithubConnector(force) {
+  if (!settingsStatus.githubAppConfigured) return Promise.resolve(false);
+  if (!force && githubHydrationAttempted) return Promise.resolve(false);
+  githubHydrationAttempted = true;
+  if (settingsStatus.githubConnected) {
+    var repoSel = document.getElementById('ghRepoSel');
+    if (repoSel && repoSel.options.length > 1) return Promise.resolve(false);
+    return loadGithubRepos().then(function(){ return true; });
+  }
+  return loadGithubInstallations({ quiet: true, autoSelectSingle: true, autoUsePreferred: true });
 }
 
 function connectGithubRepo() {
@@ -725,7 +964,8 @@ function refreshBenchmarkSummary() {
       benchmarkSummary = data;
       renderBenchmarkSummary();
     })
-    .catch(function(){
+    .catch(function(err){
+      console.warn('[dashboard] benchmark summary refresh failed', err);
       benchmarkSummary = null;
       renderBenchmarkSummary();
     });
@@ -779,6 +1019,8 @@ function handleSettingsAction(action) {
   if (action === 'refreshCheckpoints') { refreshCheckpoints(); return true; }
   if (action === 'createCheckpoint') { createCheckpointUi(); return true; }
   if (action === 'rollbackCheckpoint') { rollbackCheckpointUi(); return true; }
+  if (action === 'loadGithubInstallations') { loadGithubInstallations(false); return true; }
+  if (action === 'useGithubInstallation') { useGithubInstallation(true); return true; }
   if (action === 'loadGithubRepos') { loadGithubRepos(); return true; }
   if (action === 'connectGithubRepo') { connectGithubRepo(); return true; }
   if (action === 'startGithubOAuth') { startGithubOAuth(); return true; }
@@ -793,8 +1035,9 @@ function handleSettingsAction(action) {
 /* ---- Settings init (wire change listeners) ---- */
 function initSettings() {
   restoreSettingsInputs();
+  githubHydrationAttempted = false;
   renderSettingsStatus();
-  void refreshSettingsStatus();
+  void refreshSettingsStatus().then(function(){ return maybeHydrateGithubConnector(true); });
   loadAckTemplate();
   var anthKeyEl = document.getElementById('anthropicKeyInput');
   if (anthKeyEl) anthKeyEl.addEventListener('change', persistSettingsInputs);
@@ -802,26 +1045,37 @@ function initSettings() {
   if (anthTokenEl) anthTokenEl.addEventListener('change', persistSettingsInputs);
   var oaiKeyEl = document.getElementById('openaiKeyInput');
   if (oaiKeyEl) oaiKeyEl.addEventListener('change', persistSettingsInputs);
-  var ghTokenEl = document.getElementById('ghTokenInput');
-  if (ghTokenEl) ghTokenEl.addEventListener('change', persistSettingsInputs);
   var ghAppSlugEl = document.getElementById('ghAppSlugInput');
   if (ghAppSlugEl) ghAppSlugEl.addEventListener('change', persistSettingsInputs);
   var ghAppIdEl = document.getElementById('ghAppIdInput');
   if (ghAppIdEl) ghAppIdEl.addEventListener('change', persistSettingsInputs);
   var ghAppPkEl = document.getElementById('ghAppPkInput');
   if (ghAppPkEl) ghAppPkEl.addEventListener('change', persistSettingsInputs);
+  var ghInstallSelEl = document.getElementById('ghInstallSel');
+  if (ghInstallSelEl) ghInstallSelEl.addEventListener('change', function(){
+    saveDashboardPref(GH_INSTALLATION_STORAGE, ghInstallSelEl.value || '');
+    githubVisibleRepos = [];
+    saveDashboardPref(GH_REPO_STORAGE, '');
+    if (ghRepoSelEl) ghRepoSelEl.innerHTML = '<option value="">(load repos after bind)</option>';
+    renderSettingsStatus();
+    if (ghInstallSelEl.value) void useGithubInstallation(true);
+  });
   var ghRepoSelEl = document.getElementById('ghRepoSel');
   if (ghRepoSelEl) ghRepoSelEl.addEventListener('change', function(){ saveDashboardPref(GH_REPO_STORAGE, ghRepoSelEl.value || ''); renderSettingsStatus(); });
   window.addEventListener('message', function(ev){
+    if (ev.origin !== window.location.origin) return;
     var data = ev && ev.data;
     if (!data || (data.type !== 'shipyard_github_oauth' && data.type !== 'shipyard_github_install')) return;
     var st = document.getElementById('ghStatus');
     if (data.ok) {
-      setSettingsStatus(st, 'GitHub connected as @' + (data.login || 'unknown'), 'ok');
-      refreshSettingsStatus();
-      loadGithubRepos();
+      setSettingsStatus(st, data.message || 'GitHub install completed.', 'ok');
+      stopGithubInstallPolling();
+      refreshSettingsStatus().then(function(){ return loadGithubInstallations(true); }).then(function(selected){
+        if (settingsStatus.githubConnected || selected) return loadGithubRepos();
+        return null;
+      });
     } else {
-      setSettingsStatus(st, data.message || 'GitHub OAuth failed', 'err');
+      setSettingsStatus(st, data.message || 'GitHub install failed', 'err');
       refreshSettingsStatus();
     }
   });

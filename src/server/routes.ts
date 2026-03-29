@@ -10,7 +10,6 @@ import { execSync } from 'node:child_process';
 import type { InstructionLoop } from '../runtime/loop.js';
 import type { ModelRole } from '../config/model-policy.js';
 import type { RunResult } from '../runtime/loop.js';
-import { buildRunDebugSnapshot, resolveDebugTraceUrl } from './run-debug.js';
 import { WORK_DIR, setWorkDir } from '../config/work-dir.js';
 import { resetClient } from '../config/client.js';
 import { resetOpenAIClient } from '../config/openai-client.js';
@@ -23,29 +22,143 @@ import {
   cloneOrUpdateGithubRepo,
   createInstallationTokenById,
   githubAppConfigured,
+  githubAppMissingEnv,
   githubCliAuthStatus,
+  listGithubAppInstallations,
   listGithubReposForInstallation,
 } from './github-connect.js';
 import {
   buildGithubInstallStartUrl,
   clearSessionGithub,
+  githubInstallCallbackPath,
+  githubInstallCallbackUrl,
+  githubInstallMissingEnv,
   getSessionGithubInstallationId,
   getOrCreateOAuthSession,
   githubAppSlug,
   githubInstallConfigured,
   setSessionGithubInstallation,
 } from './github-oauth.js';
+import { buildRunDebugSnapshot } from './run-debug.js';
+import { extractToken, hasScope, requestLooksLocal } from './auth-scopes.js';
 import { registerInvokeRoutes } from './invoke-routes.js';
 import { saveRawBody } from './hmac-auth.js';
 
 const MAX_INSTRUCTION_SIZE = 100 * 1024; // 100 KB
 const MAX_CONTEXT_SIZE = 500 * 1024;     // 500 KB
 
+type ExecutionPlanInput = Array<{
+  index?: number;
+  description?: string;
+  files?: string[];
+}>;
+
+function deriveExecutionPlanFromPlanDoc(
+  planDoc: string,
+): Array<{ index: number; description: string; files: string[]; status: 'pending' }> | null {
+  const trimmed = planDoc.trim();
+  if (!trimmed) return null;
+
+  const verticalMatches = [...trimmed.matchAll(/^\s*(?:#+\s*)?Vertical\s+(\d+)\s*:\s*(.+?)\s*$/gim)];
+  if (verticalMatches.length > 0) {
+    const seen = new Set<number>();
+    return verticalMatches
+      .map((match, index) => {
+        const parsedIndex = Number.parseInt(match[1] ?? '', 10);
+        const normalizedIndex = Number.isFinite(parsedIndex) ? parsedIndex - 1 : index;
+        const description = (match[2] ?? '').trim();
+        return {
+          index: normalizedIndex,
+          description,
+          files: [],
+          status: 'pending' as const,
+        };
+      })
+      .filter((step) => {
+        if (!step.description || step.index < 0 || seen.has(step.index)) return false;
+        seen.add(step.index);
+        return true;
+      })
+      .sort((a, b) => a.index - b.index)
+      .map((step, index) => ({ ...step, index }));
+  }
+
+  const structuredMatches = [...trimmed.matchAll(/^\s*(?:#+\s*)?(?:Phase|Task|Step)\s+(\d+)\s*:\s*(.+?)\s*$/gim)];
+  if (structuredMatches.length > 0) {
+    const seen = new Set<number>();
+    return structuredMatches
+      .map((match, index) => {
+        const parsedIndex = Number.parseInt(match[1] ?? '', 10);
+        const normalizedIndex = Number.isFinite(parsedIndex) ? parsedIndex - 1 : index;
+        const description = (match[2] ?? '').trim();
+        return {
+          index: normalizedIndex,
+          description,
+          files: [],
+          status: 'pending' as const,
+        };
+      })
+      .filter((step) => {
+        if (!step.description || step.index < 0 || seen.has(step.index)) return false;
+        seen.add(step.index);
+        return true;
+      })
+      .sort((a, b) => a.index - b.index)
+      .map((step, index) => ({ ...step, index }));
+  }
+
+  const numberedMatches = [...trimmed.matchAll(/^\s*(\d+)\s*[.)]\s+(.+?)\s*$/gm)];
+  const hasPlanSignals = /\b(plan|execution\s+order|steps?|phases?|tasks?|verticals?)\b/i.test(trimmed);
+  if (hasPlanSignals && numberedMatches.length >= 2) {
+    const seen = new Set<number>();
+    return numberedMatches
+      .map((match, index) => {
+        const parsedIndex = Number.parseInt(match[1] ?? '', 10);
+        const normalizedIndex = Number.isFinite(parsedIndex) ? parsedIndex - 1 : index;
+        const description = (match[2] ?? '').trim();
+        return {
+          index: normalizedIndex,
+          description,
+          files: [],
+          status: 'pending' as const,
+        };
+      })
+      .filter((step) => {
+        if (!step.description || step.index < 0 || seen.has(step.index)) return false;
+        seen.add(step.index);
+        return true;
+      })
+      .sort((a, b) => a.index - b.index)
+      .map((step, index) => ({ ...step, index }));
+  }
+
+  return null;
+}
+
+function normalizeExecutionPlan(input: unknown): Array<{ index: number; description: string; files: string[]; status: 'pending' }> | null {
+  if (!Array.isArray(input)) return null;
+  return input.map((step, index) => {
+    const record = step && typeof step === 'object' ? step as Record<string, unknown> : {};
+    return {
+      index: typeof record['index'] === 'number' ? record['index'] : index,
+      description: typeof record['description'] === 'string' ? record['description'] : '',
+      files: Array.isArray(record['files'])
+        ? record['files'].filter((file): file is string => typeof file === 'string')
+        : [],
+      status: 'pending',
+    };
+  });
+}
+
 function immediateRunPayload(run: RunResult | undefined): Record<string, unknown> {
   if (!run || run.threadKind !== 'ask' || run.phase !== 'done') return {};
   return {
     phase: run.phase,
     threadKind: run.threadKind,
+    campaignId: run.campaignId ?? null,
+    rootRunId: run.rootRunId ?? null,
+    parentRunId: run.parentRunId ?? null,
+    projectContext: run.projectContext ?? null,
     messages: run.messages,
     traceUrl: run.traceUrl,
     tokenUsage: run.tokenUsage,
@@ -81,7 +194,7 @@ function installPopupHtml(ok: boolean, message: string): string {
     message,
   }).replace(/</g, '\\u003c');
   const title = ok ? 'GitHub connected' : 'GitHub connection failed';
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body style="font-family:ui-monospace,Menlo,monospace;padding:20px;background:#0b1020;color:#e2e8f0"><div>${title}. You can close this window.</div><script>try{if(window.opener&&!window.opener.closed){window.opener.postMessage(${payload}, window.location.origin);}}catch(e){}setTimeout(function(){window.close();},120);</script></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><title>${title}</title></head><body style="font-family:ui-monospace,Menlo,monospace;padding:20px;background:#f7f5f2;color:#1a1815"><div>${title}. You can close this window.</div><script>try{if(window.opener&&!window.opener.closed){window.opener.postMessage(${payload}, window.location.origin);}}catch(e){}setTimeout(function(){window.close();},120);</script></body></html>`;
 }
 
 export function createRoutes(loop: InstructionLoop): Router {
@@ -103,11 +216,20 @@ export function createRoutes(loop: InstructionLoop): Router {
     return getSessionGithubInstallationId(session);
   }
 
+  function requireAdminRouteAccess(req: Request, res: Response): boolean {
+    const token = extractToken(req);
+    if (token && (hasScope(token, 'admin') || hasScope(token, 'full'))) return true;
+    if (requestLooksLocal(req)) return true;
+    res.status(403).json({ error: 'Admin auth required for non-local requests.' });
+    return false;
+  }
+
   // POST /run - Submit a new instruction
   router.post('/run', wrap((req, res) => {
     const {
       instruction,
       contexts,
+      executionPlan,
       planDoc,
       confirmPlan,
       runMode,
@@ -115,9 +237,14 @@ export function createRoutes(loop: InstructionLoop): Router {
       model,
       modelFamily,
       models,
+      campaignId,
+      rootRunId,
+      parentRunId,
+      projectContext,
     } = req.body as {
       instruction?: string;
       contexts?: Array<{ label: string; content: string; source?: string }>;
+      executionPlan?: ExecutionPlanInput;
       planDoc?: string;
       confirmPlan?: boolean;
       runMode?: string;
@@ -129,12 +256,26 @@ export function createRoutes(loop: InstructionLoop): Router {
       modelFamily?: string;
       /** Per-stage model ids. */
       models?: Partial<Record<ModelRole, string>>;
+      campaignId?: string | null;
+      rootRunId?: string | null;
+      parentRunId?: string | null;
+      /** Optional project scope metadata from the dashboard. */
+      projectContext?: { projectId: string; projectLabel: string };
     };
 
     if (!instruction) {
       res.status(400).json({ error: 'instruction is required' });
       return;
     }
+
+    const normalizedExecutionPlan = executionPlan == null
+      ? undefined
+      : normalizeExecutionPlan(executionPlan);
+    if (executionPlan != null && normalizedExecutionPlan == null) {
+      res.status(400).json({ error: 'executionPlan must be an array of step objects' });
+      return;
+    }
+    const executionPlanForSubmit = normalizedExecutionPlan ?? undefined;
 
     if (Buffer.byteLength(instruction, 'utf-8') > MAX_INSTRUCTION_SIZE) {
       res.status(400).json({ error: `instruction exceeds max size (${MAX_INSTRUCTION_SIZE} bytes)` });
@@ -156,14 +297,21 @@ export function createRoutes(loop: InstructionLoop): Router {
       source: (c.source as 'user' | 'tool' | 'system') ?? 'user',
     }));
 
-    if (planDoc && planDoc.trim()) {
-      if (Buffer.byteLength(planDoc, 'utf-8') > MAX_CONTEXT_SIZE) {
+    const trimmedPlanDoc = typeof planDoc === 'string' ? planDoc.trim() : '';
+    const hasPlanDoc = trimmedPlanDoc.length > 0;
+    const planDocExecutionPlan = hasPlanDoc && !executionPlanForSubmit
+      ? deriveExecutionPlanFromPlanDoc(trimmedPlanDoc) ?? undefined
+      : undefined;
+    const effectiveExecutionPlan = executionPlanForSubmit ?? planDocExecutionPlan;
+
+    if (hasPlanDoc) {
+      if (Buffer.byteLength(trimmedPlanDoc, 'utf-8') > MAX_CONTEXT_SIZE) {
         res.status(400).json({ error: `planDoc exceeds max size (${MAX_CONTEXT_SIZE} bytes)` });
         return;
       }
       allContexts.push({
         label: 'Plan Document',
-        content: planDoc.trim(),
+        content: trimmedPlanDoc,
         source: 'user',
       });
     }
@@ -176,7 +324,7 @@ export function createRoutes(loop: InstructionLoop): Router {
       wantConfirm = false;
     } else if (uiMode === 'plan') {
       mode = 'code';
-      wantConfirm = true;
+      wantConfirm = !hasPlanDoc;
     } else if (uiMode === 'agent') {
       mode = 'auto';
       wantConfirm = false;
@@ -192,6 +340,21 @@ export function createRoutes(loop: InstructionLoop): Router {
       }
     }
 
+    if (hasPlanDoc && mode !== 'chat') {
+      mode = 'code';
+      wantConfirm = false;
+    }
+
+    if (effectiveExecutionPlan && effectiveExecutionPlan.length > 0) {
+      mode = 'code';
+      wantConfirm = false;
+    }
+
+    const effectiveRequestedUiMode =
+      hasPlanDoc && uiMode === 'plan'
+        ? 'agent'
+        : (uiMode === 'ask' || uiMode === 'plan' || uiMode === 'agent' ? uiMode : undefined);
+
     const fam =
       modelFamily === 'anthropic' || modelFamily === 'openai'
         ? modelFamily
@@ -199,15 +362,38 @@ export function createRoutes(loop: InstructionLoop): Router {
     const modelOverrides =
       models && typeof models === 'object' ? models : undefined;
     const id = loop.submit(instruction, allContexts, wantConfirm, mode, {
+      executionPlan: effectiveExecutionPlan,
       modelOverride: model?.trim() || undefined,
       modelFamily: fam,
       modelOverrides,
-      requestedUiMode:
-        uiMode === 'ask' || uiMode === 'plan' || uiMode === 'agent'
-          ? uiMode
+      requestedUiMode: effectiveRequestedUiMode,
+      campaignId:
+        typeof campaignId === 'string' ? campaignId.trim() || undefined : undefined,
+      rootRunId:
+        typeof rootRunId === 'string' ? rootRunId.trim() || undefined : undefined,
+      parentRunId:
+        typeof parentRunId === 'string' ? parentRunId.trim() || undefined : undefined,
+      projectContext:
+        projectContext &&
+        typeof projectContext === 'object' &&
+        typeof projectContext.projectId === 'string' &&
+        typeof projectContext.projectLabel === 'string'
+          ? projectContext
           : undefined,
     });
     const run = loop.getRun(id);
+
+    // Attach project context if provided
+    if (
+      run &&
+      projectContext &&
+      typeof projectContext === 'object' &&
+      typeof projectContext.projectId === 'string' &&
+      typeof projectContext.projectLabel === 'string'
+    ) {
+      run.projectContext = projectContext;
+    }
+
     const immediate = immediateRunPayload(run);
 
     res.json({
@@ -215,10 +401,14 @@ export function createRoutes(loop: InstructionLoop): Router {
       confirmPlan: wantConfirm,
       runMode: mode,
       uiMode: uiMode ?? null,
-      requestedUiMode: run?.requestedUiMode ?? uiMode ?? null,
+      requestedUiMode: run?.requestedUiMode ?? effectiveRequestedUiMode ?? null,
+      campaignId: run?.campaignId ?? null,
+      rootRunId: run?.rootRunId ?? null,
+      parentRunId: run?.parentRunId ?? null,
       model: model?.trim() || null,
       modelFamily: fam ?? null,
       models: modelOverrides ?? null,
+      projectContext: run?.projectContext ?? null,
       ...immediate,
     });
   }));
@@ -280,6 +470,10 @@ export function createRoutes(loop: InstructionLoop): Router {
       requestedUiMode: run?.requestedUiMode ?? null,
       threadKind: run?.threadKind ?? null,
       runMode: run?.runMode ?? null,
+      campaignId: run?.campaignId ?? null,
+      rootRunId: run?.rootRunId ?? null,
+      parentRunId: run?.parentRunId ?? null,
+      projectContext: run?.projectContext ?? null,
       ...immediateRunPayload(run),
     });
   }));
@@ -359,14 +553,13 @@ export function createRoutes(loop: InstructionLoop): Router {
   }));
 
   // GET /runs/:id/debug - Compact debug snapshot for dashboard modal
-  router.get('/runs/:id/debug', wrap(async (req, res) => {
+  router.get('/runs/:id/debug', wrap((req, res) => {
     const run = loop.getRun(req.params['id'] as string);
     if (!run) {
       res.status(404).json({ error: 'Run not found' });
       return;
     }
-    const traceUrl = await resolveDebugTraceUrl(run);
-    res.json(buildRunDebugSnapshot(run, traceUrl));
+    res.json(buildRunDebugSnapshot(run));
   }));
 
   // DELETE /runs/:id - Remove run from server (file + optional Postgres)
@@ -465,16 +658,23 @@ export function createRoutes(loop: InstructionLoop): Router {
       res.status(404).json({ error: 'Run not found or already completed' });
       return;
     }
-    res.json({ runId });
+    const run = loop.getRun(runId);
+    res.json({
+      runId,
+      campaignId: run?.campaignId ?? null,
+      rootRunId: run?.rootRunId ?? null,
+      parentRunId: run?.parentRunId ?? null,
+    });
   }));
 
   // GET /github/install/start - start proper GitHub App installation flow
   router.get('/github/install/start', wrap((req, res) => {
-    if (!githubInstallConfigured()) {
+    const installMissing = githubInstallMissingEnv();
+    if (installMissing.length > 0) {
       res.status(400).send(
         installPopupHtml(
           false,
-          'GitHub App install is not configured. Set GITHUB_APP_SLUG and GitHub App Setup URL.',
+          `GitHub App install is not configured. Missing ${installMissing.join(', ')}. Setup URL should be ${githubInstallCallbackUrl(req)}.`,
         ),
       );
       return;
@@ -493,16 +693,25 @@ export function createRoutes(loop: InstructionLoop): Router {
       res.status(400).type('html').send(installPopupHtml(false, 'Missing installation_id in callback.'));
       return;
     }
-    if (session.pendingState && state && session.pendingState !== state) {
+    if (!session.pendingState) {
+      res.status(400).type('html').send(installPopupHtml(false, 'Missing or expired install state. Start the install flow again.'));
+      return;
+    }
+    if (!state || session.pendingState !== state) {
       res.status(400).type('html').send(installPopupHtml(false, 'Invalid install state.'));
       return;
     }
     session.pendingState = undefined;
     setSessionGithubInstallation(session, installationIdRaw);
 
+    const appMissing = githubAppMissingEnv();
+    if (appMissing.length > 0) {
+      res.status(400).type('html').send(installPopupHtml(false, `GitHub App installed, but token exchange is not configured on the server. Missing ${appMissing.join(', ')}.`));
+      return;
+    }
     const appToken = await createInstallationTokenById(installationIdRaw);
     if (!appToken) {
-      res.status(400).type('html').send(installPopupHtml(false, 'GitHub App installed, but token exchange failed. Check GITHUB_APP_CLIENT_ID (or GITHUB_APP_ID) / GITHUB_APP_PRIVATE_KEY.'));
+      res.status(400).type('html').send(installPopupHtml(false, 'GitHub App installed, but token exchange failed. Check GITHUB_APP_ID or GITHUB_APP_CLIENT_ID and GITHUB_APP_PRIVATE_KEY.'));
       return;
     }
     res.status(200).type('html').send(installPopupHtml(true, 'GitHub App installed.'));
@@ -510,9 +719,45 @@ export function createRoutes(loop: InstructionLoop): Router {
 
   // POST /github/install/logout - clear current GitHub App install session
   router.post('/github/install/logout', wrap((req, res) => {
+    if (!requireAdminRouteAccess(req, res)) return;
     const session = getOrCreateOAuthSession(req, res);
     clearSessionGithub(session);
     res.json({ ok: true });
+  }));
+
+  // POST /github/installations - list app installations so UI can recover when GitHub stays on settings/installations/*
+  router.post('/github/installations', wrap(async (req, res) => {
+    if (!requireAdminRouteAccess(req, res)) return;
+    const appMissing = githubAppMissingEnv();
+    if (appMissing.length > 0) {
+      res.status(400).json({ error: `GitHub App token exchange is not configured. Missing ${appMissing.join(', ')}.` });
+      return;
+    }
+    const installations = await listGithubAppInstallations();
+    res.json({ installations });
+  }));
+
+  // POST /github/install/select - manually bind a visible installation to the current browser session
+  router.post('/github/install/select', wrap(async (req, res) => {
+    if (!requireAdminRouteAccess(req, res)) return;
+    const appMissing = githubAppMissingEnv();
+    if (appMissing.length > 0) {
+      res.status(400).json({ error: `GitHub App token exchange is not configured. Missing ${appMissing.join(', ')}.` });
+      return;
+    }
+    const installationId = Number(String((req.body ?? {})['installationId'] ?? '0'));
+    if (!installationId) {
+      res.status(400).json({ error: 'installationId is required.' });
+      return;
+    }
+    const token = await createInstallationTokenById(installationId);
+    if (!token) {
+      res.status(400).json({ error: `GitHub installation #${installationId} is not accessible for this app.` });
+      return;
+    }
+    const session = getOrCreateOAuthSession(req, res);
+    setSessionGithubInstallation(session, installationId);
+    res.json({ ok: true, installationId });
   }));
 
   // GET /settings/status - active repo + provider key availability
@@ -520,6 +765,8 @@ export function createRoutes(loop: InstructionLoop): Router {
     const repo = currentRepoStatus();
     const session = getOrCreateOAuthSession(req, res);
     const installationId = getSessionGithubInstallationId(session);
+    const githubInstallMissing = githubInstallMissingEnv();
+    const githubAppMissing = githubAppMissingEnv();
     res.json({
       workDir: WORK_DIR,
       workDirExists: existsSync(WORK_DIR),
@@ -530,7 +777,11 @@ export function createRoutes(loop: InstructionLoop): Router {
       ghAuthenticated: await githubCliAuthStatus(),
       githubInstallConfigured: githubInstallConfigured(),
       githubAppConfigured: githubAppConfigured(),
+      githubInstallMissing,
+      githubAppMissing,
       githubAppSlug: githubAppSlug() || null,
+      githubInstallCallbackPath: githubInstallCallbackPath(),
+      githubInstallCallbackUrl: githubInstallCallbackUrl(req),
       githubConnected: Boolean(installationId),
       githubInstallationId: installationId,
     });
@@ -538,6 +789,11 @@ export function createRoutes(loop: InstructionLoop): Router {
 
   // POST /settings/model-keys - update in-memory provider keys for this server process
   router.post('/settings/model-keys', wrap((req, res) => {
+    if (!requireAdminRouteAccess(req, res)) return;
+    if ((req.headers['x-requested-with'] as string | undefined) !== 'XMLHttpRequest') {
+      res.status(403).json({ error: 'Forbidden: missing X-Requested-With: XMLHttpRequest' });
+      return;
+    }
     const { anthropicApiKey, anthropicAuthToken, openaiApiKey } = (req.body ?? {}) as {
       anthropicApiKey?: string;
       anthropicAuthToken?: string;
@@ -572,6 +828,7 @@ export function createRoutes(loop: InstructionLoop): Router {
 
   // POST /settings/github-app - update GitHub App config in process env
   router.post('/settings/github-app', wrap((req, res) => {
+    if (!requireAdminRouteAccess(req, res)) return;
     if ((req.headers['x-requested-with'] as string | undefined) !== 'XMLHttpRequest') {
       res.status(403).json({ error: 'Forbidden: missing X-Requested-With: XMLHttpRequest' });
       return;
@@ -589,10 +846,11 @@ export function createRoutes(loop: InstructionLoop): Router {
 
   // POST /github/repos - list accessible repos for connected installation only
   router.post('/github/repos', wrap(async (req, res) => {
+    if (!requireAdminRouteAccess(req, res)) return;
     const { query } = (req.body ?? {}) as { query?: string };
     const installationId = resolveGithubInstallation(req, res);
     if (!installationId) {
-      res.status(401).json({ error: 'Not connected to GitHub App. Click Connect GitHub first.' });
+      res.status(401).json({ error: 'No GitHub installation selected. Click Connect GitHub, or load installations and choose one first.' });
       return;
     }
     const repos = await listGithubReposForInstallation(installationId, query);
@@ -601,12 +859,13 @@ export function createRoutes(loop: InstructionLoop): Router {
 
   // POST /github/connect - clone/pull a repo locally and switch active WORK_DIR (installation only)
   router.post('/github/connect', wrap(async (req, res) => {
+    if (!requireAdminRouteAccess(req, res)) return;
     const { repoFullName } = (req.body ?? {}) as {
       repoFullName?: string;
     };
     const installationId = resolveGithubInstallation(req, res);
     if (!installationId) {
-      res.status(401).json({ error: 'Not connected to GitHub App. Click Connect GitHub first.' });
+      res.status(401).json({ error: 'No GitHub installation selected. Click Connect GitHub, or load installations and choose one first.' });
       return;
     }
     if (!repoFullName || typeof repoFullName !== 'string' || !repoFullName.includes('/')) {

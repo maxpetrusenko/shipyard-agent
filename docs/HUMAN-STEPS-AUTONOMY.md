@@ -53,14 +53,15 @@ Goal: fully configure install flow and repo connection.
 
 Steps:
 1. In GitHub App settings:
-- Set **Setup URL** to `http://localhost:4200/api/github/install/callback`
+- Set **Setup URL** to your public Shipyard URL, for example `https://agent.ship.187.77.7.226.sslip.io/api/github/install/callback`
 - Grant repo permissions needed for your workflow.
 2. In `.env`, set:
 - `GITHUB_APP_SLUG`
 - `GITHUB_APP_CLIENT_ID` (or `GITHUB_APP_ID`)
 - `GITHUB_APP_PRIVATE_KEY`
+- Optional if proxy host/proto differs from the browser URL: `SHIPYARD_PUBLIC_BASE_URL`
 3. Open `http://localhost:4200/settings/connectors/github`.
-4. Click `Connect GitHub`, complete install, load repos, connect target repo.
+4. Click `Connect GitHub`, complete install. If GitHub leaves you on its install settings page, come back, load installations, choose yours, then load repos and connect target repo.
 
 ## 4) API Auth for Long Sessions (Recommended)
 

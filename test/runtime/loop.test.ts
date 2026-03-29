@@ -215,6 +215,81 @@ describe('InstructionLoop', () => {
       expect(run?.messages.some((m) => m.content === 'implement auth')).toBe(true);
     });
 
+    it('resumes the latest user turn, not the first turn', async () => {
+      const loopHack = loop as unknown as {
+        runs: Map<string, Record<string, unknown>>;
+      };
+      loopHack.runs.set('resume-latest-run', {
+        runId: 'resume-latest-run',
+        campaignId: 'campaign-root',
+        rootRunId: 'campaign-root',
+        parentRunId: null,
+        phase: 'error',
+        threadKind: 'agent',
+        runMode: 'code',
+        steps: [],
+        fileEdits: [],
+        toolCallHistory: [],
+        tokenUsage: null,
+        traceUrl: null,
+        messages: [
+          { role: 'user', content: 'implement auth' },
+          { role: 'assistant', content: 'done first step' },
+          { role: 'user', content: 'fix upload regression' },
+          { role: 'assistant', content: 'partial progress on latest step' },
+        ],
+        error: 'stopped',
+        verificationResult: null,
+        reviewFeedback: null,
+        durationMs: 42,
+      });
+
+      const resumed = loop.resume('resume-latest-run');
+      expect(resumed).toBe('resume-latest-run');
+
+      await new Promise((r) => setTimeout(r, 200));
+      const run = loop.getRun('resume-latest-run');
+      expect(run?.messages.some((m) => m.content === 'fix upload regression')).toBe(true);
+      expect(run?.campaignId).toBe('campaign-root');
+      expect(run?.rootRunId).toBe('campaign-root');
+    });
+
+    it('preserves project context across resume', async () => {
+      const loopHack = loop as unknown as {
+        runs: Map<string, Record<string, unknown>>;
+      };
+      loopHack.runs.set('resume-project-run', {
+        runId: 'resume-project-run',
+        campaignId: 'campaign-root',
+        rootRunId: 'campaign-root',
+        parentRunId: null,
+        phase: 'error',
+        threadKind: 'agent',
+        runMode: 'code',
+        steps: [],
+        fileEdits: [],
+        toolCallHistory: [],
+        tokenUsage: null,
+        traceUrl: null,
+        messages: [
+          { role: 'user', content: 'fix upload regression' },
+          { role: 'assistant', content: 'partial progress on latest step' },
+        ],
+        error: 'stopped',
+        verificationResult: null,
+        reviewFeedback: null,
+        durationMs: 42,
+        projectContext: { projectId: 'ship-agent', projectLabel: 'Ship Agent' },
+      });
+
+      const resumed = loop.resume('resume-project-run');
+      expect(resumed).toBe('resume-project-run');
+
+      await new Promise((r) => setTimeout(r, 200));
+      const run = loop.getRun('resume-project-run');
+      expect(run?.projectContext).toEqual({ projectId: 'ship-agent', projectLabel: 'Ship Agent' });
+    });
+
     it('re-queues plan threads as same-run plan follow-ups', async () => {
       const loopHack = loop as unknown as {
         runs: Map<string, Record<string, unknown>>;
@@ -449,6 +524,22 @@ describe('InstructionLoop', () => {
       expect(run?.toolCallHistory[0]?.tool_input).toEqual({ command: 'ls src' });
     });
 
+    it('reports shutdown-triggered cancellation distinctly from user stop', async () => {
+      streamDelayMs = 100;
+
+      const id = loop.submit('refactor small file', undefined, false, 'code');
+      await new Promise((r) => setTimeout(r, 20));
+      expect(loop.cancel('shutdown_signal')).toBe(true);
+      await waitFor(() => loop.getRun(id)?.phase === 'error');
+
+      const run = loop.getRun(id);
+      expect(run?.phase).toBe('error');
+      expect(run?.error).toBe('Run interrupted by server shutdown');
+      expect(run?.completionStatus).toBe('cancelled');
+      expect(run?.cancellation?.reason).toBe('Run interrupted by server shutdown');
+      expect(run?.cancellation?.source).toBe('shutdown_signal');
+    });
+
     it('records local-shortcut metadata for trivial ask runs', () => {
       const id = loop.submit('hi');
       const run = loop.getRun(id);
@@ -559,6 +650,16 @@ describe('InstructionLoop', () => {
   // getAllRuns / getRunsPaginated
   // -------------------------------------------------------------------------
 
+  describe('rss tracking', () => {
+    it('records peak rss on completed runs', async () => {
+      const id = loop.submit('counter check');
+      await waitFor(() => loop.getRun(id)?.phase === 'done');
+
+      const run = loop.getRun(id) as any;
+      expect(run?.peakRssKb).toBeGreaterThan(0);
+    });
+  });
+
   describe('getAllRuns', () => {
     it('returns empty array initially', () => {
       expect(loop.getAllRuns()).toEqual([]);
@@ -625,13 +726,6 @@ describe('InstructionLoop', () => {
       loop.injectContext({ label: 'test', content: 'data', source: 'user' });
       const contexts = loop.getContexts();
       expect(contexts.some((c) => c.label === 'test')).toBe(true);
-    });
-
-    it('does not auto-inject repo map during runs', async () => {
-      loop.submit('refactor small file', undefined, false, 'code');
-      await new Promise((r) => setTimeout(r, 200));
-
-      expect(loop.getContexts().some((c) => c.label === 'Repo Map')).toBe(false);
     });
 
     it('removes context by label', () => {

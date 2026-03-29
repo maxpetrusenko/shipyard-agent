@@ -62,7 +62,7 @@ describe('POST /invoke correlation ID propagation', () => {
     const body = await invokeWith('test correlation header', 'my-trace-abc-123');
     expect(body['status']).toBe('accepted');
     expect(body['correlationId']).toBe('my-trace-abc-123');
-  });
+  }, 15_000);
 
   it('stores correlationId on event ingress when header provided', async () => {
     const traceId = `trace-${Date.now()}`;

@@ -1,0 +1,254 @@
+[
+  {
+    "id": "merge-conflict-retry-loop",
+    "symptom": "Coordinator merge conflicts on shared rebuild files triggered repeated retry loops and burned full retry budgets.",
+    "rootCause": "Coordinator conflict handling did not fall back to single-agent execution quickly enough, and file ownership inference missed shared targets in subtask descriptions.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "verified",
+    "benchmarkStatus": "pending",
+    "runs": [
+      {
+        "id": "a6ea2992-ae30-4f7f-a846-f400c9545b0f",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/a6ea2992-ae30-4f7f-a846-f400c9545b0f"
+      }
+    ],
+    "addressed": "Coordinator now falls back faster and shared-target inference catches more overlap before retries spiral."
+  },
+  {
+    "id": "supervisor-relative-path-blindness",
+    "symptom": "Supervisor subtasks omitted relative shared paths like routes/files.ts, so parallel workers claimed the same file implicitly.",
+    "rootCause": "Decomposition relied too heavily on explicit files arrays and missed path mentions embedded in freeform task descriptions.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "verified",
+    "benchmarkStatus": "pending",
+    "runs": [
+      {
+        "id": "ca1a1abc-e5b2-490d-9f35-c24ba69b12e1",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/ca1a1abc-e5b2-490d-9f35-c24ba69b12e1"
+      }
+    ],
+    "addressed": "Relative path extraction added for freeform subtask text, so shared files like routes/files.ts get claimed explicitly."
+  },
+  {
+    "id": "parallel-filesystem-clobber-risk",
+    "symptom": "Parallel workers still share one physical working tree, so same-file edits can clobber each other before merge logic sees them.",
+    "rootCause": "Worktree isolation is not in place yet; current mitigation serializes overlapping subtasks instead of isolating each worker filesystem.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "verified",
+    "benchmarkStatus": "pending",
+    "runs": [
+      {
+        "id": "a6ea2992-ae30-4f7f-a846-f400c9545b0f",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/a6ea2992-ae30-4f7f-a846-f400c9545b0f"
+      }
+    ],
+    "addressed": "Parallel-safe subtasks now run inside isolated git worktrees before their merged edits are materialized back into the main repo."
+  },
+  {
+    "id": "rebuild-post-verify-gate-failures",
+    "symptom": "A full 7-step rebuild campaign reached done, but the rebuilt target still failed typecheck, build, and tests during post-run verification.",
+    "rootCause": "The rebuild runner stopped after per-step success and did not enforce a final integrated typecheck, build, and test gate for the combined target.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "pending",
+    "benchmarkStatus": "pending",
+    "runs": [
+      {
+        "id": "4ccf9a4c-00fa-4edf-a1a3-308b34de6e96",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/4ccf9a4c-00fa-4edf-a1a3-308b34de6e96"
+      }
+    ],
+    "addressed": "Added final integrated typecheck/build/test gate in rebuild runner, plus one repair pass with captured integration errors."
+  },
+  {
+    "id": "openai-non-chat-model-routing",
+    "symptom": "404 This is not a chat model and thus not supported in the v1/chat/completions endpoint.",
+    "rootCause": "Model resolution accepted stale or unsupported OpenAI-family ids instead of remapping them to supported chat models before hitting Chat Completions.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "pending",
+    "benchmarkStatus": "pending",
+    "runs": [
+      {
+        "id": "36d13a37-e21b-4f61-af04-aab230e445b9",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/36d13a37-e21b-4f61-af04-aab230e445b9"
+      }
+    ],
+    "addressed": "Unsupported OpenAI-family ids now normalize to supported chat defaults before Chat Completions requests."
+  },
+  {
+    "id": "verification-passed-with-preexisting-errors",
+    "symptom": "Verification is inconsistent: it reports Passed: true but also Errors: 24.",
+    "rootCause": "Review logic previously let the LLM reinterpret successful verification with zero new errors, even when every reported error was pre-existing baseline debt.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "pending",
+    "benchmarkStatus": "pending",
+    "runs": [
+      {
+        "id": "897503b1-a999-4fc3-867a-027a4c647af8",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/897503b1-a999-4fc3-867a-027a4c647af8"
+      }
+    ],
+    "addressed": "Deterministic review fast-path now treats passed + zero new errors as done, without reinterpreting baseline debt as failure."
+  },
+  {
+    "id": "watchdog-no-edit-stall",
+    "symptom": "Execution stalled after repeated no-edit rounds while the model kept exploring.",
+    "rootCause": "The execute watchdog needed stronger nudges and first-edit deadlines to break analysis paralysis on concrete file-target tasks.",
+    "status": "workaround",
+    "patchStatus": "workaround",
+    "testStatus": "verified",
+    "benchmarkStatus": "pending",
+    "runs": [
+      {
+        "id": "5be3639a-25dd-4fc3-9a40-933e5b23592c",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/5be3639a-25dd-4fc3-9a40-933e5b23592c"
+      }
+    ],
+    "addressed": "Watchdog strengthened: first-edit deadlines, stronger nudges, repeated identical tool-call breaker, per-step edit baselines, broader no-op justification parsing, and guarded auto-close for preserve-only conditional steps after discovery. Latest rebuild runs still show a later required-edit residual, so benchmark closure stays pending."
+  },
+  {
+    "id": "verification-cascade-early-escalation",
+    "symptom": "Too many errors (44) introduced. Escalating instead of retrying.",
+    "rootCause": "Review escalation was too aggressive for cascade failures where one root cause inflated the raw error count across many tests.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "pending",
+    "benchmarkStatus": "pending",
+    "runs": [
+      {
+        "id": "498e86d1-5c39-48af-9487-58eb64ab0ce7",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/498e86d1-5c39-48af-9487-58eb64ab0ce7"
+      }
+    ],
+    "addressed": "Cascade failures now get one narrow re-plan instead of immediate escalation, then offload if the cascade persists."
+  },
+  {
+    "id": "planned-scope-false-positive",
+    "symptom": "Edited files outside planned scope for explicit upload service targets inside the rebuild repo.",
+    "rootCause": "Scope guard compared edits only against drafted plan files and missed explicit file targets called out in the instruction itself.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "verified",
+    "benchmarkStatus": "pending",
+    "runs": [
+      {
+        "id": "8d8aa0da-4019-42b0-aacb-5584f27a769f",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/8d8aa0da-4019-42b0-aacb-5584f27a769f"
+      }
+    ],
+    "addressed": "Scope checks now honor explicit instruction targets, not just drafted plan files."
+  },
+  {
+    "id": "execute-step-edit-baseline-reset-watchdog",
+    "symptom": "Execution stalled after no-edit watchdog rounds even though earlier edits had already landed in the same step.",
+    "rootCause": "Execute no-edit accounting reset against the current execute attempt instead of a step-scoped edit baseline, so retries forgot prior successful edits in the same plan step.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "verified",
+    "benchmarkStatus": "verified",
+    "runs": [
+      {
+        "id": "157b90b4-33b3-4d44-914e-544277b12f60",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/157b90b4-33b3-4d44-914e-544277b12f60"
+      }
+    ],
+    "addressed": "Execution now persists a per-step edit baseline across retries, so watchdog checks count edits already completed inside the active step."
+  },
+  {
+    "id": "canonical-db-scope-guard-false-positive",
+    "symptom": "Scope guard blocked canonical api/db edits while the active step still referenced legacy api/src/db targets.",
+    "rootCause": "Candidate-path scope checks treated canonical api/db paths and legacy api/src/db counterparts as unrelated files instead of equivalent deliverable aliases.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "verified",
+    "benchmarkStatus": "verified",
+    "runs": [
+      {
+        "id": "54981c56-f721-4f2b-b71d-74f0236ab5b4",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/54981c56-f721-4f2b-b71d-74f0236ab5b4"
+      }
+    ],
+    "addressed": "Scope matching now treats canonical db paths and legacy wrapper paths as equivalent, so canonical deliverables are not blocked by legacy step file lists."
+  },
+  {
+    "id": "literal-no-edit-marker-bias",
+    "symptom": "Evidence-rich no-op completions still tripped the watchdog unless the model emitted the literal NO_EDIT_JUSTIFIED marker.",
+    "rootCause": "Completion parsing recognized only narrow no-op phrasings, so natural-language evidence like \"No edits were needed\" or qualified variants such as \"No schema edits were needed\" still counted as empty completion.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "verified",
+    "benchmarkStatus": "verified",
+    "runs": [
+      {
+        "id": "273f8d07-231c-4308-b207-2013586c83c9",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/273f8d07-231c-4308-b207-2013586c83c9"
+      },
+      {
+        "id": "8758993b-940a-41d9-9fe2-b5556a0a4139",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/8758993b-940a-41d9-9fe2-b5556a0a4139"
+      },
+      {
+        "id": "1944af3c-ae9e-413c-ac58-0110087cdb99",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/1944af3c-ae9e-413c-ac58-0110087cdb99"
+      }
+    ],
+    "addressed": "No-op completion parsing now accepts evidence-rich phrases such as \"No edits needed\", \"No edits were needed\", and qualified variants like \"No schema edits were needed\" when the message includes concrete supporting evidence."
+  },
+  {
+    "id": "bare-step-complete-late-step-drift",
+    "symptom": "Later rebuild steps still can end in watchdog offload when the model narrates success or emits bare STEP_COMPLETE after no successful edit landed in a required-edit step.",
+    "rootCause": "Conditional preserve-only detection missed plain \"as needed\" compatibility steps, and discovery-before-first-edit tracking was run-global instead of step-local, so later no-op preserve steps still exhausted the watchdog and escalated with bare STEP_COMPLETE.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "verified",
+    "benchmarkStatus": "verified",
+    "runs": [
+      {
+        "id": "423e0f88-7823-486a-a0d2-2070e1180bae",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/423e0f88-7823-486a-a0d2-2070e1180bae"
+      },
+      {
+        "id": "743fb053-da31-4229-a59d-268485d8cd5d",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/743fb053-da31-4229-a59d-268485d8cd5d"
+      }
+    ],
+    "addressed": "Preserve-only compatibility steps now recognize plain \"as needed\" phrasing, and execute watchdog discovery tracking is step-local instead of run-global, so later no-op preserve steps close cleanly instead of stalling on bare STEP_COMPLETE."
+  },
+  {
+    "id": "ambiguous-edit-context-retry-loop",
+    "symptom": "Required-edit auth hub steps can still stall after an edit_file attempt fails with \"old_string matched multiple places\" and the model never narrows the replacement context.",
+    "rootCause": "Deterministic blocker guidance tells the model to re-read and provide more unique edit context, but execute auto-recovery still relies on the model to recover manually from repeated multi-match edit failures in large hub files.",
+    "status": "open",
+    "patchStatus": "open",
+    "testStatus": "triage",
+    "benchmarkStatus": "triage",
+    "runs": [
+      {
+        "id": "743fb053-da31-4229-a59d-268485d8cd5d",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/743fb053-da31-4229-a59d-268485d8cd5d"
+      }
+    ],
+    "addressed": "Not fixed yet. Latest stable-server auth swarm no longer dies on bare STEP_COMPLETE drift; it now advances to a later required-edit failure class: repeated ambiguous multi-match edit context in auth.ts."
+  },
+  {
+    "id": "retryable-watchdog-review-offload",
+    "symptom": "Retryable watchdog stalls escalated out of review instead of retrying execution, so runs stopped early on recoverable no-edit and ambiguous-edit blockers.",
+    "rootCause": "Review treated all watchdog-class execution issues as terminal offload candidates, even when the blocker was explicitly retryable and execute had deterministic recovery guidance.",
+    "addressed": "Review now keeps retryable watchdog blockers in the execution loop instead of offloading. Persisted rebuild run 7a2558d0-f8ca-40a7-afd7-b571e5a7d587 shows '[Review] retry (executing)' on watchdog stalls, then continues into verification; later failure is unrelated auth-route repair debt, not the old premature-stop chain.",
+    "status": "fixed",
+    "patchStatus": "patched",
+    "testStatus": "verified",
+    "benchmarkStatus": "verified",
+    "runs": [
+      {
+        "id": "7a2558d0-f8ca-40a7-afd7-b571e5a7d587",
+        "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/7a2558d0-f8ca-40a7-afd7-b571e5a7d587"
+      }
+    ]
+  }
+]

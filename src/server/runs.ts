@@ -186,7 +186,6 @@ function renderRunCard(run: RunResult): string {
     </div>
     <div class="run-links">
       <a href="/api/runs/${encodeURIComponent(run.runId)}">Run JSON</a>
-      <a href="/api/runs/${encodeURIComponent(run.runId)}/debug">Debug</a>
       ${run.traceUrl ? `<a href="${esc(run.traceUrl)}" target="_blank" rel="noreferrer noopener">Trace</a>` : ''}
     </div>
   </article>`;

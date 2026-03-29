@@ -13,6 +13,10 @@ import type {
   FileEdit,
 } from '../state.js';
 
+export interface VerifyNodeOptions {
+  runTests?: 'final_only' | 'always';
+}
+
 async function runVerifyStep(
   name: string,
   command: string,
@@ -47,8 +51,9 @@ function extractErrorLines(output: string): string[] {
     });
 }
 
-export async function verifyNode(
+export async function runVerification(
   state: ShipyardStateType,
+  opts: VerifyNodeOptions = {},
 ): Promise<Partial<ShipyardStateType>> {
   // Short-circuit: if execute set a recoverable executionIssue, carry it forward
   // with a synthetic verification note (no point running verification if execute failed)
@@ -66,7 +71,8 @@ export async function verifyNode(
   }
 
   const hasMoreSteps = state.currentStepIndex < state.steps.length - 1;
-  const runTestsEachStep = process.env['SHIPYARD_TEST_EACH_STEP'] === 'true';
+  const runTestsEachStep =
+    opts.runTests === 'always' || process.env['SHIPYARD_TEST_EACH_STEP'] === 'true';
   const midStepErrorThreshold = 10;
   const observedFiles = state.fileEdits.length === 0
     ? await detectObservedChangedFiles(state.runId, WORK_DIR)
@@ -215,4 +221,10 @@ export async function verifyNode(
     fileEdits: effectiveEdits,
     modelHint: 'opus',
   };
+}
+
+export async function verifyNode(
+  state: ShipyardStateType,
+): Promise<Partial<ShipyardStateType>> {
+  return runVerification(state);
 }

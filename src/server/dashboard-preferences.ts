@@ -7,7 +7,7 @@ export const DASHBOARD_MODE_STORAGE_KEY = 'shipyard_dashboard_mode';
 export const DASHBOARD_OPENAI_KEY_STORAGE_KEY = 'shipyard_dashboard_openai_api_key';
 export const DASHBOARD_ANTHROPIC_KEY_STORAGE_KEY = 'shipyard_dashboard_anthropic_api_key';
 export const DASHBOARD_GITHUB_REPO_STORAGE_KEY = 'shipyard_dashboard_github_repo';
-export const DASHBOARD_GITHUB_TOKEN_STORAGE_KEY = 'shipyard_dashboard_github_token';
+export const DASHBOARD_PROJECT_STORAGE_KEY = 'shipyard_selectedProject';
 
 export function getDashboardPreferenceScript(): string {
   return `
@@ -50,14 +50,6 @@ function persistDashboardSelect(selectId, storageKey) {
   saveDashboardPref(storageKey, sel.value);
 }
 
-function restoreDashboardModeSel() {
-  restoreDashboardSelect('uiModeSel', DASH_MODE_KEY);
-}
-
-function persistDashboardModeSel() {
-  persistDashboardSelect('uiModeSel', DASH_MODE_KEY);
-}
-
 function restoreDashboardModelSel() {
   restoreDashboardSelect('modelSel', DASH_MODEL_KEY);
 }
@@ -78,6 +70,30 @@ function persistDashboardInput(inputId, storageKey) {
   var el = document.getElementById(inputId);
   if (!el) return;
   saveDashboardPref(storageKey, el.value || '');
+}
+`;
+}
+
+export function getProjectPreferencesScript(): string {
+  return `
+var DASH_PROJECT_KEY = ${JSON.stringify(DASHBOARD_PROJECT_STORAGE_KEY)};
+
+function getSelectedProject() {
+  try {
+    var raw = localStorage.getItem(DASH_PROJECT_KEY);
+    if (!raw) return { id: 'default', label: 'Default Project' };
+    var parsed = JSON.parse(raw);
+    if (parsed && parsed.id && parsed.label) return parsed;
+    return { id: 'default', label: 'Default Project' };
+  } catch (e) {
+    return { id: 'default', label: 'Default Project' };
+  }
+}
+
+function setSelectedProject(id, label) {
+  try {
+    localStorage.setItem(DASH_PROJECT_KEY, JSON.stringify({ id: id, label: label }));
+  } catch (e) {}
 }
 `;
 }

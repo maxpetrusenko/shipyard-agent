@@ -19,6 +19,9 @@ export type LiveFeedEvent =
       ok: boolean;
       file_path?: string;
       detail: string;
+      tool_input?: Record<string, unknown>;
+      tool_result?: string;
+      duration_ms?: number;
       timestamp: number;
     }
   | {
@@ -28,19 +31,29 @@ export type LiveFeedEvent =
       timestamp: number;
     };
 
-let liveFeedListener: ((event: LiveFeedEvent) => void) | null = null;
+const liveFeedListeners = new Set<(event: LiveFeedEvent) => void>();
+const TOOL_HISTORY_CAP = 500;
 
 export function setLiveFeedListener(
   fn: ((event: LiveFeedEvent) => void) | null,
-): void {
-  liveFeedListener = fn;
+): (() => void) | void {
+  if (!fn) {
+    liveFeedListeners.clear();
+    return;
+  }
+  liveFeedListeners.add(fn);
+  return () => {
+    liveFeedListeners.delete(fn);
+  };
 }
 
 function emitLiveFeed(event: LiveFeedEvent): void {
-  try {
-    liveFeedListener?.(event);
-  } catch {
-    // Listener errors must not break tool dispatch
+  for (const listener of liveFeedListeners) {
+    try {
+      listener(event);
+    } catch {
+      // Listener errors must not break tool dispatch
+    }
   }
 }
 
@@ -73,6 +86,10 @@ export interface ToolHooks {
 function summarizeToolInput(ctx: ToolCallResult): string {
   const name = ctx.tool_name;
   const input = ctx.tool_input;
+  if (name === 'web_search' || name === 'websearch') {
+    const query = input['query'] ?? input['search_query'] ?? input['q'];
+    return typeof query === 'string' ? query.slice(0, 240) : JSON.stringify(input).slice(0, 160);
+  }
   if (name === 'bash') {
     const c = input['command'];
     return typeof c === 'string' ? c.slice(0, 240) : '';
@@ -107,7 +124,7 @@ export async function runBeforeHooks(
 ): Promise<void> {
   if (!hooks.onBeforeToolCall) return;
   for (const fn of hooks.onBeforeToolCall) {
-    await fn(ctx);
+    try { await fn(ctx); } catch (e) { console.warn('[hooks] beforeToolCall hook error:', e); }
   }
 }
 
@@ -117,7 +134,7 @@ export async function runAfterHooks(
 ): Promise<void> {
   if (!hooks.onAfterToolCall) return;
   for (const fn of hooks.onAfterToolCall) {
-    await fn(ctx);
+    try { await fn(ctx); } catch (e) { console.warn('[hooks] afterToolCall hook error:', e); }
   }
 }
 
@@ -172,18 +189,25 @@ export function createRecordingHooks(
         timestamp: Date.now(),
         duration_ms: ctx.duration_ms,
       });
+      if (history.length > TOOL_HISTORY_CAP) {
+        history.splice(0, history.length - TOOL_HISTORY_CAP);
+      }
 
       const fileMutatorOk =
         (ctx.tool_name === 'edit_file' && ok) ||
         (ctx.tool_name === 'write_file' && ok);
       if (!fileMutatorOk) {
         const fp = ctx.tool_input['file_path'];
+        const serializedResult = JSON.stringify(ctx.tool_result).slice(0, 10_000);
         emitLiveFeed({
           type: 'tool',
           tool_name: ctx.tool_name,
           ok,
           file_path: typeof fp === 'string' ? fp : undefined,
           detail: summarizeToolInput(ctx),
+          tool_input: ctx.tool_input,
+          tool_result: serializedResult,
+          duration_ms: ctx.duration_ms,
           timestamp: Date.now(),
         });
       }
@@ -204,12 +228,16 @@ export function createPlanLiveHooks(): ToolHooks {
       (ctx) => {
         const ok = Boolean(ctx.tool_result['success']);
         const fp = ctx.tool_input['file_path'];
+        const serializedResult = JSON.stringify(ctx.tool_result).slice(0, 10_000);
         emitLiveFeed({
           type: 'tool',
           tool_name: ctx.tool_name,
           ok,
           file_path: typeof fp === 'string' ? fp : undefined,
           detail: summarizeToolInput(ctx),
+          tool_input: ctx.tool_input,
+          tool_result: serializedResult,
+          duration_ms: ctx.duration_ms,
           timestamp: Date.now(),
         });
       },

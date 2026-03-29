@@ -24,30 +24,31 @@ const PAGE_HTML = `<!DOCTYPE html>
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700;800&display=swap');
 
   :root {
-    --bg: #060a12;
-    --bg2: #0a0e17;
-    --card: #111827;
-    --card-hover: #1a2035;
-    --border: #2a3250;
-    --border-active: #3a4570;
-    --text: #e2e8f0;
-    --text-muted: #6b7a90;
-    --text-dim: #4a5568;
-    --accent: #818cf8;
-    --accent-glow: rgba(129, 140, 248, 0.15);
-    --accent-strong: #6366f1;
-    --green: #10b981;
-    --green-dim: rgba(16, 185, 129, 0.12);
-    --yellow: #f59e0b;
-    --yellow-dim: rgba(245, 158, 11, 0.12);
-    --red: #ef4444;
-    --red-dim: rgba(239, 68, 68, 0.12);
-    --cyan: #22d3ee;
-    --cyan-dim: rgba(34, 211, 238, 0.12);
-    --purple: #a78bfa;
-    --purple-dim: rgba(167, 139, 250, 0.12);
-    --orange: #fb923c;
-    --orange-dim: rgba(251, 146, 60, 0.12);
+    color-scheme: light;
+    --bg: #f7f5f2;
+    --bg2: #f0ede8;
+    --card: #ffffff;
+    --card-hover: #f5f0ea;
+    --border: #e5e0d8;
+    --border-active: #d4cbbb;
+    --text: #1a1815;
+    --text-muted: #7e7464;
+    --text-dim: #a09484;
+    --accent: #c45a3c;
+    --accent-glow: rgba(196, 90, 60, 0.12);
+    --accent-strong: #a0432a;
+    --green: #2d8659;
+    --green-dim: rgba(45, 134, 89, 0.12);
+    --yellow: #b8860b;
+    --yellow-dim: rgba(184, 134, 11, 0.12);
+    --red: #c53030;
+    --red-dim: rgba(197, 48, 48, 0.12);
+    --cyan: #0e7490;
+    --cyan-dim: rgba(14, 116, 144, 0.12);
+    --purple: #8b5cf6;
+    --purple-dim: rgba(139, 92, 246, 0.12);
+    --orange: #ea7b45;
+    --orange-dim: rgba(234, 123, 69, 0.12);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -57,6 +58,7 @@ const PAGE_HTML = `<!DOCTYPE html>
     font-family: 'Space Grotesk', sans-serif;
     background: var(--bg);
     color: var(--text);
+    color-scheme: light;
     line-height: 1.6;
     overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
@@ -593,7 +595,7 @@ const PAGE_HTML = `<!DOCTYPE html>
       <div class="pipeline-num" style="background:var(--accent-glow);color:var(--accent)">1</div>
       <div class="pipeline-name">Plan</div>
       <div class="pipeline-desc">Reads codebase, generates step-by-step execution plan with file targets</div>
-      <div class="pipeline-model">GPT-5.3 Codex</div>
+      <div class="pipeline-model">GPT-5.4</div>
     </div>
     <div class="pipeline-card spotlight-card glare-hover reveal" style="--stagger:1;--spotlight-color:rgba(16,185,129,0.08)">
       <div class="pipeline-num" style="background:var(--green-dim);color:var(--green)">2</div>
@@ -611,7 +613,7 @@ const PAGE_HTML = `<!DOCTYPE html>
       <div class="pipeline-num" style="background:var(--yellow-dim);color:var(--yellow)">4</div>
       <div class="pipeline-name">Review</div>
       <div class="pipeline-desc">Evaluates diffs and verification output, decides: accept, retry, or escalate</div>
-      <div class="pipeline-model">GPT-5.3 Codex</div>
+      <div class="pipeline-model">GPT-5.4</div>
     </div>
     <div class="pipeline-card spotlight-card glare-hover reveal" style="--stagger:4;--spotlight-color:rgba(167,139,250,0.08)">
       <div class="pipeline-num" style="background:var(--purple-dim);color:var(--purple)">5</div>
@@ -646,7 +648,7 @@ const PAGE_HTML = `<!DOCTYPE html>
     <div class="feature-card spotlight-card glare-hover reveal" style="--stagger:2;--spotlight-color:rgba(245,158,11,0.06)">
       <div class="feature-icon" style="background:var(--yellow-dim);color:var(--yellow)">&#9733;</div>
       <h3>Model Flexibility</h3>
-      <p>Switch between GPT-5.4 Mini for fast edits and GPT-5.1/5.3 Codex for deeper reasoning. Per-run model selection.</p>
+      <p>Switch between GPT-5.4 Mini for fast edits and GPT-5.4 for deeper reasoning. Per-run model selection.</p>
     </div>
     <div class="feature-card spotlight-card star-border glare-hover reveal" style="--stagger:3;border-radius:16px;--spotlight-color:rgba(34,211,238,0.06)">
       <div class="feature-icon" style="background:var(--cyan-dim);color:var(--cyan)">&#9878;</div>

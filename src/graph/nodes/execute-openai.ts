@@ -31,9 +31,12 @@ import {
   decideNoEditProgressAction,
   deriveBlockingReasonFromToolResult,
   formatExecuteWatchdogError,
+  resolveEditsInCurrentExecuteStep,
+  shouldTreatCompletionAsNoEdit,
   shouldFastTrackNoEditStall,
   type ExecuteProgressDiagnostics,
 } from './execute-progress.js';
+import { capToolHistory, detectRepeatedToolCallLoop } from './execute.js';
 import type {
   ShipyardStateType,
   ExecutionIssue,
@@ -75,13 +78,16 @@ export async function runOpenAiExecuteLoop(params: {
     cacheCreation: state.tokenUsage?.cacheCreation ?? 0,
   };
   const newEdits: FileEdit[] = [...state.fileEdits];
-  const newHistory: ToolCallRecord[] = [...state.toolCallHistory];
+  const newHistory: ToolCallRecord[] = [...capToolHistory(state.toolCallHistory)];
   const newMessages: LLMMessage[] = [...state.messages];
   // Scale tool rounds with step count: complex plans need more rounds per step.
   // Base 25, +2 per step beyond 5, capped at 40.
   const maxToolRounds = Math.min(40, 25 + Math.max(0, state.steps.length - 5) * 2);
   const maxNoEditRounds = deriveMaxNoEditToolRounds(state.steps.length);
-  const stepEditBaseline = state.fileEdits.length;
+  const stepEditBaseline =
+    typeof state.currentStepEditBaseline === 'number'
+      ? state.currentStepEditBaseline
+      : state.fileEdits.length;
   const currentStepDescription =
     state.steps[state.currentStepIndex]?.description ?? stepPrompt;
   let noEditToolRounds = 0;
@@ -93,7 +99,10 @@ export async function runOpenAiExecuteLoop(params: {
       ? state.toolCallHistory.filter((t) => isDiscoveryToolName(t.tool_name)).length
       : 0;
   let guardrailViolation: string | null = null;
+  let repeatedToolLoopMessage: string | null = null;
   let lastBlockingReason: string | null = null;
+  let lastFailingEditPath: string | null = null;
+  let lastFailingEditOldString: string | null = null;
   let forcedEditNudges = 0;
   const snapshotExecuteDiagnostics = (
     stopReason: ExecuteProgressDiagnostics['stopReason'],
@@ -172,6 +181,7 @@ export async function runOpenAiExecuteLoop(params: {
 
     const choice = completion.choices[0];
     if (!choice) {
+      console.warn('[execute-openai] Empty choices array from API, breaking');
       break;
     }
 
@@ -234,11 +244,23 @@ export async function runOpenAiExecuteLoop(params: {
           const blockingReason = deriveBlockingReasonFromToolResult(name, result);
           if (blockingReason) {
             lastBlockingReason = blockingReason;
+            if (name === 'edit_file') {
+              lastFailingEditPath = typeof input['file_path'] === 'string' ? input['file_path'] : null;
+              lastFailingEditOldString = typeof input['old_string'] === 'string' ? input['old_string'] : null;
+            }
           } else if (
             (name === 'edit_file' || name === 'write_file') &&
             result['success'] === true
           ) {
             lastBlockingReason = null;
+            lastFailingEditPath = null;
+            lastFailingEditOldString = null;
+          }
+          const repeatedToolLoop = detectRepeatedToolCallLoop(newHistory);
+          if (repeatedToolLoop) {
+            repeatedToolLoopMessage = repeatedToolLoop;
+            lastBlockingReason = repeatedToolLoop;
+            return { success: false, message: repeatedToolLoop };
           }
           return result;
         },
@@ -281,6 +303,41 @@ export async function runOpenAiExecuteLoop(params: {
         };
       }
 
+      if (repeatedToolLoopMessage) {
+        const nextAction = 'Switch strategy now: stop repeating the same tool call, make one concrete in-scope edit, or justify a no-op.';
+        const issue = createExecutionIssue({
+          kind: 'watchdog',
+          message: formatExecuteWatchdogError(
+            snapshotExecuteDiagnostics('stalled_no_edit_rounds'),
+            nextAction,
+          ),
+          nextAction,
+          stopReason: 'stalled_no_edit_rounds',
+        });
+        const failedSteps = updatedSteps.map((s, i) =>
+          i === state.currentStepIndex ? { ...s, status: 'failed' as const } : s,
+        );
+        const snapshotJson = overlay.dirty
+          ? overlay.serialize()
+          : state.fileOverlaySnapshots ?? null;
+        return {
+          phase: 'verifying',
+          steps: failedSteps,
+          fileEdits: newEdits,
+          toolCallHistory: newHistory,
+          messages: newMessages,
+          tokenUsage: {
+            input: usageAcc.input,
+            output: usageAcc.output,
+            cacheRead: usageAcc.cacheRead,
+            cacheCreation: usageAcc.cacheCreation,
+          },
+          fileOverlaySnapshots: snapshotJson,
+          executeDiagnostics: snapshotExecuteDiagnostics('stalled_no_edit_rounds'),
+          executionIssue: issue,
+        };
+      }
+
       if (newEdits.length === editsBefore) {
         noEditToolRounds += 1;
       } else {
@@ -302,11 +359,16 @@ export async function runOpenAiExecuteLoop(params: {
           maxNoEditToolRounds: maxNoEditRounds,
           forcedEditNudges,
           maxForcedEditNudges: MAX_FORCED_EDIT_NUDGES,
-          editsInCurrentExecuteStep: Math.max(0, newEdits.length - stepEditBaseline),
+          editsInCurrentExecuteStep: resolveEditsInCurrentExecuteStep({
+            totalFileEdits: newEdits.length,
+            currentStepEditBaseline: stepEditBaseline,
+          }),
           discoveryCallsBeforeFirstEdit,
           discoveryCallLimit,
           stepDescription: currentStepDescription,
           lastBlockingReason,
+          lastFailingEditFilePath: lastFailingEditPath,
+          lastFailingEditOldString,
         });
         if (action.kind === 'nudge') {
           forcedEditNudges += 1;
@@ -370,6 +432,95 @@ export async function runOpenAiExecuteLoop(params: {
     if (textContent.trim()) emitTextChunk('execute', textContent);
     const isExplicitComplete = textContent.includes('STEP_COMPLETE');
     const isStopNoTools = choice.finish_reason === 'stop';
+    const editsInCurrentExecuteStep = resolveEditsInCurrentExecuteStep({
+      totalFileEdits: newEdits.length,
+      currentStepEditBaseline: stepEditBaseline,
+    });
+    if (
+      shouldTreatCompletionAsNoEdit({
+        completionSignaled: isExplicitComplete || isStopNoTools,
+        assistantText: textContent,
+        editsInCurrentExecuteStep,
+      })
+    ) {
+      lastBlockingReason =
+        'STEP_COMPLETE without any successful edit or NO_EDIT_JUSTIFIED evidence';
+      newMessages.push({ role: 'assistant', content: textContent });
+      conversation.push({ role: 'assistant', content: textContent || 'STEP_COMPLETE' });
+      noEditToolRounds += 1;
+      if (
+        shouldFastTrackNoEditStall({
+          noEditToolRounds,
+          lastBlockingReason,
+        })
+      ) {
+        noEditToolRounds = maxNoEditRounds;
+      }
+      const action = decideNoEditProgressAction({
+        noEditToolRounds,
+        maxNoEditToolRounds: maxNoEditRounds,
+        forcedEditNudges,
+        maxForcedEditNudges: MAX_FORCED_EDIT_NUDGES,
+        editsInCurrentExecuteStep,
+        discoveryCallsBeforeFirstEdit,
+        discoveryCallLimit,
+        stepDescription: currentStepDescription,
+        lastBlockingReason,
+        lastFailingEditFilePath: lastFailingEditPath,
+        lastFailingEditOldString,
+      });
+      if (action.kind === 'nudge') {
+        forcedEditNudges += 1;
+        noEditToolRounds = 0;
+        conversation.push({ role: 'user', content: action.nudgeMessage });
+        newMessages.push({
+          role: 'assistant',
+          content:
+            `[Watchdog] Rejected empty completion ${forcedEditNudges}/${MAX_FORCED_EDIT_NUDGES}: step still requires a concrete edit or justified no-op.`,
+        });
+        continue;
+      }
+      if (action.kind === 'validated_noop') {
+        const finalSteps = updatedSteps.map((s, i) =>
+          i === state.currentStepIndex ? { ...s, status: 'done' as const } : s,
+        );
+        return buildReturn(
+          `NO_EDIT_JUSTIFIED: ${action.reason}\nSTEP_COMPLETE`,
+          finalSteps,
+          'validated_noop',
+        );
+      }
+      if (action.kind === 'stall') {
+        const issue = createExecutionIssue({
+          kind: 'watchdog',
+          message: formatExecuteWatchdogError(action.diagnostics, action.nextAction),
+          nextAction: action.nextAction,
+          stopReason: 'stalled_no_edit_rounds',
+        });
+        const failedSteps = updatedSteps.map((s, i) =>
+          i === state.currentStepIndex ? { ...s, status: 'failed' as const } : s,
+        );
+        const snapshotJson = overlay.dirty
+          ? overlay.serialize()
+          : state.fileOverlaySnapshots ?? null;
+        return {
+          phase: 'verifying',
+          steps: failedSteps,
+          fileEdits: newEdits,
+          toolCallHistory: newHistory,
+          messages: newMessages,
+          tokenUsage: {
+            input: usageAcc.input,
+            output: usageAcc.output,
+            cacheRead: usageAcc.cacheRead,
+            cacheCreation: usageAcc.cacheCreation,
+          },
+          fileOverlaySnapshots: snapshotJson,
+          executeDiagnostics: action.diagnostics,
+          executionIssue: issue,
+        };
+      }
+    }
     if (isExplicitComplete || isStopNoTools) {
       const finalSteps = updatedSteps.map((s, i) =>
         i === state.currentStepIndex ? { ...s, status: 'done' as const } : s,

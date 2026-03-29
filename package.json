@@ -6,7 +6,8 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx src/index.ts",
+    "dev:watch": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "clean": "rm -rf dist",
@@ -16,6 +17,7 @@
     "test:watch": "vitest",
     "test:flake": "./scripts/flake-check.sh",
     "bench": "./scripts/bench.sh",
+    "truth:update": "tsx scripts/update-run-truth.ts",
     "load:test": "tsx scripts/load-test.ts",
     "done:check": "./scripts/done-gate.sh"
   },

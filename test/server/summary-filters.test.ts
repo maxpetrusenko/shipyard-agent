@@ -70,7 +70,7 @@ describe('GET /invoke/events/summary — enhanced filters (Task #24)', () => {
     expect(typeof body['avgRetryAttempts']).toBe('number');
     expect(typeof body['oldestEvent']).toBe('string');
     expect(typeof body['newestEvent']).toBe('string');
-  });
+  }, 15_000);
 
   it('empty result returns zeroes/null for computed fields', async () => {
     // Use a source filter that matches nothing

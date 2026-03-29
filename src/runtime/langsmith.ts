@@ -89,11 +89,15 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Whether public trace sharing is explicitly opted in.
- * Default: false (internal workspace URLs only).
+ * Whether public trace sharing is enabled.
+ * Default: true when tracing is enabled (public links for benchmarks/demos).
+ * Set SHIPYARD_TRACE_PUBLIC=false to opt out.
  */
 export function isPublicTraceEnabled(): boolean {
-  return process.env['SHIPYARD_TRACE_PUBLIC'] === 'true';
+  const explicit = process.env['SHIPYARD_TRACE_PUBLIC'];
+  if (explicit !== undefined) return explicit === 'true';
+  // Default to public when tracing is active
+  return isTracingEnabled();
 }
 
 /**

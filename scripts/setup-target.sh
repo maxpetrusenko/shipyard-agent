@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TARGET="/Users/maxpetrusenko/Desktop/Gauntlet/ship-refactored"
+TARGET="${SHIPYARD_TARGET:-/Users/maxpetrusenko/Desktop/Gauntlet/ship-refactored}"
 
-if [ ! -d "$TARGET/.git" ]; then
+if ! git -C "$TARGET" rev-parse --git-dir >/dev/null 2>&1; then
   echo "Error: $TARGET is not a git repo. Run Phase 2 setup first."
   exit 1
 fi

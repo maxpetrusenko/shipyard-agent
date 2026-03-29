@@ -68,12 +68,47 @@ export type ExecuteStopReason =
   | 'guardrail_violation'
   | 'max_tool_rounds';
 
+/**
+ * Structured blocker codes for programmatic recovery routing.
+ * 'ambiguous_edit' — old_string matched multiple places
+ * 'identical_noop' — old_string === new_string
+ * 'dir_as_file'    — tried to edit a directory
+ * 'empty_old'      — empty old_string
+ * 'premature_complete' — STEP_COMPLETE without edits
+ * 'repeated_tool_loop' — identical tool calls repeated
+ * 'deadline_exceeded'  — first-edit or discovery deadline hit
+ * 'auth_error'     — unauthorized/forbidden
+ * 'provider_error'  — model not supported / API incompatibility
+ */
+export type WatchdogBlockerCode =
+  | 'ambiguous_edit'
+  | 'identical_noop'
+  | 'dir_as_file'
+  | 'empty_old'
+  | 'premature_complete'
+  | 'repeated_tool_loop'
+  | 'deadline_exceeded'
+  | 'auth_error'
+  | 'provider_error'
+  | 'unknown';
+
+/** Retryable blocker codes — agent can recover with better context. */
+export const RETRYABLE_BLOCKER_CODES: ReadonlySet<WatchdogBlockerCode> = new Set([
+  'ambiguous_edit',
+  'identical_noop',
+  'dir_as_file',
+  'empty_old',
+  'premature_complete',
+]);
+
 export interface ExecutionIssue {
   kind: 'guardrail' | 'watchdog' | 'max_tool_rounds' | 'coordination';
   recoverable: boolean;
   message: string;
   nextAction: string | null;
   stopReason: ExecuteStopReason | null;
+  /** Structured blocker code for programmatic recovery routing. */
+  blockerCode?: WatchdogBlockerCode;
 }
 
 export interface LoopDiagnostics {
@@ -138,6 +173,7 @@ export const ShipyardState = Annotation.Root({
   // Execution tracking
   fileEdits: Annotation<FileEdit[]>,
   toolCallHistory: Annotation<ToolCallRecord[]>,
+  currentStepEditBaseline: Annotation<number | null>,
 
   // Verification
   verificationResult: Annotation<VerificationResult | null>,
@@ -177,7 +213,14 @@ export const ShipyardState = Annotation.Root({
   estimatedCost: Annotation<number | null>,
 
   // Multi-agent outputs (Phase 6)
-  workerResults: Annotation<Record<string, unknown>[]>,
+  workerResults: Annotation<Record<string, unknown>[]>({
+    reducer: (a, b) => [...(a ?? []), ...(b ?? [])],
+    default: () => [],
+  }),
+
+  // When true, bypass multi-agent decomposition and run as single agent.
+  // Set by coordinateNode on merge conflict; checked by shouldCoordinate + coordinateNode.
+  forceSequential: Annotation<boolean>,
 
   // Graph loop observability
   loopDiagnostics: Annotation<LoopDiagnostics | null>,
@@ -189,8 +232,8 @@ export const ShipyardState = Annotation.Root({
   /** How to interpret the instruction at the entry gate. */
   runMode: Annotation<'auto' | 'chat' | 'code'>,
 
-  /** Set by gateNode: continue to plan or finish run (Q&A only). */
-  gateRoute: Annotation<'plan' | 'end'>,
+  /** Set by gateNode: continue to plan, skip to execution, or finish run. */
+  gateRoute: Annotation<'plan' | 'coordinate' | 'execute' | 'end'>,
 
   /** Per-run model override for the coding/execution role (legacy single field). */
   modelOverride: Annotation<string | null>,

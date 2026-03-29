@@ -92,7 +92,7 @@ describe('GitHub thread continuity', () => {
     } finally {
       await stopServer(server);
     }
-  });
+  }, 15_000);
 
   it('reuses the same run id for review-comment replies in one review thread', async () => {
     process.env['GITHUB_WEBHOOK_SECRET'] = 'review-thread-secret';

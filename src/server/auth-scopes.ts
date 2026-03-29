@@ -11,6 +11,57 @@
 
 import type { Request } from 'express';
 
+function firstHeaderValue(raw: string | string[] | undefined): string {
+  if (Array.isArray(raw)) return raw[0]?.trim() ?? '';
+  return raw?.trim() ?? '';
+}
+
+function normalizeHost(raw: string): string {
+  const first = raw.split(',')[0]?.trim().toLowerCase() ?? '';
+  if (!first) return '';
+  if (first.startsWith('[')) {
+    const end = first.indexOf(']');
+    return end > 0 ? first.slice(1, end) : first;
+  }
+  return first.split(':')[0] ?? first;
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
+function isLoopbackAddress(addr: string): boolean {
+  const normalized = addr.trim().toLowerCase();
+  return normalized === '127.0.0.1' || normalized === '::1' || normalized === '::ffff:127.0.0.1';
+}
+
+export function requestLooksLocal(
+  req: Pick<Request, 'headers' | 'ip' | 'socket'>,
+): boolean {
+  const rawHosts = [
+    firstHeaderValue(req.headers['x-forwarded-host']),
+    firstHeaderValue(req.headers['host']),
+  ].filter(Boolean);
+  const hostsLookLocal = rawHosts.length === 0
+    ? true
+    : rawHosts.every((raw) => isLoopbackHost(normalizeHost(raw)));
+
+  const forwardedFor = firstHeaderValue(req.headers['x-forwarded-for'])
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const ipCandidates = [
+    ...forwardedFor,
+    req.ip ?? '',
+    req.socket?.remoteAddress ?? '',
+  ].filter(Boolean);
+  const addrLooksLocal = ipCandidates.length === 0
+    ? true
+    : ipCandidates.every(isLoopbackAddress);
+
+  return hostsLookLocal && addrLooksLocal;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------

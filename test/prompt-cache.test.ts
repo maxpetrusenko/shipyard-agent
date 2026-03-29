@@ -234,7 +234,7 @@ describe('estimateCost cache pricing', () => {
     expect(cost).toBeCloseTo(expected, 5);
   });
 
-  it('returns 0 for unknown models regardless of cache args', () => {
-    expect(estimateCost('unknown-model', 1_000_000, 1_000_000, 500_000, 200_000)).toBe(0);
+  it('returns null for unknown models regardless of cache args', () => {
+    expect(estimateCost('unknown-model', 1_000_000, 1_000_000, 500_000, 200_000)).toBeNull();
   });
 });

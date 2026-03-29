@@ -10,16 +10,10 @@ import {
   SHIPYARD_BADGE_STYLES,
   SHIPYARD_BASE_STYLES,
   SHIPYARD_THEME_VARS,
-  topNav,
   getSharedHelperScript,
 } from './html-shared.js';
 import { WORK_DIR } from '../config/work-dir.js';
 import { getTimelineScript } from './dashboard-timeline.js';
-import {
-  RUN_DEBUG_STYLES,
-  getRunDebugModalHtml,
-  getRunDebugScript,
-} from './dashboard-debug.js';
 import {
   getSettingsModalHtml,
   getSettingsModalScript,
@@ -33,30 +27,45 @@ import {
 import {
   DASHBOARD_ANTHROPIC_KEY_STORAGE_KEY,
   DASHBOARD_GITHUB_REPO_STORAGE_KEY,
-  DASHBOARD_GITHUB_TOKEN_STORAGE_KEY,
   DASHBOARD_OPENAI_KEY_STORAGE_KEY,
   getDashboardPreferenceScript,
+  getProjectPreferencesScript,
 } from './dashboard-preferences.js';
 import {
   getRetryStyles,
   getRetryHtml,
   getRetryScript,
 } from './dashboard-retry.js';
-import { getHeaderStyles } from './dashboard-header.js';
-import { getSidebarHtml, getSidebarStyles } from './dashboard-sidebar.js';
-import { getComposerHtml, getComposerStyles } from './dashboard-composer.js';
+import { getHeaderStyles, getHeaderHtml, getHeaderScript } from './dashboard-header.js';
+import { getSidebarHtml, getSidebarStyles, getSidebarScript } from './dashboard-sidebar.js';
+import { getComposerHtml, getComposerStyles, getComposerScript, getProjectHeroHtml } from './dashboard-composer.js';
+import {
+  getDetailPanelHtml,
+  getDetailPanelStyles,
+  getDetailPanelScript,
+  getRightRailHtml,
+  getRightRailStyles,
+  getRightRailScript,
+} from './dashboard-detail.js';
+import {
+  RUN_DEBUG_STYLES,
+  getRunDebugModalHtml,
+  getRunDebugScript,
+} from './dashboard-debug.js';
+
+const DASHBOARD_RUN_HISTORY_LIMIT = 200;
 
 export function dashboardHandler(loop: InstructionLoop) {
   return async (_req: Request, res: Response) => {
     const status = loop.getStatus();
     let runs: Awaited<ReturnType<InstructionLoop['getRunsForListingAsync']>>;
     try {
-      runs = await loop.getRunsForListingAsync(30, 0);
+      runs = await loop.getRunsForListingAsync(DASHBOARD_RUN_HISTORY_LIMIT, 0);
     } catch (err) {
       console.error('[dashboard] getRunsForListingAsync failed:', err);
       runs = loop.getAllRuns()
         .sort((a, b) => (b.savedAt ?? '').localeCompare(a.savedAt ?? ''))
-        .slice(0, 30);
+        .slice(0, DASHBOARD_RUN_HISTORY_LIMIT);
     }
 
     let repoBranch = 'unknown';
@@ -84,8 +93,12 @@ export function dashboardHandler(loop: InstructionLoop) {
         requestedUiMode: r.requestedUiMode ?? null,
         threadKind: r.threadKind ?? null,
         runMode: r.runMode ?? null,
+        campaignId: r.campaignId ?? null,
+        rootRunId: r.rootRunId ?? null,
+        parentRunId: r.parentRunId ?? null,
         executionPath: r.executionPath ?? null,
         completionStatus: r.completionStatus ?? null,
+        projectContext: r.projectContext ?? null,
         savedAt: r.savedAt,
         instruction:
           ((r.messages ?? []) as Array<{ role: string; content: string }>).find(
@@ -107,20 +120,12 @@ export function dashboardHandler(loop: InstructionLoop) {
 ${SHIPYARD_THEME_VARS}
 ${SHIPYARD_BASE_STYLES}
 body{font-size:13px;min-height:100vh;height:100dvh;overflow:hidden}
-.wrap{max-width:1100px;height:100%;margin:0 auto;padding:20px 20px 16px;display:flex;flex-direction:column;overflow:hidden}
+.wrap{width:100%;height:100%;margin:0;padding:0;display:flex;flex-direction:column;overflow:hidden}
 h1{font-family:var(--sans);font-size:24px;font-weight:700;letter-spacing:-.03em}
 h1 span{color:var(--accent)}
 .lbl{font-size:var(--text-sm);text-transform:uppercase;letter-spacing:2px;color:var(--dim);font-family:var(--mono)}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 18px;box-shadow:var(--shadow)}
-/* header */
-.hdr{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap;padding:6px 0 12px;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:var(--z-header);background:var(--header-backdrop);backdrop-filter:blur(8px)}
-.hdr::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent-dim),transparent)}
-.pill{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:4px 12px;font-size:var(--text-base);color:var(--dim);font-family:var(--mono)}
-.pill span{color:var(--accent)}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.wsdot{width:6px;height:6px;border-radius:50%;display:inline-block}
-.wsdot.on{background:var(--green);box-shadow:0 0 6px var(--green-dim)}
-.wsdot.off{background:var(--red);box-shadow:0 0 6px var(--red-dim)}
+/* header: styles from getHeaderStyles() */
 /* per-run perf */
 .run-perf{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
 .run-perf .mini{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;box-shadow:var(--shadow)}
@@ -131,11 +136,7 @@ h1 span{color:var(--accent)}
 .sub-card{background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:var(--radius-lg);padding:18px 20px;margin-bottom:16px;box-shadow:var(--shadow)}
 .sub-card textarea{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-family:var(--mono);font-size:var(--text-lg);resize:vertical;outline:none;line-height:1.5;transition:border-color var(--transition)}
 .sub-card textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-glow)}
-.composer-row{display:flex;align-items:flex-end;gap:10px;margin-bottom:10px}
-.composer-ta{flex:1;min-height:52px;max-height:min(38dvh,260px);resize:vertical}
-.composer-send{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;min-width:44px;padding:0;border-radius:50%;font-size:17px;line-height:1;flex-shrink:0}
-.composer-send-hidden{display:none!important}
-.composer-toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:4px}
+/* composer-row, composer-ta, composer-send, composer-toolbar now in dashboard-composer.ts */
 .btn{border:none;padding:7px 18px;border-radius:var(--radius);font-family:var(--mono);font-size:var(--text-md);cursor:pointer;font-weight:700;transition:all var(--transition)}
 .btn:hover{opacity:.88;transform:translateY(-1px)}
 .btn:active{transform:translateY(0)}
@@ -201,8 +202,6 @@ h1 span{color:var(--accent)}
 .lfeed{max-height:360px;overflow-y:auto}
 /* error */
 .errbox{background:var(--danger-bg-med);border:1px solid var(--danger-border-soft);border-radius:var(--radius);padding:12px 14px;font-size:var(--text-md);color:var(--red);white-space:pre-wrap;word-break:break-all}
-.run-phase-error{background:var(--danger-bg-med);border:1px solid var(--danger-border-med);border-radius:var(--radius);padding:12px 14px;font-size:var(--text-md);color:var(--red-soft);margin-bottom:12px;white-space:pre-wrap;word-break:break-word}
-.run-phase-error strong{color:var(--red-softer);font-size:var(--text-sm);text-transform:uppercase;letter-spacing:.06em}
 .ver-out,.ver-summary{font-size:var(--text-base);line-height:1.45;color:var(--text);max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;margin-top:6px}
 .ver-summary{color:var(--dim);max-height:none}
 /* misc */
@@ -238,41 +237,30 @@ a:hover{color:var(--text-bright);text-decoration:none}
 .side-btn{font-size:10px;padding:5px 8px}
 .side-checklist{font-size:10px;color:var(--dim);line-height:1.45;padding-left:16px}
 .side-checklist li{margin:3px 0}
-.sidebar-footer{margin-top:auto;padding-top:8px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:var(--text-sm);color:var(--muted)}
-.sidebar-footer-btn{background:none;border:none;color:var(--dim);cursor:pointer;font-family:var(--mono);font-size:var(--text-sm);padding:4px 8px;border-radius:var(--radius);transition:all var(--transition)}
-.sidebar-footer-btn:hover{color:var(--accent);background:var(--accent-glow)}
-.sidebar-footer-btn:focus-visible{outline:none;box-shadow:var(--shadow-ring)}
+/* sidebar-footer styles now in dashboard-sidebar.ts */
 .side-alert{font-size:10px;line-height:1.4;color:var(--red-softer);background:var(--danger-bg-strong);border:1px solid var(--danger-border-panel);border-radius:var(--radius);padding:8px 9px}
+${NAV_STYLES}
+${SHIPYARD_BADGE_STYLES}
 ${getHeaderStyles()}
 ${getSidebarStyles()}
 ${getComposerStyles()}
-${SHIPYARD_BADGE_STYLES}
-${NAV_STYLES}
-${RUN_DEBUG_STYLES}
 ${getSettingsModalStyles()}
 ${getShortcutsStyles()}
 ${getRetryStyles()}
+${getDetailPanelStyles()}
+${getRightRailStyles()}
+${RUN_DEBUG_STYLES}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <div class="hdr">
-    <h1><a href="/" style="color:inherit;text-decoration:none"><span>Shipyard</span> Agent</a></h1>
-    ${topNav('chat')}
-    <div class="pill"><span>${repoBranch}</span> &middot; ${repoLastCommit.slice(0, 55)}</div>
-    <button type="button" class="btn btn-g" data-action="openRetry" style="font-size:10px;padding:5px 12px;margin-left:auto">Retry Events</button>
-    <button type="button" class="btn btn-g" data-action="openSettings" style="font-size:10px;padding:5px 12px" aria-label="Open settings">Config</button>
-    <button type="button" class="btn btn-g" data-action="showShortcuts" style="font-size:10px;padding:5px 12px">Shortcuts</button>
-    <div style="display:flex;align-items:center;gap:6px">
-      <span class="wsdot off" id="wsDot"></span>
-      <span id="wsLbl" style="font-size:11px;color:var(--dim)">connecting</span>
-    </div>
-  </div>
+  ${getHeaderHtml(repoBranch, repoLastCommit)}
 
   <div class="chat-layout">
   ${getSidebarHtml()}
   <div class="chat-center">
+  ${getProjectHeroHtml()}
   <div class="chat-shell">
     <div class="chat-thread" id="chatThread" aria-live="polite"></div>
     <div class="chat-composer">
@@ -280,41 +268,195 @@ ${getRetryStyles()}
     </div>
   </div>
   </div>
+  ${getRightRailHtml()}
+  ${getDetailPanelHtml()}
   </div>
+  <button type="button" class="shell-backdrop" id="shellBackdrop" data-action="closeResponsivePanels" aria-label="Close panels"></button>
 
 </div>
-${getRunDebugModalHtml()}
 ${getRetryHtml()}
 ${getSettingsModalHtml()}
 ${getShortcutsHtml()}
+${getRunDebugModalHtml()}
 <script>
 var WORK_DIR = ${JSON.stringify(WORK_DIR)};
 var SEED = ${runsJson};
 var ANTHROPIC_KEY_STORAGE = ${JSON.stringify(DASHBOARD_ANTHROPIC_KEY_STORAGE_KEY)};
 var OPENAI_KEY_STORAGE = ${JSON.stringify(DASHBOARD_OPENAI_KEY_STORAGE_KEY)};
 var GH_REPO_STORAGE = ${JSON.stringify(DASHBOARD_GITHUB_REPO_STORAGE_KEY)};
-var GH_TOKEN_STORAGE = ${JSON.stringify(DASHBOARD_GITHUB_TOKEN_STORAGE_KEY)};
 var GH_APP_SLUG_STORAGE = 'shipyard_dashboard_github_app_slug';
 var GH_APP_ID_STORAGE = 'shipyard_dashboard_github_app_id';
 var GH_APP_PK_STORAGE = 'shipyard_dashboard_github_app_pk';
+var ACTIVE_PHASES = ['planning','executing','verifying','reviewing','routing','awaiting_confirmation'];
+var DASHBOARD_RUN_HISTORY_LIMIT = ${DASHBOARD_RUN_HISTORY_LIMIT};
+${getSharedHelperScript()}
+${getHeaderScript()}
+${getDetailPanelScript()}
+${getRightRailScript()}
 ${getTimelineScript()}
-${getRunDebugScript()}
 
 var runsMap = {};
 var titleOverrides = {};
 var selectedRunId = null;
-var selectedSideTab = 'chats';
-var sidebarQuery = '';
 var benchmarkSummary = null;
 var lastState = {};
 var curRunId = null;
 var SELECTED_RUN_STORAGE_KEY = 'shipyard_selected_run_id';
-var SELECTED_SIDETAB_STORAGE_KEY = 'shipyard_selected_sidebar_tab';
+var SIDEBAR_COLLAPSED_STORAGE_KEY = 'shipyard_sidebar_collapsed';
+var RIGHT_RAIL_COLLAPSED_STORAGE_KEY = 'shipyard_right_rail_collapsed';
 
 var __srvSt = ${JSON.stringify({ processing: status.processing, currentRunId: status.currentRunId })};
 if (__srvSt.processing && __srvSt.currentRunId) {
   curRunId = __srvSt.currentRunId;
   lastState = { runId: __srvSt.currentRunId, phase: 'routing' };
+}
+
+/* ---- Dashboard state management ---- */
+var dashboardState = '';
+
+function setDashboardState(state) {
+  if (state === dashboardState && document.body.classList.contains('state-' + state)) return;
+  dashboardState = state;
+  document.body.classList.remove('state-home', 'state-task');
+  document.body.classList.add('state-' + state);
+  if (typeof updateRightRail === 'function') updateRightRail();
+  if (typeof syncResponsiveShell === 'function') syncResponsiveShell();
+}
+
+function isCompactShell() {
+  return window.matchMedia('(max-width: 860px)').matches;
+}
+
+function restoreDesktopRailPrefs() {
+  var body = document.body;
+  if (!body) return;
+  try {
+    body.classList.toggle('left-rail-collapsed', localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1');
+    body.classList.toggle('right-rail-collapsed', localStorage.getItem(RIGHT_RAIL_COLLAPSED_STORAGE_KEY) === '1');
+  } catch (e) {}
+}
+
+function syncRailToggleButton(buttonId, iconId, collapsed, collapseLabel, expandLabel, compact) {
+  var btn = document.getElementById(buttonId);
+  if (!btn) return;
+  if (compact) {
+    btn.setAttribute('hidden', 'hidden');
+    return;
+  }
+  btn.removeAttribute('hidden');
+  btn.setAttribute('data-collapsed', collapsed ? 'true' : 'false');
+  btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  btn.setAttribute('aria-label', collapsed ? expandLabel : collapseLabel);
+  var icon = document.getElementById(iconId);
+  if (icon) {
+    if (buttonId === 'sidebarRailToggle') icon.textContent = collapsed ? '\u203A' : '\u2039';
+    else icon.textContent = collapsed ? '\u2039' : '\u203A';
+  }
+}
+
+function syncDesktopRailButtons() {
+  var body = document.body;
+  if (!body) return;
+  var compact = body.classList.contains('compact-shell');
+  syncRailToggleButton('sidebarRailToggle', 'sidebarRailToggleIcon', body.classList.contains('left-rail-collapsed'), 'Collapse chats', 'Expand chats', compact);
+  syncRailToggleButton('rightRailToggle', 'rightRailToggleIcon', body.classList.contains('right-rail-collapsed'), 'Collapse panels', 'Expand panels', compact);
+}
+
+function setDesktopRailCollapsed(side, collapsed) {
+  var body = document.body;
+  if (!body) return;
+  var isLeft = side === 'left';
+  body.classList.toggle(isLeft ? 'left-rail-collapsed' : 'right-rail-collapsed', !!collapsed);
+  try {
+    localStorage.setItem(isLeft ? SIDEBAR_COLLAPSED_STORAGE_KEY : RIGHT_RAIL_COLLAPSED_STORAGE_KEY, collapsed ? '1' : '0');
+  } catch (e) {}
+  syncResponsiveShell();
+}
+
+function syncResponsiveShell() {
+  var body = document.body;
+  if (!body) return;
+  var compact = isCompactShell();
+  body.classList.toggle('compact-shell', compact);
+  if (!compact) {
+    body.classList.remove('sidebar-open');
+    body.classList.remove('rail-open');
+  }
+  var sidebarBtn = document.getElementById('hdrSidebarToggle');
+  var inspectorBtn = document.getElementById('hdrInspectorToggle');
+  if (sidebarBtn) sidebarBtn.setAttribute('aria-expanded', compact ? (body.classList.contains('sidebar-open') ? 'true' : 'false') : (body.classList.contains('left-rail-collapsed') ? 'false' : 'true'));
+  if (inspectorBtn) inspectorBtn.setAttribute('aria-expanded', compact ? ((body.classList.contains('rail-open') || body.classList.contains('detail-open')) ? 'true' : 'false') : (body.classList.contains('right-rail-collapsed') ? 'false' : 'true'));
+  syncDesktopRailButtons();
+}
+
+function closeResponsivePanels() {
+  var body = document.body;
+  if (!body) return;
+  body.classList.remove('sidebar-open');
+  body.classList.remove('rail-open');
+  if (body.classList.contains('compact-shell')) {
+    body.classList.remove('detail-open');
+    var panel = document.getElementById('detailPanel');
+    if (panel) panel.classList.remove('open');
+  }
+  syncResponsiveShell();
+}
+
+function toggleSidebarPanel() {
+  if (!isCompactShell()) {
+    setDesktopRailCollapsed('left', !document.body.classList.contains('left-rail-collapsed'));
+    return;
+  }
+  var body = document.body;
+  body.classList.toggle('sidebar-open');
+  body.classList.remove('rail-open');
+  if (body.classList.contains('sidebar-open')) {
+    body.classList.remove('detail-open');
+    var panel = document.getElementById('detailPanel');
+    if (panel) panel.classList.remove('open');
+  }
+  syncResponsiveShell();
+}
+
+function toggleInspectorPanel() {
+  if (!isCompactShell()) {
+    setDesktopRailCollapsed('right', !document.body.classList.contains('right-rail-collapsed'));
+    return;
+  }
+  var body = document.body;
+  if (body.classList.contains('detail-open')) {
+    closeDetailPanel();
+    return;
+  }
+  body.classList.toggle('rail-open');
+  body.classList.remove('sidebar-open');
+  syncResponsiveShell();
+}
+
+function toggleSidebarRail() {
+  if (isCompactShell()) {
+    toggleSidebarPanel();
+    return;
+  }
+  setDesktopRailCollapsed('left', !document.body.classList.contains('left-rail-collapsed'));
+}
+
+function toggleRightRail() {
+  if (isCompactShell()) {
+    toggleInspectorPanel();
+    return;
+  }
+  setDesktopRailCollapsed('right', !document.body.classList.contains('right-rail-collapsed'));
+}
+
+function syncDashboardState() {
+  var hasActiveRun = !!(curRunId && selectedRunId === curRunId);
+  var hasSelectedRun = !!(selectedRunId && runsMap[selectedRunId]);
+  if (hasActiveRun || hasSelectedRun) {
+    setDashboardState('task');
+  } else {
+    setDashboardState('home');
+  }
 }
 
 try {
@@ -325,11 +467,6 @@ try {
 try {
   var savedSelectedRunId = localStorage.getItem(SELECTED_RUN_STORAGE_KEY);
   if (savedSelectedRunId) selectedRunId = savedSelectedRunId;
-} catch(e) {}
-
-try {
-  var savedSideTab = localStorage.getItem(SELECTED_SIDETAB_STORAGE_KEY);
-  if (savedSideTab === 'settings' || savedSideTab === 'chats') selectedSideTab = savedSideTab;
 } catch(e) {}
 
 var threadExpand = {};
@@ -343,11 +480,15 @@ var settingsStatus = {
   githubOAuthConfigured: false,
   githubInstallConfigured: false,
   githubAppConfigured: false,
+  githubInstallMissing: [],
+  githubAppMissing: [],
   githubAppSlug: null,
+  githubInstallCallbackUrl: null,
   githubInstallationId: null,
 };
 
 ${getDashboardPreferenceScript()}
+${getProjectPreferencesScript()}
 
 function preferDefined(nextVal, prevVal) {
   return nextVal !== undefined ? nextVal : prevVal;
@@ -384,6 +525,9 @@ function mergeRunRecord(prev, next) {
     durationMs: preferDefined(nextRun.durationMs, prevRun.durationMs),
     requestedUiMode: preferDefined(nextRun.requestedUiMode, prevRun.requestedUiMode),
     threadKind: preferDefined(nextRun.threadKind, prevRun.threadKind),
+    campaignId: preferDefined(nextRun.campaignId, prevRun.campaignId),
+    rootRunId: preferDefined(nextRun.rootRunId, prevRun.rootRunId),
+    parentRunId: preferDefined(nextRun.parentRunId, prevRun.parentRunId),
     savedAt: preferDefined(nextRun.savedAt, prevRun.savedAt),
     startedAt: preferDefined(nextRun.startedAt, prevRun.startedAt),
     queuedAt: preferDefined(nextRun.queuedAt, prevRun.queuedAt),
@@ -394,6 +538,7 @@ function mergeRunRecord(prev, next) {
     modelOverrides: preferDefined(nextRun.modelOverrides, prevRun.modelOverrides),
     resolvedModels: preferDefined(nextRun.resolvedModels, prevRun.resolvedModels),
     completionStatus: preferDefined(nextRun.completionStatus, prevRun.completionStatus),
+    projectContext: preferDefined(nextRun.projectContext, prevRun.projectContext),
     instruction: runInstruction({
       instruction: preferDefined(nextRun.instruction, prevRun.instruction),
       messages: preferRicherArray(nextRun.messages, prevRun.messages),
@@ -406,6 +551,7 @@ function mergeRunIntoMap(run) {
   var merged = mergeRunRecord(runsMap[run.runId], run);
   runsMap[run.runId] = merged;
   if (typeof syncTimelineFromRun === 'function') syncTimelineFromRun(run.runId, merged);
+  if (typeof renderProjectList === 'function') renderProjectList();
   return merged;
 }
 
@@ -422,6 +568,11 @@ function sortedRuns() {
 
 function ensureSelectedRun() {
   if (selectedRunId && runsMap[selectedRunId]) return;
+  if (curRunId && runsMap[curRunId]) {
+    selectedRunId = curRunId;
+    saveSelectedRunId();
+    return;
+  }
   var all = sortedRuns();
   selectedRunId = all.length ? all[0].runId : null;
   saveSelectedRunId();
@@ -443,186 +594,20 @@ function refreshRunDetails(runId) {
 for (var si = 0; si < SEED.length; si++) runsMap[SEED[si].runId] = SEED[si];
 
 function refreshRunsFromApi() {
-  fetch('/api/runs?limit=50')
+  fetch('/api/runs?limit=' + DASHBOARD_RUN_HISTORY_LIMIT)
     .then(function(r){ return r.json(); })
     .then(function(list){
       for (var i = 0; i < list.length; i++) {
         mergeRunIntoMap(list[i]);
       }
       ensureSelectedRun();
+      syncDashboardState();
       renderChatList();
+      if (typeof renderProjectList === 'function') renderProjectList();
       if (selectedRunId && runsMap[selectedRunId]) renderChatThread();
-    }).catch(function(){});
-}
-
-function humanTitle(r) {
-  if (titleOverrides[r.runId]) return titleOverrides[r.runId];
-  var ins = (r.instruction || '').trim();
-  if (!ins) return 'Untitled chat';
-  var line = ins.split('\\n')[0].trim();
-  if (line.length > 58) line = line.slice(0, 55) + '\\u2026';
-  return line;
-}
-
-function renameChat(runId) {
-  var current = humanTitle(runsMap[runId] || { runId: runId });
-  var newName = prompt('Rename chat:', current);
-  if (newName === null) return;
-  newName = newName.trim();
-  if (!newName) {
-    delete titleOverrides[runId];
-  } else {
-    titleOverrides[runId] = newName;
-  }
-  try { localStorage.setItem('shipyard_titles', JSON.stringify(titleOverrides)); } catch(e) {}
-  renderChatList();
-  if (selectedRunId === runId) renderChatThread();
-}
-
-function deleteChat(runId) {
-  if (!runId) return;
-  fetch('/api/runs/' + encodeURIComponent(runId), { method: 'DELETE' })
-    .then(function (r) {
-      return r.json().then(function (body) {
-        return { ok: r.ok, status: r.status, body: body };
-      });
-    })
-    .then(function (x) {
-      if (!x.ok) {
-        var msg = (x.body && x.body.error) ? x.body.error : 'Delete failed';
-        var st = document.getElementById('subSt');
-        if (st) st.textContent = msg;
-        return;
-      }
-      var stOk = document.getElementById('subSt');
-      if (stOk) stOk.textContent = '';
-      delete titleOverrides[runId];
-      try { localStorage.setItem('shipyard_titles', JSON.stringify(titleOverrides)); } catch (e) {}
-      delete runsMap[runId];
-      if (typeof clearRunTimeline === 'function') clearRunTimeline(runId);
-      if (selectedRunId === runId) selectedRunId = null;
-      ensureSelectedRun();
-      renderChatList();
-      renderChatThread();
       syncComposerUi();
-    })
-    .catch(function () {
-      var st = document.getElementById('subSt');
-      if (st) st.textContent = 'Delete failed';
-    });
-}
-
-function renderChatList() {
-  var el = document.getElementById('chatList');
-  if (!el) return;
-  var all = sortedRuns();
-  if (sidebarQuery) {
-    var q = sidebarQuery.toLowerCase();
-    all = all.filter(function (r) {
-      var title = humanTitle(r).toLowerCase();
-      var instruction = (r.instruction || '').toLowerCase();
-      return title.indexOf(q) >= 0 || instruction.indexOf(q) >= 0;
-    });
-  }
-  if (all.length === 0) {
-    el.innerHTML = renderEmptyState(sidebarQuery ? 'No chats match this query.' : 'No chats yet. Send a message below.');
-    return;
-  }
-  el.innerHTML = all.map(function(r) {
-    var sa = startedAt(r);
-    var startStr = sa ? fmtDate(sa) : (r.savedAt ? fmtDate(r.savedAt) : '—');
-    var title = esc(humanTitle(r));
-    var kind = r.threadKind ? (' · ' + r.threadKind) : '';
-    var sub = esc(r.phase) + kind + ' · ' + startStr;
-    var active = selectedRunId === r.runId ? ' active' : '';
-    return '<div class="chat-item-wrap' + active + '">' +
-      '<button type="button" class="chat-item-body" data-action="selectChat" data-rid="' + esc(r.runId) + '">' +
-        '<div class="chat-item-title">' + title + '</div>' +
-        '<div class="chat-item-sub">' + sub + '</div>' +
-      '</button>' +
-      '<div class="chat-item-actions">' +
-        '<button type="button" class="chat-act" data-action="renameChat" data-rid="' + esc(r.runId) + '">Rename</button>' +
-        '<button type="button" class="chat-act chat-act-del" data-action="deleteChat" data-rid="' + esc(r.runId) + '">Delete</button>' +
-      '</div>' +
-    '</div>';
-  }).join('');
-}
-
-function followupMode() {
-  var r = selectedRunId ? runsMap[selectedRunId] : null;
-  return !!(r && r.threadKind);
-}
-
-function updateComposerSendVisibility() {
-  var ta = document.getElementById('instr');
-  var btn = document.getElementById('subBtn');
-  if (!ta || !btn) return;
-  var has = ta.value.trim().length > 0;
-  if (has) btn.classList.remove('composer-send-hidden');
-  else btn.classList.add('composer-send-hidden');
-}
-
-function syncComposerPrimaryButton() {
-  var btn = document.getElementById('subBtn');
-  if (!btn) return;
-  var icon = btn.querySelector('.composer-btn-icon');
-  if (!icon) {
-    btn.innerHTML = '<span class="composer-btn-icon" aria-hidden="true"></span>';
-    icon = btn.querySelector('.composer-btn-icon');
-  }
-  btn.dataset.action = 'submit';
-  btn.className = 'btn btn-p composer-send composer-send-hidden';
-  icon.textContent = '\\u25b6';
-  if (followupMode()) {
-    btn.setAttribute('aria-label', 'Send follow-up');
-    btn.setAttribute('title', 'Send follow-up (Ctrl+Enter)');
-  } else {
-    btn.setAttribute('aria-label', 'Submit run');
-    btn.setAttribute('title', 'Submit run (Ctrl+Enter)');
-  }
-  updateComposerSendVisibility();
-}
-
-function syncStopButton() {
-  var btn = document.getElementById('stopBtn');
-  if (!btn) return;
-  var ph = lastState.phase;
-  var active = ph && ['done', 'error', 'idle'].indexOf(ph) < 0;
-  var awaiting = ph === 'awaiting_confirmation';
-  var show = !!(active && curRunId && selectedRunId === curRunId && !awaiting);
-  btn.style.display = show ? 'inline-flex' : 'none';
-}
-
-function syncComposerUi() {
-  var ta = document.getElementById('instr');
-  var hint = document.getElementById('composerHint');
-  var r = selectedRunId ? runsMap[selectedRunId] : null;
-  if (followupMode()) {
-    var kind = r && r.threadKind ? String(r.threadKind) : 'selected';
-    if (ta) ta.placeholder = 'Follow up in this ' + kind + ' thread…';
-    if (hint) {
-      hint.style.display = 'block';
-      hint.textContent = 'Follow-ups append to the selected ' + kind + ' thread.';
-    }
-  } else {
-    if (ta) ta.placeholder = 'Message…';
-    if (hint) hint.style.display = 'none';
-  }
-  syncComposerPrimaryButton();
-  syncStopButton();
-  syncModeSegmentFromSelect();
-}
-
-function syncModeSegmentFromSelect() {
-  var sel = document.getElementById('uiModeSel');
-  var mode = sel ? (sel.value || 'auto') : 'auto';
-  var segButtons = document.querySelectorAll('#modeSegCtrl .seg-btn');
-  for (var i = 0; i < segButtons.length; i++) {
-    var segButton = segButtons[i];
-    var active = segButton.getAttribute('data-mode') === mode;
-    segButton.classList.toggle('active', active);
-    segButton.setAttribute('aria-pressed', active ? 'true' : 'false');
-  }
+      if (typeof updateRightRail === 'function') updateRightRail();
+    }).catch(function(){});
 }
 
 function threadFoldOpen(runId, section, defaultOpen) {
@@ -664,402 +649,6 @@ function renderChatThread() {
   renderTimeline();
 }
 
-function selectChat(runId) {
-  if (!runId) return;
-  selectedRunId = runId;
-  saveSelectedRunId();
-  renderChatList();
-  renderChatThread();
-  void refreshRunDetails(runId);
-}
-
-function newChat() {
-  selectedRunId = null;
-  saveSelectedRunId();
-  renderChatList();
-  renderChatThread();
-  syncComposerUi();
-}
-
-function switchSideTab(tab) {
-  var chatsTab = document.getElementById('sideTabChats');
-  var settingsTab = document.getElementById('sideTabSettings');
-  var chatsPanel = document.getElementById('sidePanelChats');
-  var settingsPanel = document.getElementById('sidePanelSettings');
-  var showSettings = tab === 'settings';
-  if (chatsTab) {
-    chatsTab.classList.toggle('active', !showSettings);
-    chatsTab.setAttribute('aria-selected', showSettings ? 'false' : 'true');
-  }
-  if (settingsTab) {
-    settingsTab.classList.toggle('active', showSettings);
-    settingsTab.setAttribute('aria-selected', showSettings ? 'true' : 'false');
-  }
-  if (chatsPanel) chatsPanel.classList.toggle('active', !showSettings);
-  if (settingsPanel) settingsPanel.classList.toggle('active', showSettings);
-  if (showSettings) refreshCheckpoints();
-  selectedSideTab = showSettings ? 'settings' : 'chats';
-  try { localStorage.setItem(SELECTED_SIDETAB_STORAGE_KEY, selectedSideTab); } catch(e) {}
-}
-
-function settingsStatusText() {
-  var branch = settingsStatus.repoBranch ? settingsStatus.repoBranch : 'unknown';
-  var remote = settingsStatus.repoRemote ? settingsStatus.repoRemote : 'none';
-  var gh = settingsStatus.ghAuthenticated ? 'yes' : 'no';
-  return 'workdir: ' + settingsStatus.workDir + '\\nbranch: ' + branch + '\\norigin: ' + remote + '\\ngh cli auth: ' + gh;
-}
-
-function renderSettingsStatus() {
-  var ghStatus = document.getElementById('ghStatus');
-  var ghAuth = document.getElementById('ghAuthStatus');
-  var ghConnBadge = document.getElementById('ghConnBadge');
-  var ghSetupAlert = document.getElementById('ghSetupAlert');
-  var ghStepServer = document.getElementById('ghStepServer');
-  var ghStepAuth = document.getElementById('ghStepAuth');
-  var ghStepRepo = document.getElementById('ghStepRepo');
-  var oauthBtn = document.querySelector('[data-action="startGithubOAuth"]');
-  var repoSel = document.getElementById('ghRepoSel');
-  var hasRepoSel = !!(repoSel && repoSel.value);
-  if (ghAuth) {
-    if (!settingsStatus.githubInstallConfigured) {
-      ghAuth.textContent = 'GitHub App install flow not configured. Add GITHUB_APP_SLUG and setup URL.';
-    } else if (settingsStatus.githubConnected && settingsStatus.githubInstallationId) {
-      ghAuth.textContent = 'GitHub App installed' + (settingsStatus.githubLogin ? (' as @' + settingsStatus.githubLogin) : '') + ' (installation #' + settingsStatus.githubInstallationId + ')';
-    } else if (settingsStatus.githubConnected) {
-      ghAuth.textContent = 'Connected as @' + (settingsStatus.githubLogin || 'unknown');
-    } else {
-      ghAuth.textContent = 'Not connected';
-    }
-  }
-  if (ghConnBadge) {
-    setBadge(ghConnBadge, settingsStatus.githubConnected ? 'Connected' : 'Disconnected', settingsStatus.githubConnected ? 'ok' : 'off');
-  }
-  if (ghStepServer) ghStepServer.textContent = settingsStatus.githubInstallConfigured ? 'Server config: GitHub App install ready' : 'Server config: missing GITHUB_APP_SLUG / setup URL';
-  if (ghStepAuth) ghStepAuth.textContent = settingsStatus.githubConnected ? ('GitHub auth: @' + (settingsStatus.githubLogin || 'connected')) : 'GitHub auth: not connected';
-  if (ghStepRepo) ghStepRepo.textContent = hasRepoSel ? ('Repository selected: ' + repoSel.value) : 'Repository selected: none';
-  if (oauthBtn) {
-    oauthBtn.disabled = false;
-    oauthBtn.title = settingsStatus.githubInstallConfigured ? 'Install/select repos via GitHub App' : 'Configure GitHub App first';
-  }
-  if (ghSetupAlert) {
-    if (!settingsStatus.githubInstallConfigured) {
-      ghSetupAlert.style.display = 'block';
-      ghSetupAlert.textContent = 'Proper auth setup: 1) set GITHUB_APP_SLUG, 2) set GitHub App Setup URL to /api/github/install/callback, 3) set GITHUB_APP_CLIENT_ID (or GITHUB_APP_ID) + GITHUB_APP_PRIVATE_KEY. Optional identity link: GITHUB_APP_CLIENT_SECRET.';
-    } else {
-      ghSetupAlert.style.display = 'none';
-      ghSetupAlert.textContent = '';
-    }
-  }
-  if (ghStatus) ghStatus.textContent = settingsStatusText();
-}
-
-function restoreSettingsInputs() {
-  // Do not restore secrets from browser storage.
-  restoreDashboardInput('ghAppSlugInput', GH_APP_SLUG_STORAGE);
-  restoreDashboardInput('ghAppIdInput', GH_APP_ID_STORAGE);
-}
-
-function persistSettingsInputs() {
-  // Do not persist secrets to browser storage.
-  persistDashboardInput('ghAppSlugInput', GH_APP_SLUG_STORAGE);
-  persistDashboardInput('ghAppIdInput', GH_APP_ID_STORAGE);
-}
-
-function refreshSettingsStatus() {
-  return fetch('/api/settings/status')
-    .then(function(res){ return res.json(); })
-    .then(function(data){
-      settingsStatus = {
-        workDir: data.workDir || WORK_DIR,
-        repoBranch: data.repoBranch || null,
-        repoRemote: data.repoRemote || null,
-        ghAuthenticated: !!data.ghAuthenticated,
-        githubConnected: !!data.githubConnected,
-        githubLogin: data.githubLogin || null,
-        githubOAuthConfigured: !!data.githubOAuthConfigured,
-        githubInstallConfigured: !!data.githubInstallConfigured,
-        githubAppConfigured: !!data.githubAppConfigured,
-        githubAppSlug: data.githubAppSlug || null,
-        githubInstallationId: data.githubInstallationId || null,
-      };
-      WORK_DIR = settingsStatus.workDir || WORK_DIR;
-      renderSettingsStatus();
-    })
-    .catch(function(){});
-}
-
-function saveModelKeys() {
-  var anth = document.getElementById('anthropicKeyInput');
-  var oai = document.getElementById('openaiKeyInput');
-  var st = document.getElementById('modelKeyStatus');
-  persistSettingsInputs();
-  var body = {
-    anthropicApiKey: anth ? anth.value.trim() : '',
-    openaiApiKey: oai ? oai.value.trim() : '',
-  };
-  fetch('/api/settings/model-keys', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-    .then(function(res){ return res.json(); })
-    .then(function(data){
-      if (!data.ok) {
-        if (st) st.textContent = 'Key update failed';
-        return;
-      }
-      if (st) st.textContent = 'Keys applied (runtime only for current server process).';
-    })
-    .catch(function(err){
-      if (st) st.textContent = 'Key update failed: ' + err.message;
-    });
-}
-
-function refreshCheckpoints() {
-  var sel = document.getElementById('checkpointSel');
-  var st = document.getElementById('checkpointStatus');
-  if (st) st.textContent = 'Loading checkpoints...';
-  return fetch('/api/checkpoints?limit=20')
-    .then(function(res){ return res.json(); })
-    .then(function(data){
-      var cps = Array.isArray(data.checkpoints) ? data.checkpoints : [];
-      if (sel) {
-        sel.innerHTML = cps.length
-          ? cps.map(function(cp){
-              var label = cp.label ? ('[' + cp.label + '] ') : '';
-              var text = label + cp.checkpoint_id + ' · files=' + cp.file_count;
-              return '<option value="' + esc(cp.checkpoint_id) + '">' + esc(text) + '</option>';
-            }).join('')
-          : '<option value="">(none)</option>';
-      }
-      if (st) st.textContent = cps.length ? ('Loaded ' + cps.length + ' checkpoint(s).') : 'No checkpoints yet.';
-    })
-    .catch(function(err){
-      if (st) st.textContent = 'Checkpoint load failed: ' + err.message;
-    });
-}
-
-function createCheckpointUi() {
-  var st = document.getElementById('checkpointStatus');
-  if (st) st.textContent = 'Creating checkpoint...';
-  fetch('/api/checkpoints', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
-  })
-    .then(function(res){ return res.json().then(function(body){ return { ok: res.ok, body: body }; }); })
-    .then(function(x){
-      if (!x.ok) throw new Error(x.body && x.body.message ? x.body.message : (x.body && x.body.error ? x.body.error : 'Failed'));
-      if (st) st.textContent = x.body.message || 'Checkpoint created.';
-      refreshCheckpoints();
-    })
-    .catch(function(err){
-      if (st) st.textContent = 'Checkpoint create failed: ' + err.message;
-    });
-}
-
-function rollbackCheckpointUi() {
-  var sel = document.getElementById('checkpointSel');
-  var st = document.getElementById('checkpointStatus');
-  var checkpointId = sel ? sel.value : '';
-  if (!checkpointId) {
-    if (st) st.textContent = 'Select a checkpoint first.';
-    return;
-  }
-  if (!window.confirm('Rollback workspace files from checkpoint ' + checkpointId + '?')) return;
-  if (st) st.textContent = 'Rolling back checkpoint...';
-  fetch('/api/checkpoints/rollback', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ checkpointId: checkpointId }),
-  })
-    .then(function(res){ return res.json().then(function(body){ return { ok: res.ok, body: body }; }); })
-    .then(function(x){
-      if (!x.ok) throw new Error(x.body && x.body.message ? x.body.message : (x.body && x.body.error ? x.body.error : 'Failed'));
-      if (st) st.textContent = x.body.message || 'Rollback completed.';
-      refreshCheckpoints();
-    })
-    .catch(function(err){
-      if (st) st.textContent = 'Rollback failed: ' + err.message;
-    });
-}
-
-function startGithubOAuth() {
-  var st = document.getElementById('ghStatus');
-  if (!settingsStatus.githubInstallConfigured) {
-    var wrap = document.getElementById('ghAppCfgWrap');
-    if (wrap) wrap.style.display = 'block';
-    if (st) st.textContent = 'Configure and save GitHub App fields first.';
-    return;
-  }
-  var w = window.open('/api/github/install/start', 'shipyard_github_oauth', 'width=760,height=860');
-  if (!w) {
-    if (st) st.textContent = 'Popup blocked. Allow popups and retry.';
-    return;
-  }
-  if (st) st.textContent = 'Waiting for GitHub App install...';
-}
-
-function toggleGithubAppConfig() {
-  var wrap = document.getElementById('ghAppCfgWrap');
-  if (!wrap) return;
-  wrap.style.display = wrap.style.display === 'none' ? 'block' : 'none';
-}
-
-function saveGithubAppConfig() {
-  var slugEl = document.getElementById('ghAppSlugInput');
-  var idEl = document.getElementById('ghAppIdInput');
-  var pkEl = document.getElementById('ghAppPkInput');
-  var st = document.getElementById('ghAppCfgStatus');
-  persistSettingsInputs();
-  fetch('/api/settings/github-app', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      slug: slugEl ? slugEl.value.trim() : '',
-      appId: idEl ? idEl.value.trim() : '',
-      privateKey: pkEl ? pkEl.value.trim() : '',
-    }),
-  })
-    .then(function(res){ return res.json(); })
-    .then(function(data){
-      if (!data.ok) {
-        if (st) st.textContent = 'Save failed';
-        return;
-      }
-      if (st) st.textContent = 'Saved. You can now click Connect GitHub.';
-      refreshSettingsStatus();
-    })
-    .catch(function(err){
-      if (st) st.textContent = 'Save failed: ' + err.message;
-    });
-}
-
-function logoutGithubOAuth() {
-  var st = document.getElementById('ghStatus');
-  fetch('/api/github/install/logout', { method: 'POST' })
-    .then(function(res){ return res.json(); })
-    .then(function(data){
-      if (!data.ok) {
-        if (st) st.textContent = 'Logout failed';
-        return;
-      }
-      if (st) st.textContent = 'Disconnected GitHub OAuth session.';
-      refreshSettingsStatus();
-      var sel = document.getElementById('ghRepoSel');
-      if (sel) sel.innerHTML = '<option value="">(load repos first)</option>';
-    })
-    .catch(function(err){
-      if (st) st.textContent = 'Logout failed: ' + err.message;
-    });
-}
-
-function githubFallbackToken() {
-  return '';
-}
-
-function loadGithubRepos() {
-  var queryEl = document.getElementById('ghRepoSearchInput');
-  var query = queryEl ? queryEl.value.trim() : '';
-  var sel = document.getElementById('ghRepoSel');
-  var st = document.getElementById('ghStatus');
-  if (st) st.textContent = 'Loading repositories...';
-  fetch('/api/github/repos', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: query }),
-  })
-    .then(function(res){
-      return res.json().then(function(body){ return { ok: res.ok, body: body }; });
-    })
-    .then(function(x){
-      if (!x.ok) throw new Error(x.body && x.body.error ? x.body.error : 'Failed to load repositories');
-      var data = x.body || {};
-      var repos = Array.isArray(data.repos) ? data.repos : [];
-      if (sel) {
-        sel.innerHTML = repos.length
-          ? repos.map(function(r){ return '<option value="' + esc(r.full_name) + '">' + esc(r.full_name) + '</option>'; }).join('')
-          : '<option value="">(no repos found)</option>';
-      }
-      var saved = loadDashboardPref(GH_REPO_STORAGE);
-      if (saved && sel) {
-        for (var i = 0; i < sel.options.length; i++) {
-          if (sel.options[i].value === saved) sel.value = saved;
-        }
-      }
-      renderSettingsStatus();
-      if (st) st.textContent = repos.length ? ('Loaded ' + repos.length + ' repos.') : 'No repos found. Try a different query or check repository permissions.';
-    })
-    .catch(function(err){
-      if (st) st.textContent = 'Repo load failed: ' + err.message;
-    });
-}
-
-function connectGithubRepo() {
-  var sel = document.getElementById('ghRepoSel');
-  var repo = sel ? sel.value : '';
-  var st = document.getElementById('ghStatus');
-  if (!repo) {
-    if (st) st.textContent = 'Select a repository first.';
-    return;
-  }
-  saveDashboardPref(GH_REPO_STORAGE, repo);
-  if (st) st.textContent = 'Connecting ' + repo + '...';
-  fetch('/api/github/connect', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ repoFullName: repo }),
-  })
-    .then(function(res){
-      return res.json().then(function(body){ return { ok: res.ok, body: body }; });
-    })
-    .then(function(x){
-      if (!x.ok) {
-        if (st) st.textContent = (x.body && x.body.error) ? x.body.error : 'Connect failed';
-        return;
-      }
-      var data = x.body || {};
-      settingsStatus.workDir = data.workDir;
-      settingsStatus.repoBranch = data.branch || null;
-      settingsStatus.repoRemote = 'https://github.com/' + repo + '.git';
-      WORK_DIR = data.workDir || WORK_DIR;
-      renderSettingsStatus();
-      refreshRunsFromApi();
-      if (st) st.textContent = 'Connected to ' + repo + ' at ' + data.workDir;
-    })
-    .catch(function(err){
-      if (st) st.textContent = 'Connect failed: ' + err.message;
-    });
-}
-
-// ---- helpers ----
-${getSharedHelperScript()}
-function esc(s) {
-  return String(s || '').replace(/&/g,'&amp;').replace(/\\x3c/g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function shortP(p) {
-  if (!p) return '';
-  return (WORK_DIR && p.indexOf(WORK_DIR) === 0) ? p.slice(WORK_DIR.length).replace(/^\\//, '') : p;
-}
-function fmtDur(ms) {
-  if (!ms) return '—';
-  return ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
-}
-function fmtDate(iso) {
-  if (!iso) return '—';
-  try {
-    var d = new Date(iso);
-    return d.toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
-  } catch(e) { return iso; }
-}
-function startedAt(r) {
-  if (!r.savedAt || !r.durationMs) return null;
-  return new Date(new Date(r.savedAt).getTime() - r.durationMs).toISOString();
-}
-function phCls(p) {
-  var m = { done:'pp-done', error:'pp-error', routing:'pp-routing', planning:'pp-planning', executing:'pp-executing', verifying:'pp-verifying', reviewing:'pp-reviewing', idle:'pp-idle', awaiting_confirmation:'pp-awaiting_confirmation', paused:'pp-paused' };
-  return m[p] || 'pp-idle';
-}
 
 // ---- event delegation ----
 document.addEventListener('click', function(e) {
@@ -1073,68 +662,39 @@ document.addEventListener('click', function(e) {
     showShortcuts();
     return;
   }
+  if (action === 'focusProjectList') {
+    e.preventDefault();
+    var activeProject = document.querySelector('#sidebarProjects .sidebar-project-item.selected') || document.querySelector('#sidebarProjects .sidebar-project-item');
+    if (activeProject) activeProject.focus();
+    return;
+  }
+  if (action === 'toggleSidebar') {
+    e.preventDefault();
+    toggleSidebarPanel();
+    return;
+  }
+  if (action === 'toggleSidebarCollapse') {
+    e.preventDefault();
+    toggleSidebarRail();
+    return;
+  }
+  if (action === 'toggleInspector') {
+    e.preventDefault();
+    toggleInspectorPanel();
+    return;
+  }
+  if (action === 'toggleRightRailCollapse') {
+    e.preventDefault();
+    toggleRightRail();
+    return;
+  }
+  if (action === 'closeResponsivePanels') {
+    e.preventDefault();
+    closeResponsivePanels();
+    return;
+  }
   if (action === 'submit') { e.preventDefault(); submitRun(); return; }
   if (action === 'newChat') { e.preventDefault(); newChat(); return; }
-  if (action === 'toggleSettingsSection') {
-    e.preventDefault();
-    toggleSettingsSection(btn.dataset.section || '');
-    return;
-  }
-  if (action === 'sideTab') {
-    e.preventDefault();
-    switchSideTab(btn.dataset.tab || 'chats');
-    return;
-  }
-  if (action === 'saveModelKeys') {
-    e.preventDefault();
-    saveModelKeys();
-    return;
-  }
-  if (action === 'refreshCheckpoints') {
-    e.preventDefault();
-    refreshCheckpoints();
-    return;
-  }
-  if (action === 'createCheckpoint') {
-    e.preventDefault();
-    createCheckpointUi();
-    return;
-  }
-  if (action === 'rollbackCheckpoint') {
-    e.preventDefault();
-    rollbackCheckpointUi();
-    return;
-  }
-  if (action === 'loadGithubRepos') {
-    e.preventDefault();
-    loadGithubRepos();
-    return;
-  }
-  if (action === 'connectGithubRepo') {
-    e.preventDefault();
-    connectGithubRepo();
-    return;
-  }
-  if (action === 'startGithubOAuth') {
-    e.preventDefault();
-    startGithubOAuth();
-    return;
-  }
-  if (action === 'logoutGithubOAuth') {
-    e.preventDefault();
-    logoutGithubOAuth();
-    return;
-  }
-  if (action === 'toggleGithubAppConfig') {
-    e.preventDefault();
-    toggleGithubAppConfig();
-    return;
-  }
-  if (action === 'saveGithubAppConfig') {
-    e.preventDefault();
-    saveGithubAppConfig();
-    return;
-  }
   if (action === 'renameChat') {
     e.preventDefault();
     e.stopPropagation();
@@ -1149,48 +709,26 @@ document.addEventListener('click', function(e) {
     if (delId) deleteChat(delId);
     return;
   }
-  if (action === 'openDebug') {
-    e.preventDefault();
-    e.stopPropagation();
-    openRunDebug(btn.dataset.rid || selectedRunId);
-    return;
-  }
-  if (action === 'closeRunDebug') {
-    e.preventDefault();
-    closeRunDebug();
-    return;
-  }
-  if (action === 'openDebugLink') {
-    e.preventDefault();
-    e.stopPropagation();
-    if (btn.dataset.url) window.open(btn.dataset.url, '_blank', 'noopener,noreferrer');
-    return;
-  }
-  if (action === 'copyDebugLink') {
-    e.preventDefault();
-    e.stopPropagation();
-    copyRunDebugLink(btn.dataset.url || '');
-    return;
-  }
   if (action === 'selectChat') {
     var selId = btn.dataset.rid;
     if (selId) selectChat(selId);
     return;
   }
+  if (action === 'rrToggleAllFiles') { e.preventDefault(); rrShowAllFiles = !rrShowAllFiles; if (typeof updateRightRail === 'function') updateRightRail(); return; }
+  if (action === 'rrToggleSection') { e.preventDefault(); if (typeof rrToggleSection === 'function') rrToggleSection(btn.dataset.section); return; }
+  if (action === 'closeDetail') { e.preventDefault(); closeDetailPanel(); return; }
+  if (action === 'detailTab') { e.preventDefault(); switchDetailTab(btn.dataset.tab || 'diff'); return; }
   if (action === 'togglePlanDoc') {
     var pw = document.getElementById('planDocWrap');
-    if (pw) pw.style.display = pw.style.display === 'none' ? 'block' : 'none';
-    btn.textContent = pw && pw.style.display !== 'none' ? '— Hide plan document' : '+ Attach plan document';
-    return;
-  }
-  if (action === 'setMode') {
-    e.preventDefault();
-    var nextMode = btn.dataset.mode || 'auto';
-    var modeSel = document.getElementById('uiModeSel');
-    if (modeSel) modeSel.value = nextMode === 'auto' ? '' : nextMode;
-    persistDashboardModeSel();
-    syncModeSegmentFromSelect();
-    syncComposerUi();
+    var nextOpen = !!(pw && pw.style.display === 'none');
+    if (pw) pw.style.display = nextOpen ? 'block' : 'none';
+    btn.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+    btn.setAttribute('title', nextOpen ? 'Hide plan doc' : 'Show plan doc');
+    btn.setAttribute('aria-label', nextOpen ? 'Hide plan doc' : 'Show plan doc');
+    if (nextOpen) {
+      var pd = document.getElementById('planDoc');
+      if (pd && typeof pd.focus === 'function') pd.focus();
+    }
     return;
   }
   if (action === 'confirmPlan') {
@@ -1201,6 +739,28 @@ document.addEventListener('click', function(e) {
   if (action === 'toggleTl') {
     var row = document.getElementById('tl-' + btn.dataset.idx);
     if (row) row.classList.toggle('collapsed');
+    return;
+  }
+  if (action === 'openDebug') {
+    e.preventDefault();
+    e.stopPropagation();
+    openRunDebug(btn.dataset.rid || selectedRunId || '');
+    return;
+  }
+  if (action === 'closeRunDebug') {
+    e.preventDefault();
+    closeRunDebug();
+    return;
+  }
+  if (action === 'openDebugLink') {
+    e.preventDefault();
+    var debugUrl = btn.dataset.url || '';
+    if (debugUrl) window.open(debugUrl, '_blank', 'noopener');
+    return;
+  }
+  if (action === 'copyDebugLink') {
+    e.preventDefault();
+    copyRunDebugLink(btn.dataset.url || '');
     return;
   }
   if (action === 'toggleThread') {
@@ -1229,190 +789,20 @@ document.addEventListener('click', function(e) {
     }
     return;
   }
-  if (action === 'toggleProgressMetrics') {
-    e.preventDefault();
-    if (typeof progressMetricsVisible !== 'undefined') {
-      progressMetricsVisible = !progressMetricsVisible;
-      if (typeof renderTimeline === 'function') renderTimeline();
-    }
-    return;
-  }
   var row = btn.closest('[data-rid]');
   var runId = row ? row.dataset.rid : null;
   if (action === 'stop') { e.stopPropagation(); e.preventDefault(); stopRun(); return; }
   if (action === 'resume' && runId) { e.stopPropagation(); resumeRunById(runId); }
 });
 
-// ---- controls ----
-function stopRun() {
-  var st = document.getElementById('subSt');
-  fetch('/api/cancel', { method:'POST' })
-    .then(function (r) { return r.json(); })
-    .then(function (d) {
-      if (st) st.textContent = d.cancelled ? 'Stop requested' : 'No active run to stop';
-      fetch('/api/runs?limit=30')
-        .then(function (r2) { return r2.json(); })
-        .then(function (list) {
-          for (var i = 0; i < list.length; i++) {
-            mergeRunIntoMap(list[i]);
-          }
-          renderChatList();
-          if (selectedRunId) renderChatThread();
-          if (selectedRunId) void refreshRunDetails(selectedRunId);
-        })
-        .catch(function () {});
-    })
-    .catch(function () { if (st) st.textContent = 'Stop failed'; });
-}
-function resumeRunById(runId) {
-  fetch('/api/runs/' + runId + '/resume', { method:'POST' })
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      document.getElementById('subSt').textContent = d.runId ? ('Resumed ' + d.runId.slice(0,8)) : ('Error: ' + (d.error||'unknown'));
-    }).catch(function(e){ document.getElementById('subSt').textContent = 'Error: ' + e.message; });
-}
-function submitRun() {
-  var ta = document.getElementById('instr');
-  var btn = document.getElementById('subBtn');
-  var st = document.getElementById('subSt');
-  var pdTa = document.getElementById('planDoc');
-  var inst = ta.value.trim();
-  if (!inst) return;
-  btn.disabled = true;
-  btn.setAttribute('aria-busy', 'true');
-  st.textContent = '';
-  if (followupMode()) {
-    var fuId = selectedRunId;
-    var followupBody = { instruction: inst };
-    var uiEl = document.getElementById('uiModeSel');
-    if (uiEl && uiEl.value) followupBody.uiMode = uiEl.value;
-    var followupModelEl = document.getElementById('modelSel');
-    followupBody.model = '';
-    if (followupModelEl) followupBody.model = followupModelEl.value;
-    fetch('/api/runs/' + fuId + '/followup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(followupBody) })
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if (d.queued) {
-          st.textContent = '';
-          if (d.phase === 'done' && Array.isArray(d.messages)) {
-            var cur = runsMap[fuId] || { runId: fuId };
-            curRunId = null;
-            lastState = Object.assign({}, lastState, { runId: fuId, phase: 'done' });
-            runsMap[fuId] = mergeRunRecord(cur, {
-              runId: fuId,
-              phase: d.phase,
-              requestedUiMode: d.requestedUiMode !== undefined ? d.requestedUiMode : cur.requestedUiMode,
-              threadKind: d.threadKind || cur.threadKind || 'ask',
-              messages: d.messages,
-              traceUrl: d.traceUrl !== undefined ? d.traceUrl : cur.traceUrl,
-              tokenUsage: d.tokenUsage !== undefined ? d.tokenUsage : cur.tokenUsage,
-              error: d.error !== undefined ? d.error : cur.error,
-              verificationResult: d.verificationResult !== undefined ? d.verificationResult : cur.verificationResult,
-              reviewFeedback: d.reviewFeedback !== undefined ? d.reviewFeedback : cur.reviewFeedback,
-              nextActions: d.nextActions !== undefined ? d.nextActions : cur.nextActions,
-              durationMs: cur.durationMs,
-            });
-          } else {
-            var ex = runsMap[fuId] || { runId: fuId };
-            var prev = Array.isArray(ex.messages) ? ex.messages.slice() : [];
-            var nextKind = d.threadKind || (uiEl && uiEl.value) || ex.threadKind || 'ask';
-            var queuedPhase = nextKind === 'ask' ? 'routing' : 'planning';
-            prev.push({ role: 'user', content: inst });
-            curRunId = fuId;
-            lastState = Object.assign({}, lastState, { runId: fuId, phase: queuedPhase });
-            runsMap[fuId] = mergeRunRecord(ex, {
-              runId: fuId,
-              messages: prev,
-              phase: queuedPhase,
-              requestedUiMode: d.requestedUiMode !== undefined ? d.requestedUiMode : ex.requestedUiMode,
-              threadKind: nextKind,
-              runMode: d.runMode || (nextKind === 'ask' ? 'chat' : 'code'),
-            });
-            if (typeof syncTimelineFromRun === 'function') syncTimelineFromRun(fuId, runsMap[fuId]);
-          }
-          ta.value = '';
-          renderChatList();
-          renderChatThread();
-        } else st.textContent = 'Error: ' + (d.error||'unknown');
-      })
-      .catch(function(e){ st.textContent = 'Error: ' + e.message; })
-      .finally(function(){ btn.disabled = false; btn.removeAttribute('aria-busy'); syncComposerUi(); });
-    return;
-  }
-  var body = { instruction: inst };
-  var pdVal = pdTa ? pdTa.value.trim() : '';
-  if (pdVal) body.planDoc = pdVal;
-  var uiEl = document.getElementById('uiModeSel');
-  if (uiEl && uiEl.value) body.uiMode = uiEl.value;
-  else body.runMode = 'auto';
-  var mdEl = document.getElementById('modelSel');
-  if (mdEl && mdEl.value) body.model = mdEl.value;
-  persistDashboardModeSel();
-  persistDashboardModelSel();
-  fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) })
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if (d.runId) {
-        selectedRunId = d.runId;
-        saveSelectedRunId();
-        st.textContent = '';
-        var initPhase = d.phase || (d.runMode === 'code' ? 'planning' : 'routing');
-        curRunId = d.runId;
-        lastState = Object.assign({}, lastState, { runId: d.runId, phase: initPhase });
-        var existing = runsMap[d.runId] || {};
-        runsMap[d.runId] = mergeRunRecord(existing, {
-          runId: d.runId,
-          phase: initPhase,
-          requestedUiMode: d.requestedUiMode !== undefined ? d.requestedUiMode : existing.requestedUiMode,
-          threadKind: d.threadKind || existing.threadKind || ((d.runMode === 'chat' || d.phase === 'done') ? 'ask' : undefined),
-          instruction: inst,
-          messages: Array.isArray(d.messages) ? d.messages : [{ role: 'user', content: inst }],
-          traceUrl: d.traceUrl !== undefined ? d.traceUrl : existing.traceUrl,
-          tokenUsage: d.tokenUsage !== undefined ? d.tokenUsage : existing.tokenUsage,
-          error: d.error !== undefined ? d.error : existing.error,
-          verificationResult: d.verificationResult !== undefined ? d.verificationResult : existing.verificationResult,
-          reviewFeedback: d.reviewFeedback !== undefined ? d.reviewFeedback : existing.reviewFeedback,
-          nextActions: d.nextActions !== undefined ? d.nextActions : existing.nextActions,
-          savedAt: new Date().toISOString()
-        });
-        if (typeof syncTimelineFromRun === 'function') syncTimelineFromRun(d.runId, runsMap[d.runId]);
-        renderChatList();
-        renderChatThread();
-        ta.value = '';
-        if (pdTa) pdTa.value = '';
-      }
-      else st.textContent = 'Error: ' + (d.error||'unknown');
-    })
-    .catch(function(e){ st.textContent = 'Error: ' + e.message; })
-    .finally(function(){ btn.disabled=false; btn.removeAttribute('aria-busy'); syncComposerUi(); });
-}
-
-function confirmPlanForRun(runId) {
-  var st = document.getElementById('subSt');
-  fetch('/api/runs/' + runId + '/confirm', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({})
-  })
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if (d.confirmed) {
-        if (st) st.textContent = 'Plan confirmed, executing…';
-        if (runId) selectChat(runId);
-      }
-      else { if (st) st.textContent = 'Error: ' + (d.error||'unknown'); }
-    })
-    .catch(function(e){ if (st) st.textContent = 'Error: ' + e.message; });
-}
 
 // ---- WS ----
 function connectWs() {
   var proto = location.protocol==='https:' ? 'wss:' : 'ws:';
   var ws = new WebSocket(proto + '//' + location.host + '/ws');
   var dot = document.getElementById('wsDot');
-  var lbl = document.getElementById('wsLbl');
-  ws.onopen = function(){ dot.className='wsdot on'; lbl.textContent='live'; };
-  ws.onclose = function(){ dot.className='wsdot off'; lbl.textContent='reconnecting'; setTimeout(connectWs, 3000); };
+  ws.onopen = function(){ dot.className='wsdot on'; if (typeof ws._reconnected !== 'undefined') showToast('Reconnected', 'success'); ws._reconnected = true; };
+  ws.onclose = function(){ dot.className='wsdot off'; setTimeout(connectWs, 3000); };
   ws.onerror = function(){ ws.close(); };
   ws.onmessage = function(e){
     try {
@@ -1448,6 +838,7 @@ function onStateUpdate(s) {
         fileEdits: s.fileEdits || existing.fileEdits,
         toolCallHistory: s.toolCallHistory || existing.toolCallHistory,
         tokenUsage: s.tokenUsage || existing.tokenUsage,
+        traceUrl: s.traceUrl !== undefined ? s.traceUrl : existing.traceUrl,
         error: s.error !== undefined ? s.error : existing.error,
         verificationResult: s.verificationResult !== undefined ? s.verificationResult : existing.verificationResult,
         reviewFeedback: s.reviewFeedback !== undefined ? s.reviewFeedback : existing.reviewFeedback,
@@ -1456,69 +847,91 @@ function onStateUpdate(s) {
         requestedUiMode: s.requestedUiMode !== undefined ? s.requestedUiMode : existing.requestedUiMode,
         threadKind: s.threadKind || existing.threadKind,
         completionStatus: s.completionStatus || existing.completionStatus,
+        projectContext: s.projectContext !== undefined ? s.projectContext : existing.projectContext,
       });
+      if (typeof syncTimelineFromRun === 'function' && (Array.isArray(s.messages) || s.traceUrl !== undefined)) {
+        syncTimelineFromRun(s.runId, runsMap[s.runId]);
+      }
     } else {
       void refreshRunDetails(s.runId);
     }
-    if (existing && (s.phase === 'done' || s.phase === 'error')) {
+    if (existing && s.phase === 'done') {
       void refreshRunDetails(s.runId);
+      showToast('Task completed', 'success');
+    } else if (existing && s.phase === 'error') {
+      void refreshRunDetails(s.runId);
+      showToast('Task failed', 'error');
     }
     renderChatList();
+    if (typeof renderProjectList === 'function') renderProjectList();
     if (selectedRunId === s.runId) renderChatThread();
     syncComposerUi();
+    if (typeof syncHeaderStatus === 'function') syncHeaderStatus();
+    if (typeof renderDetailContent === 'function') renderDetailContent();
+    syncDashboardState();
+    if (typeof updateRightRail === 'function') updateRightRail();
   }
 }
 
 ${getRetryScript()}
 ${getSettingsModalScript()}
 ${getShortcutsScript()}
+${getRunDebugScript()}
+
+/* Module scripts — override old inline functions above */
+${getSidebarScript()}
+${getComposerScript()}
 
 // ---- init ----
 ensureSelectedRun();
 renderChatList();
 renderChatThread();
 refreshRunsFromApi();
-restoreDashboardModeSel();
-restoreDashboardModelSel();
-syncComposerUi();
+if (typeof initComposer === 'function') initComposer();
+syncDashboardState();
+restoreDesktopRailPrefs();
+syncResponsiveShell();
+if (typeof updateRightRail === 'function') updateRightRail();
+if (typeof rrInitInstructions === 'function') rrInitInstructions();
+if (typeof rrUpdateHomeContext === 'function') rrUpdateHomeContext();
 if (typeof initSettings === 'function') initSettings();
-var uisel = document.getElementById('uiModeSel');
-if (uisel) uisel.addEventListener('change', function(){ persistDashboardModeSel(); syncComposerUi(); });
-var sidebarSearchEl = document.getElementById('sidebarSearch');
-if (sidebarSearchEl) {
-  sidebarSearchEl.addEventListener('input', function () {
-    sidebarQuery = sidebarSearchEl.value.trim();
-    renderChatList();
-  });
-}
 var modelSelEl = document.getElementById('modelSel');
 if (modelSelEl) modelSelEl.addEventListener('change', persistDashboardModelSel);
-var instrEl = document.getElementById('instr');
-if (instrEl) {
-  instrEl.addEventListener('input', updateComposerSendVisibility);
-  instrEl.addEventListener('keydown', function(ev) {
-    if (ev.key !== 'Enter' || (!ev.ctrlKey && !ev.metaKey)) return;
-    ev.preventDefault();
-    if (instrEl.value.trim()) submitRun();
-  });
-}
 document.addEventListener('keydown', function(ev) {
+  var key = (ev.key || '').toLowerCase();
+  if ((ev.metaKey || ev.ctrlKey) && !ev.shiftKey && key === 'k') {
+    ev.preventDefault();
+    if (typeof toggleSidebarSearch === 'function') toggleSidebarSearch();
+    var searchEl = document.getElementById('sidebarSearch');
+    if (searchEl) searchEl.focus();
+    return;
+  }
+  if ((ev.metaKey || ev.ctrlKey) && !ev.shiftKey && key === 'n') {
+    ev.preventDefault();
+    newChat();
+    var instr = document.getElementById('instr');
+    if (instr) instr.focus();
+    return;
+  }
   if (ev.key !== 'Escape') return;
-  closeRunDebug();
+  closeResponsivePanels();
   closeRetryPanel();
+  closeDetailPanel();
   if (typeof closeSettings === 'function') closeSettings();
   if (typeof hideShortcuts === 'function') hideShortcuts();
+  closeRunDebug();
 });
 document.addEventListener('click', function(ev) {
-  var modal = document.getElementById('runDebugModal');
-  if (modal && ev.target === modal) closeRunDebug();
   var retryModal = document.getElementById('retryModal');
   if (retryModal && ev.target === retryModal) closeRetryPanel();
   var settingsModal = document.getElementById('settingsModal');
   if (settingsModal && ev.target === settingsModal) closeSettings();
   var kbdOverlay = document.getElementById('kbdOverlay');
   if (kbdOverlay && ev.target === kbdOverlay) hideShortcuts();
+  var runDebugModal = document.getElementById('runDebugModal');
+  if (runDebugModal && ev.target === runDebugModal) closeRunDebug();
 });
+window.addEventListener('resize', syncResponsiveShell);
 connectWs();
 setInterval(refreshRunsFromApi, 60000);
 </script>

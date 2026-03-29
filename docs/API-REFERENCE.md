@@ -4,6 +4,7 @@ Base path: `/api`
 
 Auth modes:
 - Global API key: `Authorization: Bearer $SHIPYARD_API_KEY` (when configured)
+- Non-local admin writes: `Authorization: Bearer $SHIPYARD_ADMIN_TOKEN` (or `$SHIPYARD_API_KEY`)
 - Invoke routes: `X-Shipyard-Invoke-Token` or bearer token (when `SHIPYARD_INVOKE_TOKEN` is set)
 - Webhook signature: `X-Hub-Signature-256` (`sha256=...`) when `SHIPYARD_GITHUB_WEBHOOK_SECRET` is set (legacy alias: `GITHUB_WEBHOOK_SECRET`)
 
@@ -11,10 +12,10 @@ Auth modes:
 
 | Method | Path | Auth | Body | Success | Errors |
 |---|---|---|---|---|---|
-| POST | `/run` | API key (optional global) | `instruction`, optional contexts/model overrides | `{ runId, ... }` | `400` invalid payload |
+| POST | `/run` | API key (optional global) | `instruction`, optional `executionPlan[]`, optional contexts/model overrides, optional lineage (`campaignId`,`rootRunId`,`parentRunId`) | `{ runId, campaignId, rootRunId, parentRunId, ... }` | `400` invalid payload |
 | POST | `/runs/:id/followup` | API key | `instruction`, optional model overrides | `{ runId, queued }` | `400` invalid/not found |
 | POST | `/runs/:id/confirm` | API key | optional edited plan steps | `{ runId, confirmed }` | `404` |
-| POST | `/runs/:id/resume` | API key | none | `{ runId }` | `404` |
+| POST | `/runs/:id/resume` | API key | none | `{ runId, campaignId, rootRunId, parentRunId }` | `404` |
 | DELETE | `/runs/:id` | API key | none | `{ ok: true }` | `404/409` |
 | GET | `/runs` | API key | query: `limit`,`offset` | `Run[]` | `500` |
 | GET | `/runs/:id` | API key | none | `Run` | `404` |
@@ -75,6 +76,8 @@ Auth modes:
 | GET | `/github/install/start` | API key | none | redirect to install flow | `400` |
 | GET | `/github/install/callback` | API key | query callback params | popup HTML | `400` |
 | POST | `/github/install/logout` | API key | none | `{ ok: true }` | `500` |
+| POST | `/github/installations` | API key | none | `{ installations }` | `400/500` |
+| POST | `/github/install/select` | API key | `{ installationId }` | `{ ok, installationId }` | `400/500` |
 | POST | `/github/repos` | API key | `{ query? }` | `{ repos }` | `401/400` |
 | POST | `/github/connect` | API key | `{ repoFullName }` | `{ ok, workDir, branch }` | `401/400` |
 

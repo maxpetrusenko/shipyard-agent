@@ -57,6 +57,46 @@ function appendUserTurn(
   return [...messages, { role: 'user', content: instruction }];
 }
 
+function validateSuppliedPlan(
+  state: ShipyardStateType,
+): { steps: ShipyardStateType['steps']; currentStepIndex: number } | { error: string } | null {
+  if (state.steps.length === 0) return null;
+
+  const seen = new Set<number>();
+  const normalized = [] as ShipyardStateType['steps'];
+  for (let index = 0; index < state.steps.length; index += 1) {
+    const step = state.steps[index];
+    const stepIndex = typeof step?.index === 'number' ? step.index : index;
+    const description = typeof step?.description === 'string' ? step.description.trim() : '';
+    const files = Array.isArray(step?.files)
+      ? step.files.filter((file): file is string => typeof file === 'string').map((file) => file.trim()).filter(Boolean)
+      : [];
+    if (!description) {
+      return { error: `Supplied execution plan step ${index + 1} is missing a description.` };
+    }
+    if (seen.has(stepIndex)) {
+      return { error: `Supplied execution plan has duplicate step index ${stepIndex}.` };
+    }
+    seen.add(stepIndex);
+    normalized.push({
+      index: stepIndex,
+      description,
+      files,
+      status: 'pending',
+    });
+  }
+
+  if (normalized.length === 0) {
+    return { error: 'Supplied execution plan must include at least one step.' };
+  }
+
+  normalized.sort((a, b) => a.index - b.index);
+  return {
+    steps: normalized.map((step, index) => ({ ...step, index })),
+    currentStepIndex: 0,
+  };
+}
+
 async function directChatResponse(
   state: ShipyardStateType,
 ): Promise<{
@@ -175,6 +215,7 @@ export async function gateNode(
 ): Promise<Partial<ShipyardStateType>> {
   const mode = state.runMode ?? 'auto';
   const baseTokens = state.tokenUsage ?? { input: 0, output: 0 };
+  const suppliedPlan = validateSuppliedPlan(state);
   const commandShortcut = await tryCommandShortcut(state.instruction);
   if (commandShortcut !== null) {
     const withUser = appendUserTurn(state.messages, state.instruction);
@@ -210,6 +251,41 @@ export async function gateNode(
       messages: [
         ...withUser,
         { role: 'assistant', content: mismatchMsg },
+      ],
+      tokenUsage: baseTokens,
+      modelHint: 'sonnet',
+    };
+  }
+
+  if (suppliedPlan && 'error' in suppliedPlan) {
+    const withUser = appendUserTurn(state.messages, state.instruction);
+    return {
+      gateRoute: 'end',
+      phase: 'error',
+      error: suppliedPlan.error,
+      messages: [
+        ...withUser,
+        { role: 'assistant', content: suppliedPlan.error },
+      ],
+      tokenUsage: baseTokens,
+      modelHint: 'sonnet',
+    };
+  }
+
+  if (suppliedPlan) {
+    const withUser = appendUserTurn(state.messages, state.instruction);
+    const gateRoute = !state.forceSequential && suppliedPlan.steps.length > 0
+      ? 'coordinate'
+      : 'execute';
+    return {
+      gateRoute,
+      phase: 'executing',
+      steps: suppliedPlan.steps,
+      currentStepIndex: suppliedPlan.currentStepIndex,
+      currentStepEditBaseline: state.fileEdits.length,
+      messages: [
+        ...withUser,
+        { role: 'assistant', content: `[Gate] Using supplied execution plan (${suppliedPlan.steps.length} steps).` },
       ],
       tokenUsage: baseTokens,
       modelHint: 'sonnet',

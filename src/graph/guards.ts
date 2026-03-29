@@ -75,11 +75,32 @@ export function uniqueEditedPaths(fileEdits: FileEdit[]): string[] {
   return [...new Set(fileEdits.map((e) => normalizePath(e.file_path)).filter(Boolean))];
 }
 
+function equivalentScopePaths(rawPath: string): string[] {
+  const normalized = normalizePath(rawPath);
+  const variants = new Set<string>([normalized]);
+  const replacements: Array<[string, string]> = [
+    ['/api/src/db/', '/api/db/'],
+    ['/api/db/', '/api/src/db/'],
+    ['/src/db/', '/db/'],
+    ['/db/', '/src/db/'],
+  ];
+  for (const [from, to] of replacements) {
+    if (normalized.includes(from)) {
+      variants.add(normalized.replace(from, to));
+    }
+  }
+  return [...variants];
+}
+
 export function pathMatchesAny(filePath: string, candidates: string[]): boolean {
-  const fp = normalizePath(filePath);
+  const fileVariants = equivalentScopePaths(filePath);
   return candidates.some((raw) => {
-    const cand = normalizePath(raw);
-    return fp === cand || fp.endsWith(`/${cand}`) || cand.endsWith(`/${fp}`);
+    const candidateVariants = equivalentScopePaths(raw);
+    return fileVariants.some((fp) =>
+      candidateVariants.some((cand) =>
+        fp === cand || fp.endsWith(`/${cand}`) || cand.endsWith(`/${fp}`),
+      ),
+    );
   });
 }
 
@@ -256,16 +277,22 @@ function basenamePath(value: string): string {
 
 export function extractExplicitRepoTarget(instruction: string): string | null {
   const patterns = [
+    /^\s*in\s+((?:~\/|\/|[A-Za-z]:[\\/]|[A-Za-z0-9._-]+\/)[^\s,;]+)\s*(?:,|\n|$)/im,
     /^\s*in\s+([a-zA-Z0-9._-]+)\s*(?:,|\n|$)/im,
+    /\b(?:in|inside|within)\s+((?:~\/|\/|[A-Za-z]:[\\/]|[A-Za-z0-9._-]+\/)[^\s,;]+)\b/i,
     /\b(?:in|inside|within)\s+([a-zA-Z0-9._-]+)\s+(?:repo|repository|project|codebase)\b/i,
   ];
   for (const pattern of patterns) {
     const m = instruction.match(pattern);
-    const candidate = m?.[1]?.trim();
+    const rawCandidate = m?.[1]?.trim();
+    const candidate = rawCandidate?.replace(/[.,;:]+$/, '');
     if (!candidate) continue;
-    const lowered = candidate.toLowerCase();
+    const normalizedCandidate = candidate.includes('/') || candidate.includes('\\')
+      ? basenamePath(candidate)
+      : candidate;
+    const lowered = normalizedCandidate.toLowerCase();
     if (REPO_TARGET_STOPWORDS.has(lowered)) continue;
-    return candidate;
+    return normalizedCandidate;
   }
   return null;
 }

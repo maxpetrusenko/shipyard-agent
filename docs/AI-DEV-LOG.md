@@ -198,6 +198,8 @@ The hand-written portions were almost entirely operational: environment setup, s
 
 The Ship rebuild pipeline was attempted against fresh clones of `ship-refactored`, but the full rebuild was **not completed**. The final traced target was `/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c`.
 
+Interactive audit view: `docs/rebuild-run-audit.html`. It groups runs by actual target folder, includes trace URLs, and nests related retry traces under the same row.
+
 | Step | Status | Notes |
 |------|--------|-------|
 | 03 - database schema | **Completed with intervention** | Agent produced canonical schema/migration files; final export fixes were applied manually, then `pnpm type-check` and `pnpm test` passed on the rebuild target |

@@ -90,8 +90,8 @@ export const CACHE_CONTROL: Anthropic.CacheControlEphemeral = {
  * get SEPARATE cache breakpoints. This means:
  * - Static prompt (PLAN_SYSTEM, EXECUTE_SYSTEM, etc.) is cached across ALL
  *   runs of the same node type, even when context changes.
- * - Dynamic context (repo map, injected contexts) is cached independently
- *   and invalidates on its own schedule (~5min repo map TTL).
+ * - Dynamic context (injected contexts) is cached independently, so prompt
+ *   prefix reuse survives context changes better than a single combined block.
  *
  * Without context, uses a single breakpoint on the static prompt.
  *

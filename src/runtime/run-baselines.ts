@@ -139,9 +139,11 @@ export async function captureRunBaseline(
       readDirtyFiles(cwd, runner),
     ]);
     baselines.set(runId, { head, dirtyFiles, verificationFingerprint: null });
-  } catch {
+  } catch (err) {
     // Git ops failed — resolve deferred with null so getBaselineFingerprint
     // does not hang, and return early (no point capturing fingerprint).
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[baselines] Git baseline capture failed for run ${runId}: ${msg}. Per-edit typecheck and baseline diffing will be skipped.`);
     resolveDeferred(null);
     pendingFingerprints.delete(runId);
     return;
@@ -157,7 +159,11 @@ export async function captureRunBaseline(
       if (existing) existing.verificationFingerprint = fp;
       resolveDeferred(fp);
     })
-    .catch(() => resolveDeferred(null))
+    .catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[baselines] Verification fingerprint capture failed for run ${runId}: ${msg}. Baseline diffing will use raw error counts.`);
+      resolveDeferred(null);
+    })
     .finally(() => pendingFingerprints.delete(runId));
 }
 

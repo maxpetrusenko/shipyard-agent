@@ -61,6 +61,8 @@ export interface RunIngressMeta {
   queueDepthAtIngress: number;
   /** Schema version for forward-compatible evolution. */
   schemaVersion: 1;
+  /** Optional project scope metadata from the dashboard. */
+  projectContext?: { projectId: string; projectLabel: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +87,7 @@ export interface BuildRunIngressMetaParams {
   webhookDeliveryId?: string;
   webhookEventType?: string;
   callerIdentity?: string;
+  projectContext?: { projectId: string; projectLabel: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +118,7 @@ export function buildRunIngressMeta(params: BuildRunIngressMetaParams): RunIngre
   if (params.webhookDeliveryId !== undefined) meta.webhookDeliveryId = params.webhookDeliveryId;
   if (params.webhookEventType !== undefined) meta.webhookEventType = params.webhookEventType;
   if (params.callerIdentity !== undefined) meta.callerIdentity = params.callerIdentity;
+  if (params.projectContext !== undefined) meta.projectContext = params.projectContext;
 
   return meta;
 }
@@ -204,6 +208,21 @@ export function validateSchema(meta: unknown): SchemaValidationResult {
     }
   }
 
+  // projectContext
+  if (obj['projectContext'] !== undefined) {
+    if (typeof obj['projectContext'] !== 'object' || obj['projectContext'] === null || Array.isArray(obj['projectContext'])) {
+      errors.push('projectContext must be an object when present');
+    } else {
+      const pc = obj['projectContext'] as Record<string, unknown>;
+      if (typeof pc['projectId'] !== 'string' || !pc['projectId']) {
+        errors.push('projectContext.projectId must be a non-empty string');
+      }
+      if (typeof pc['projectLabel'] !== 'string' || !pc['projectLabel']) {
+        errors.push('projectContext.projectLabel must be a non-empty string');
+      }
+    }
+  }
+
   return { valid: errors.length === 0, errors };
 }
 
@@ -290,6 +309,12 @@ export function migrateSchema(meta: unknown): RunIngressMeta {
   if (typeof obj['webhookDeliveryId'] === 'string') result.webhookDeliveryId = obj['webhookDeliveryId'] as string;
   if (typeof obj['webhookEventType'] === 'string') result.webhookEventType = obj['webhookEventType'] as string;
   if (typeof obj['callerIdentity'] === 'string') result.callerIdentity = obj['callerIdentity'] as string;
+  if (typeof obj['projectContext'] === 'object' && obj['projectContext'] !== null && !Array.isArray(obj['projectContext'])) {
+    const pc = obj['projectContext'] as Record<string, unknown>;
+    if (typeof pc['projectId'] === 'string' && typeof pc['projectLabel'] === 'string') {
+      result.projectContext = { projectId: pc['projectId'], projectLabel: pc['projectLabel'] };
+    }
+  }
 
   return result;
 }

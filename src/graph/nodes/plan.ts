@@ -283,6 +283,7 @@ export async function planNode(
       phase: 'executing',
       steps: mergedSteps,
       currentStepIndex: firstPendingIndex,
+      currentStepEditBaseline: state.fileEdits.length,
       messages: newMessages,
       tokenUsage: {
         input: inputTokens,
@@ -454,6 +455,7 @@ export async function planNode(
     phase: 'executing',
     steps: mergedSteps,
     currentStepIndex: firstPendingIndex,
+    currentStepEditBaseline: state.fileEdits.length,
     messages: newMessages,
     tokenUsage: tokens.snapshot(),
     modelHint: 'sonnet',

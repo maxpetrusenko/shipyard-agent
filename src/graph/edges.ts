@@ -3,22 +3,23 @@
  */
 
 import type { ShipyardStateType } from './state.js';
-import { shouldCoordinate } from './nodes/coordinate.js';
-
 /**
  * After gate: Q&A-only runs end here; otherwise continue to planning.
  */
-export function afterGate(state: ShipyardStateType): 'plan' | 'end' {
+export function afterGate(state: ShipyardStateType): 'plan' | 'coordinate' | 'execute' | 'end' {
+  if (state.gateRoute === 'coordinate') return 'coordinate';
+  if (state.gateRoute === 'execute') return 'execute';
   return state.gateRoute === 'end' ? 'end' : 'plan';
 }
 
 /**
- * After plan: route to coordinate (multi-agent) or execute (single-agent).
+ * After plan: default to worker orchestration; fall back to execute only when
+ * coordination is explicitly disabled for recovery.
  */
 export function afterPlan(
   state: ShipyardStateType,
 ): 'coordinate' | 'execute' {
-  return shouldCoordinate(state) ? 'coordinate' : 'execute';
+  return !state.forceSequential && state.steps.length > 0 ? 'coordinate' : 'execute';
 }
 
 /**
@@ -50,9 +51,12 @@ export function afterReview(
  */
 export function afterErrorRecovery(
   state: ShipyardStateType,
-): 'plan' | 'report' {
+): 'plan' | 'execute' | 'report' {
   if (state.phase === 'planning') {
     return 'plan';
+  }
+  if (state.phase === 'executing') {
+    return 'execute';
   }
   return 'report';
 }

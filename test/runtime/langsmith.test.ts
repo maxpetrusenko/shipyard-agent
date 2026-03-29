@@ -175,10 +175,10 @@ describe('langsmith extended tests', () => {
       expect(url).toBeNull();
     });
 
-    it('returns internal URL when public disabled even when API would fail', async () => {
+    it('returns internal URL when public explicitly disabled even when API would fail', async () => {
       process.env['LANGCHAIN_TRACING_V2'] = 'true';
       process.env['LANGCHAIN_API_KEY'] = 'key';
-      delete process.env['SHIPYARD_TRACE_PUBLIC'];
+      process.env['SHIPYARD_TRACE_PUBLIC'] = 'false';
 
       const mockClient = {
         readRunSharedLink: async () => { throw new Error('should not be called'); },

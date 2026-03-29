@@ -77,6 +77,50 @@ describe('reviewNode deterministic guards', () => {
     expect(mocks.completeTextForRole).not.toHaveBeenCalled();
   });
 
+  it('offloads watchdog stalls instead of burning more retries', async () => {
+    const state = {
+      ...baseState(),
+      instruction: 'update comments schema',
+      steps: [{ index: 0, description: 'x', files: ['/repo/comments.ts'], status: 'failed' as const }],
+      executionIssue: {
+        kind: 'watchdog' as const,
+        recoverable: true,
+        message:
+          'Watchdog: repeated identical tool call loop detected (read_file ×4 on /repo/comments.ts).',
+        nextAction: 'Retry',
+        stopReason: 'stalled_no_edit_rounds' as const,
+      },
+    };
+    const out = await reviewNode(state as any);
+    expect(out.reviewDecision).toBe('escalate');
+    expect(out.reviewFeedback).toContain('Offloading instead of burning more retries');
+    expect(out.reviewFeedback).toContain('repeated identical tool call loop');
+    expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
+
+  it('retries retryable watchdog stalls instead of offloading the run', async () => {
+    const state = {
+      ...baseState(),
+      instruction: 'harden auth middleware',
+      steps: [{ index: 0, description: 'x', files: ['/repo/auth.ts'], status: 'failed' as const }],
+      executionIssue: {
+        kind: 'watchdog' as const,
+        recoverable: true,
+        message:
+          'Watchdog: execution stalled. Blocker: edit_file: old_string matched 2 times. Provide more surrounding context to make it unique.',
+        nextAction:
+          'Your last edit_file call failed because old_string matched multiple places. Re-read the file and include more surrounding context so the replacement is unique. Do not retry the same old_string again.',
+        stopReason: 'stalled_no_edit_rounds' as const,
+      },
+    };
+    const out = await reviewNode(state as any);
+    expect(out.reviewDecision).toBe('retry');
+    expect(out.phase).toBe('executing');
+    expect(out.reviewFeedback).toContain('old_string matched 2 times');
+    expect(out.reviewFeedback).toContain('Root cause guidance');
+    expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
+
   it('escalates instead of retrying when newErrorCount > 80', async () => {
     const state = {
       ...baseState(),
@@ -96,6 +140,67 @@ describe('reviewNode deterministic guards', () => {
     expect(out.reviewFeedback).toContain('Too many errors (121)');
     expect(out.reviewFeedback).toContain('Escalating instead of retrying');
     expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
+
+  it('replans once, then offloads cascade failures above 50 new errors', async () => {
+    const retryOut = await reviewNode({
+      ...baseState(),
+      maxRetries: 8,
+      retryCount: 0,
+      instruction: 'repair integrated target',
+      steps: [{ index: 0, description: 'x', files: ['/repo/a.ts'], status: 'done' as const }],
+      fileEdits: [{ file_path: '/repo/a.ts', tier: 1, old_string: 'a', new_string: 'b', timestamp: 1 }],
+      verificationResult: {
+        passed: false,
+        error_count: 61,
+        newErrorCount: 61,
+        preExistingErrorCount: 0,
+      },
+    } as any);
+
+    expect(retryOut.reviewDecision).toBe('retry');
+    expect(retryOut.phase).toBe('planning');
+    expect(retryOut.reviewFeedback).toContain('cascade');
+
+    const escalateOut = await reviewNode({
+      ...baseState(),
+      maxRetries: 8,
+      retryCount: 1,
+      instruction: 'repair integrated target',
+      steps: [{ index: 0, description: 'x', files: ['/repo/a.ts'], status: 'done' as const }],
+      fileEdits: [{ file_path: '/repo/a.ts', tier: 1, old_string: 'a', new_string: 'b', timestamp: 1 }],
+      verificationResult: {
+        passed: false,
+        error_count: 61,
+        newErrorCount: 61,
+        preExistingErrorCount: 0,
+      },
+    } as any);
+
+    expect(escalateOut.reviewDecision).toBe('escalate');
+    expect(escalateOut.phase).toBe('error');
+    expect(escalateOut.reviewFeedback).toContain('Offloading instead of looping');
+  });
+
+  it('offloads small verification failures after three repair attempts', async () => {
+    const out = await reviewNode({
+      ...baseState(),
+      maxRetries: 8,
+      retryCount: 3,
+      instruction: 'repair integrated target',
+      steps: [{ index: 0, description: 'x', files: ['/repo/a.ts'], status: 'done' as const }],
+      fileEdits: [{ file_path: '/repo/a.ts', tier: 1, old_string: 'a', new_string: 'b', timestamp: 1 }],
+      verificationResult: {
+        passed: false,
+        error_count: 5,
+        newErrorCount: 5,
+        preExistingErrorCount: 0,
+      },
+    } as any);
+
+    expect(out.reviewDecision).toBe('escalate');
+    expect(out.phase).toBe('error');
+    expect(out.reviewFeedback).toContain('consuming the remaining retry budget');
   });
 
   it('retries (not escalates) when newErrorCount is 44 (cascade inflation)', async () => {
@@ -180,6 +285,27 @@ describe('reviewNode deterministic guards', () => {
     expect(mocks.completeTextForRole).not.toHaveBeenCalled();
   });
 
+  it('includes typecheck output in retry feedback so executor knows what to fix', async () => {
+    const typecheckOutput = "src/middleware/auth-v2.ts(155,7): error TS2322: Type 'string | string[]' is not assignable to type 'string | null | undefined'.";
+    const state = {
+      ...baseState(),
+      instruction: 'implement auth middleware',
+      steps: [{ index: 0, description: 'x', files: ['/repo/auth.ts'], status: 'done' as const }],
+      fileEdits: [{ file_path: '/repo/auth.ts', tier: 1, old_string: 'a', new_string: 'b', timestamp: 1 }],
+      verificationResult: {
+        passed: false,
+        error_count: 3,
+        newErrorCount: 3,
+        preExistingErrorCount: 0,
+        typecheck_output: typecheckOutput,
+      },
+    };
+    const out = await reviewNode(state as any);
+    expect(out.reviewDecision).toBe('retry');
+    expect(out.reviewFeedback).toContain('auth-v2.ts(155,7)');
+    expect(out.reviewFeedback).toContain('TS2322');
+  });
+
   it('finishes explicit single-target tasks once the target file is validated, even if extra plan steps remain', async () => {
     const state = {
       ...baseState(),
@@ -223,6 +349,49 @@ describe('reviewNode deterministic guards', () => {
     const out = await reviewNode(state as any);
     expect(out.reviewDecision).toBe('done');
     expect(out.phase).toBe('done');
+    expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
+
+  it('treats evidence-rich past-tense no-op replies as done for conditional multi-file steps', async () => {
+    const state = {
+      ...baseState(),
+      instruction: 'Implement the auth/session stack, but only change shared constants if required.',
+      steps: [
+        {
+          index: 0,
+          description:
+            'Confirm shared auth constants and only modify them if any required values are missing.',
+          files: ['/repo/shared/src/constants.ts', '/repo/shared/src/index.ts'],
+          status: 'done' as const,
+        },
+        {
+          index: 1,
+          description: 'Update auth middleware internals.',
+          files: ['/repo/api/src/middleware/auth.ts'],
+          status: 'pending' as const,
+        },
+      ],
+      currentStepIndex: 0,
+      fileEdits: [],
+      verificationResult: {
+        passed: true,
+        error_count: 0,
+        newErrorCount: 0,
+        preExistingErrorCount: 0,
+      },
+      messages: [
+        {
+          role: 'assistant',
+          content:
+            'Reviewed the shared auth/session-facing exports. No changes were needed because /repo/shared/src/constants.ts already defines the required timeout constants and error codes.\n\nSTEP_COMPLETE',
+        },
+      ],
+    };
+
+    const out = await reviewNode(state as any);
+    expect(out.reviewDecision).toBe('continue');
+    expect(out.phase).toBe('executing');
+    expect(out.currentStepIndex).toBe(1);
     expect(mocks.completeTextForRole).not.toHaveBeenCalled();
   });
 
@@ -282,5 +451,66 @@ describe('reviewNode deterministic guards', () => {
     expect(out.reviewFeedback).toContain('/repo/src/server/run-debug.ts');
     expect(out.error).toContain('missing after repository search');
     expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
+
+  it('retries retryable watchdog using blockerCode (ambiguous_edit)', async () => {
+    const state = {
+      ...baseState(),
+      instruction: 'harden auth middleware',
+      steps: [{ index: 0, description: 'x', files: ['/repo/auth.ts'], status: 'failed' as const }],
+      fileEdits: [{ file_path: '/repo/auth.ts', tier: 1, old_string: 'a', new_string: 'b', timestamp: 1 }],
+      executionIssue: {
+        kind: 'watchdog' as const,
+        recoverable: true,
+        message: 'Watchdog: execution stalled.',
+        nextAction: 'Retry with more context.',
+        stopReason: 'stalled_no_edit_rounds' as const,
+        blockerCode: 'ambiguous_edit' as const,
+      },
+    };
+    const out = await reviewNode(state as any);
+    expect(out.reviewDecision).toBe('retry');
+    expect(out.phase).toBe('executing');
+    expect(out.executionIssue).toBeNull();
+    expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
+
+  it('escalates terminal watchdog with blockerCode (repeated_tool_loop)', async () => {
+    const state = {
+      ...baseState(),
+      instruction: 'update comments schema',
+      steps: [{ index: 0, description: 'x', files: ['/repo/comments.ts'], status: 'failed' as const }],
+      executionIssue: {
+        kind: 'watchdog' as const,
+        recoverable: true,
+        message: 'Watchdog: repeated identical tool call loop detected.',
+        nextAction: 'Switch strategy.',
+        stopReason: 'stalled_no_edit_rounds' as const,
+        blockerCode: 'repeated_tool_loop' as const,
+      },
+    };
+    const out = await reviewNode(state as any);
+    expect(out.reviewDecision).toBe('escalate');
+    expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
+
+  it('retries retryable watchdog using blockerCode (identical_noop)', async () => {
+    const state = {
+      ...baseState(),
+      instruction: 'update middleware',
+      steps: [{ index: 0, description: 'x', files: ['/repo/mid.ts'], status: 'failed' as const }],
+      fileEdits: [{ file_path: '/repo/mid.ts', tier: 1, old_string: 'a', new_string: 'b', timestamp: 1 }],
+      executionIssue: {
+        kind: 'watchdog' as const,
+        recoverable: true,
+        message: 'Watchdog: execution stalled.',
+        nextAction: 'Retry.',
+        stopReason: 'stalled_no_edit_rounds' as const,
+        blockerCode: 'identical_noop' as const,
+      },
+    };
+    const out = await reviewNode(state as any);
+    expect(out.reviewDecision).toBe('retry');
+    expect(out.phase).toBe('executing');
   });
 });

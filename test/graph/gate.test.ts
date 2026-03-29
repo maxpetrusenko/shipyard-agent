@@ -183,4 +183,97 @@ describe('gateNode', () => {
     expect(result.error).toContain('ship-agent');
     expect(mocks.completeTextForRole).not.toHaveBeenCalled();
   });
+
+  it('uses supplied execution plans without calling the planner path', async () => {
+    mocks.tryCommandShortcut.mockResolvedValue(null);
+    mocks.tryArithmeticShortcut.mockReturnValue(null);
+    mocks.tryChatShortcut.mockReturnValue(null);
+    mocks.looksLikeCodeRequest.mockReturnValue(true);
+
+    const result = await gateNode({
+      runId: 'run-planless',
+      traceId: 'trace-planless',
+      instruction: 'execute provided refactor plan',
+      phase: 'planning',
+      steps: [
+        { index: 0, description: 'refactor api', files: ['/repo/api.ts'], status: 'pending' },
+        { index: 1, description: 'refactor web', files: ['/repo/web.ts'], status: 'pending' },
+      ],
+      currentStepIndex: 0,
+      fileEdits: [],
+      toolCallHistory: [],
+      verificationResult: null,
+      reviewDecision: null,
+      reviewFeedback: null,
+      contexts: [],
+      messages: [],
+      error: null,
+      retryCount: 0,
+      maxRetries: 3,
+      tokenUsage: { input: 0, output: 0 },
+      traceUrl: null,
+      runStartedAt: Date.now(),
+      fileOverlaySnapshots: null,
+      estimatedCost: null,
+      workerResults: [],
+      modelHint: null,
+      runMode: 'code',
+      gateRoute: 'plan',
+      modelOverride: null,
+      modelFamily: null,
+      modelOverrides: null,
+      executionIssue: null,
+    });
+
+    expect(result.phase).toBe('executing');
+    expect(result.gateRoute).toBe('coordinate');
+    expect(result.steps).toHaveLength(2);
+    expect(result.messages?.at(-1)?.content).toContain('Using supplied execution plan');
+    expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed supplied execution plans before execution', async () => {
+    mocks.tryCommandShortcut.mockResolvedValue(null);
+    mocks.tryArithmeticShortcut.mockReturnValue(null);
+    mocks.tryChatShortcut.mockReturnValue(null);
+    mocks.looksLikeCodeRequest.mockReturnValue(true);
+
+    const result = await gateNode({
+      runId: 'run-bad-plan',
+      traceId: 'trace-bad-plan',
+      instruction: 'execute provided refactor plan',
+      phase: 'planning',
+      steps: [
+        { index: 0, description: '   ', files: ['/repo/api.ts'], status: 'pending' },
+      ],
+      currentStepIndex: 0,
+      fileEdits: [],
+      toolCallHistory: [],
+      verificationResult: null,
+      reviewDecision: null,
+      reviewFeedback: null,
+      contexts: [],
+      messages: [],
+      error: null,
+      retryCount: 0,
+      maxRetries: 3,
+      tokenUsage: { input: 0, output: 0 },
+      traceUrl: null,
+      runStartedAt: Date.now(),
+      fileOverlaySnapshots: null,
+      estimatedCost: null,
+      workerResults: [],
+      modelHint: null,
+      runMode: 'code',
+      gateRoute: 'plan',
+      modelOverride: null,
+      modelFamily: null,
+      modelOverrides: null,
+      executionIssue: null,
+    });
+
+    expect(result.phase).toBe('error');
+    expect(result.gateRoute).toBe('end');
+    expect(result.error).toContain('missing a description');
+  });
 });

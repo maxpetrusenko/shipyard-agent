@@ -1,40 +1,90 @@
+import { MODEL_CATALOG } from '../config/model-policy.js';
+
+function renderComposerModelOptions(): string {
+  return MODEL_CATALOG
+    .filter((item) => item.id === 'gpt-5.4' || item.id === 'gpt-5.4-mini')
+    .map((item) => {
+      const selected = item.id === 'gpt-5.4-mini' ? ' selected' : '';
+      return `<option value="${item.id}"${selected}>${item.label}</option>`;
+    })
+    .join('\n        ');
+}
+
 /**
  * Extracted composer component for the dashboard.
  * Exports CSS, HTML, and JS strings for the sticky bottom composer bar.
  *
- * Replaces mode dropdown with segmented control, adds auto-grow textarea,
- * circular send button, and live status text.
+ * Claude Cowork-style project-scoped input: rounded card, centered textarea,
+ * project chip, attach button, compact model selector, circular send button.
  */
 
 export function getComposerStyles(): string {
   return `
-.composer-wrap{position:sticky;bottom:0;z-index:var(--z-composer);flex-shrink:0;padding:12px 0 0;background:linear-gradient(180deg,var(--composer-backdrop-start) 0%,var(--composer-backdrop-mid) 24%,var(--composer-backdrop-end) 100%);backdrop-filter:blur(8px)}
-.composer-inner{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg) var(--radius-lg) 0 0;padding:12px 14px;box-shadow:var(--shadow-raised);border-top:1px solid var(--border)}
-.composer-row{display:flex;align-items:flex-end;gap:10px}
-.composer-ta{flex:1;min-height:42px;max-height:min(38dvh,260px);resize:none;overflow-y:auto;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:var(--radius);outline:none;font-family:var(--mono);font-size:var(--text-lg);line-height:1.5;padding:6px 8px;transition:border-color var(--transition),box-shadow var(--transition)}
-.composer-ta::placeholder{color:var(--muted)}
-.composer-ta:focus{border-color:var(--accent);box-shadow:var(--shadow-ring)}
-.composer-send{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;min-width:36px;padding:0;border-radius:50%;background:var(--accent);color:var(--text-inverse);border:none;cursor:pointer;font-size:var(--text-xl);transition:all var(--transition);flex-shrink:0}
-.composer-send:hover{transform:scale(1.08);box-shadow:0 2px 8px var(--accent-dim)}
-.composer-send:active{transform:scale(.96)}
+/* ---- Composer wrapper ---- */
+.composer-wrap{position:sticky;bottom:0;z-index:var(--z-composer);flex-shrink:0;padding:16px 16px 0;background:linear-gradient(180deg,transparent 0%,var(--bg) 40%)}
+
+/* ---- Card ---- */
+.composer-inner{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:0;box-shadow:0 1px 4px rgba(0,0,0,.04)}
+
+/* ---- Hint ---- */
+.composer-hint-bar{padding:8px 16px 0;font-size:11px;color:var(--dim);line-height:1.45}
+
+/* ---- Textarea area ---- */
+.composer-ta-wrap{padding:12px 16px 4px}
+.composer-ta{width:100%;min-height:42px;max-height:min(38dvh,260px);resize:none;overflow-y:auto;background:transparent;color:var(--text);border:none;outline:none;font-family:var(--sans,system-ui,-apple-system,sans-serif);font-size:14px;line-height:1.55;padding:0;transition:none}
+.composer-ta::placeholder{color:var(--muted);opacity:.65}
+.composer-ta:focus{outline:none}
+
+/* ---- Plan doc ---- */
+.plan-doc-wrap{padding:0 16px}
+.plan-doc-wrap textarea{width:100%;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:var(--mono);color:var(--text);background:var(--bg2);resize:vertical;min-height:80px}
+
+/* ---- Bottom toolbar ---- */
+.composer-bottom{display:flex;align-items:center;gap:6px;padding:6px 10px 10px 12px}
+
+/* -- Project chip -- */
+.composer-project-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;background:var(--bg2);border:1px solid var(--border);font-size:12px;color:var(--dim);cursor:pointer;transition:all .15s ease;white-space:nowrap;flex-shrink:0;font-family:var(--sans);appearance:none}
+.composer-project-chip:hover{background:var(--bg);border-color:var(--accent);color:var(--text)}
+.composer-project-chip svg{width:13px;height:13px;opacity:.55;flex-shrink:0}
+
+/* -- Mode segment -- */
+.composer-mode-seg{display:inline-flex;align-items:center;gap:3px;padding:2px;border:1px solid var(--border);border-radius:999px;background:var(--bg2);flex-shrink:0}
+.composer-mode-btn{border:none;background:transparent;color:var(--dim);padding:5px 9px;border-radius:999px;font-size:11px;font-family:var(--sans);cursor:pointer;transition:all .15s ease}
+.composer-mode-btn:hover{color:var(--text)}
+.composer-mode-btn.active{background:var(--accent-glow);color:var(--accent)}
+
+/* -- Attach button -- */
+.composer-attach-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:16px;transition:all .15s ease;flex-shrink:0;padding:0}
+.composer-attach-btn:hover{background:var(--bg2);color:var(--accent);border-color:var(--accent)}
+
+/* -- Spacer -- */
+.composer-spacer{flex:1}
+
+/* -- Model selector (compact) -- */
+.composer-model-sel{background:transparent;border:1px solid var(--border);color:var(--dim);border-radius:8px;padding:4px 8px;font-size:12px;font-family:var(--sans,system-ui,-apple-system,sans-serif);cursor:pointer;transition:all .15s ease;max-width:180px;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23999'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 6px center;padding-right:20px}
+.composer-model-sel:hover{border-color:var(--accent);color:var(--text)}
+.composer-model-sel:focus{border-color:var(--accent);outline:none}
+
+/* -- Status -- */
+.composer-status{font-size:11px;color:var(--dim);white-space:nowrap;margin-right:4px}
+
+/* -- Stop button -- */
+.composer-stop-btn{display:inline-flex;align-items:center;justify-content:center;padding:4px 10px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--dim);cursor:pointer;font-size:12px;transition:all .15s ease;white-space:nowrap}
+.composer-stop-btn:hover{background:rgba(220,50,50,.08);border-color:var(--red);color:var(--red)}
+
+/* -- Send button (circular, accent) -- */
+.composer-send{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;min-width:36px;padding:0;border-radius:50%;background:var(--accent);color:#fff;border:none;cursor:pointer;transition:all .15s ease;flex-shrink:0}
+.composer-send svg{width:16px;height:16px}
+.composer-send:hover{transform:scale(1.06);box-shadow:0 2px 10px rgba(0,0,0,.15)}
+.composer-send:active{transform:scale(.95)}
 .composer-send:focus-visible{outline:none;box-shadow:var(--shadow-ring)}
-.composer-send:disabled{opacity:.3;cursor:not-allowed;transform:none;box-shadow:none}
-.composer-send-hidden{opacity:0;pointer-events:none;position:absolute;width:1px;height:1px;overflow:hidden}
-.compose-attachments{display:flex;flex-wrap:wrap;gap:4px;padding:4px 0;min-height:0}
-.compose-attachments:empty{display:none}
-.compose-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:var(--radius);background:var(--bg2);border:1px solid var(--border);font-size:var(--text-sm);color:var(--dim);font-family:var(--mono)}
-.compose-chip-x{cursor:pointer;color:var(--muted);font-size:var(--text-md);line-height:1}
-.compose-chip-x:hover{color:var(--red)}
-.composer-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
-.seg-ctrl{display:inline-flex;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
-.seg-btn{padding:4px 12px;font-size:var(--text-sm);font-family:var(--mono);color:var(--dim);border:none;background:transparent;cursor:pointer;transition:all var(--transition);text-transform:uppercase;letter-spacing:.5px}
-.seg-btn:hover{color:var(--accent)}
-.seg-btn:focus-visible{outline:none;box-shadow:var(--shadow-ring);border-radius:var(--radius)}
-.seg-btn.active{background:var(--accent);color:var(--text-inverse);font-weight:600}
-.composer-model-sel{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:5px 10px;font-size:var(--text-base);font-family:var(--mono);cursor:pointer;transition:all var(--transition)}
-.composer-model-sel:focus{border-color:var(--accent);box-shadow:var(--shadow-ring);outline:none}
-.composer-status{font-size:var(--text-base);color:var(--dim);margin-left:auto}
-.plan-doc-toggle{font-size:var(--text-base);color:var(--accent);cursor:pointer;user-select:none;margin-top:6px;transition:color var(--transition)}
+.composer-send:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
+.composer-send-hidden{opacity:.55}
+
+/* ---- Project hero (state-home centered view) ---- */
+.project-hero-title{font-family:var(--sans);font-size:22px;font-weight:700;color:var(--text-bright);letter-spacing:-.02em;margin-bottom:6px;text-align:center}
+.project-hero-sub{font-size:12px;color:var(--muted);margin-bottom:24px;text-align:center}
+.project-hero .composer-wrap{position:static;padding:0;background:none;width:100%;max-width:560px}
 `;
 }
 
@@ -42,40 +92,63 @@ export function getComposerHtml(): string {
   return `
 <div class="composer-wrap">
   <div class="composer-inner">
-    <div id="composerHint" style="display:none;font-size:10px;color:var(--dim);margin-bottom:8px;line-height:1.45"></div>
-    <div class="compose-attachments" id="composeAttachments"></div>
-    <div class="composer-row">
-      <textarea id="instr" class="composer-ta" rows="1" placeholder="Message\u2026" autocomplete="off"></textarea>
-      <button type="button" class="composer-send composer-send-hidden" id="subBtn" data-action="submit" aria-label="Send" title="Send (Cmd+Enter)"><span class="composer-btn-icon" aria-hidden="true">&#9654;</span></button>
+    <!-- Hint bar -->
+    <div id="composerHint" class="composer-hint-bar" style="display:none"></div>
+
+    <!-- Textarea -->
+    <div class="composer-ta-wrap">
+      <textarea id="instr" class="composer-ta" rows="1" placeholder="What would you like to work on?" autocomplete="off"></textarea>
     </div>
-    <div class="plan-doc-toggle" data-action="togglePlanDoc">+ Attach plan document</div>
-    <div id="planDocWrap" style="display:none;margin-top:6px">
-      <textarea id="planDoc" rows="5" placeholder="Paste requirements, spec, or plan document here. The planner will use it as context to scope the work."></textarea>
+
+    <!-- Plan doc (hidden by default) -->
+    <div id="planDocWrap" class="plan-doc-wrap" style="display:none;padding-bottom:6px">
+      <textarea id="planDoc" rows="5" placeholder="Paste a plan, PRD, spec, or wireframes here. Shipyard will use it as guidance and move straight into execution."></textarea>
     </div>
-    <div class="composer-toolbar">
-      <div class="seg-ctrl" id="modeSegCtrl">
-        <button type="button" class="seg-btn active" data-action="setMode" data-mode="ask">Ask</button>
-        <button type="button" class="seg-btn" data-action="setMode" data-mode="plan">Plan</button>
-        <button type="button" class="seg-btn" data-action="setMode" data-mode="agent">Agent</button>
-        <button type="button" class="seg-btn" data-action="setMode" data-mode="auto">Auto</button>
+
+    <!-- Bottom toolbar row -->
+    <div class="composer-bottom">
+      <!-- Project chip -->
+      <button type="button" class="composer-project-chip" id="composerProjectChip" title="Project scope" data-action="focusProjectList">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5V12a1.5 1.5 0 001.5 1.5h9A1.5 1.5 0 0014 12V6.5A1.5 1.5 0 0012.5 5H8L6.5 3H3.5A1.5 1.5 0 002 4.5z"/></svg>
+        <span id="composerProjectLabel">Default Project</span>
+      </button>
+
+      <!-- Attach button (opens plan doc) -->
+      <button type="button" class="composer-attach-btn" data-action="togglePlanDoc" title="Toggle plan doc" aria-label="Toggle plan doc" aria-expanded="false">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.5H5.5A1.5 1.5 0 004 5v6A1.5 1.5 0 005.5 12.5h5A1.5 1.5 0 0012 11V5.5"/><path d="M9 3.5h2.5V6"/><path d="M8.5 4.5l3 3"/></svg>
+      </button>
+
+      <div class="composer-mode-seg" id="modeSegCtrl" aria-label="Composer mode">
+        <button type="button" class="composer-mode-btn" data-action="setMode" data-mode="ask">Ask</button>
+        <button type="button" class="composer-mode-btn" data-action="setMode" data-mode="plan">Plan</button>
+        <button type="button" class="composer-mode-btn active" data-action="setMode" data-mode="agent">Agent</button>
       </div>
+
       <select id="uiModeSel" style="display:none" aria-hidden="true" tabindex="-1">
         <option value="ask">Ask</option>
         <option value="plan">Plan</option>
-        <option value="agent">Agent</option>
-        <option value="">Auto (classify)</option>
+        <option value="agent" selected>Agent</option>
       </select>
-      <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px" title="Optional whole-run model override. When set, this model is used for the run across planning, coding, review, and chat stages.">
-        <span>Model</span>
-        <select id="modelSel" class="composer-model-sel">
-          <option value="">(none)</option>
-          <option value="gpt-5.1-codex">GPT-5.1 Codex (OpenAI)</option>
-          <option value="gpt-5.3-codex">GPT-5.3 Codex (OpenAI)</option>
-          <option value="gpt-5.4-mini">GPT-5.4 Mini (OpenAI)</option>
-        </select>
-      </label>
-      <button type="button" class="btn btn-d" id="stopBtn" data-action="stop" style="display:none">Stop</button>
+
+      <span class="composer-spacer"></span>
+
+      <!-- Status -->
       <span id="subSt" class="composer-status" aria-live="polite"></span>
+
+      <!-- Stop button -->
+      <button type="button" class="composer-stop-btn" id="stopBtn" data-action="stop" style="display:none">Stop</button>
+
+      <!-- Model selector (compact) -->
+      <select id="modelSel" class="composer-model-sel" title="Model override">
+        ${renderComposerModelOptions()}
+      </select>
+
+      <!-- Send button (circular, accent) -->
+      <button type="button" class="composer-send composer-send-hidden" id="subBtn" data-action="submit" aria-label="Send" title="Send (Cmd+Enter)">
+        <span class="composer-btn-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2.1a.75.75 0 01.95-.37l10.5 4.5a.75.75 0 010 1.37l-10.5 4.5a.75.75 0 01-1.02-.88L3.88 8 2.43 4.78a.75.75 0 01.07-.68z"/></svg>
+        </span>
+      </button>
     </div>
   </div>
 </div>
@@ -99,6 +172,35 @@ function initComposerAutoGrow() {
   });
 }
 
+function currentProjectContext() {
+  var selected = typeof getSelectedProject === 'function' ? getSelectedProject() : { id: 'default', label: 'Default Project' };
+  var run = selectedRunId ? runsMap[selectedRunId] : null;
+  if (run && run.projectContext && run.projectContext.projectId) {
+    return {
+      id: run.projectContext.projectId,
+      label: run.projectContext.projectLabel || selected.label || 'Project',
+    };
+  }
+  return {
+    id: (selected && selected.id) || 'default',
+    label: (selected && selected.label) || 'Default Project',
+  };
+}
+
+function syncProjectChrome() {
+  var project = currentProjectContext();
+  var chipLabel = document.getElementById('composerProjectLabel');
+  if (chipLabel) chipLabel.textContent = project.label;
+  var heroTitle = document.getElementById('projectHeroTitle');
+  if (heroTitle) heroTitle.textContent = project.label;
+  var heroSub = document.getElementById('projectHeroSub');
+  if (heroSub) {
+    heroSub.textContent = followupMode()
+      ? 'Continue work in the selected thread.'
+      : 'What would you like to work on?';
+  }
+}
+
 /* ---- Composer UI sync ---- */
 function syncComposerUi() {
   var ta = document.getElementById('instr');
@@ -107,16 +209,14 @@ function syncComposerUi() {
   if (followupMode()) {
     var kind = r && r.threadKind ? String(r.threadKind) : 'selected';
     if (ta) ta.placeholder = 'Follow up in this ' + kind + ' thread\\u2026';
-    if (hint) {
-      hint.style.display = 'block';
-      hint.textContent = 'Follow-ups append to the selected ' + kind + ' thread.';
-    }
+    if (hint) hint.style.display = 'none';
   } else {
-    if (ta) ta.placeholder = 'Message\\u2026';
+    if (ta) ta.placeholder = 'What would you like to work on?';
     if (hint) hint.style.display = 'none';
   }
   syncComposerPrimaryButton();
   syncStopButton();
+  syncProjectChrome();
 }
 
 function updateComposerSendVisibility() {
@@ -124,8 +224,36 @@ function updateComposerSendVisibility() {
   var btn = document.getElementById('subBtn');
   if (!ta || !btn) return;
   var has = ta.value.trim().length > 0;
+  btn.disabled = !has;
   if (has) btn.classList.remove('composer-send-hidden');
   else btn.classList.add('composer-send-hidden');
+}
+
+function composerModeValue() {
+  var sel = document.getElementById('uiModeSel');
+  if (!sel || !sel.value) return 'agent';
+  return sel.value;
+}
+
+function syncComposerModeUi() {
+  var mode = composerModeValue();
+  var seg = document.getElementById('modeSegCtrl');
+  if (!seg) return;
+  var buttons = seg.querySelectorAll('[data-action=\"setMode\"]');
+  for (var i = 0; i < buttons.length; i++) {
+    var modeBtn = buttons[i];
+    var active = modeBtn.dataset.mode === mode;
+    modeBtn.classList.toggle('active', active);
+    modeBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+}
+
+function setComposerMode(mode) {
+  var next = mode === 'ask' || mode === 'plan' || mode === 'agent' ? mode : 'agent';
+  var sel = document.getElementById('uiModeSel');
+  if (sel) sel.value = next;
+  saveDashboardPref(DASH_MODE_KEY, next);
+  syncComposerModeUi();
 }
 
 function syncComposerPrimaryButton() {
@@ -133,12 +261,11 @@ function syncComposerPrimaryButton() {
   if (!btn) return;
   var icon = btn.querySelector('.composer-btn-icon');
   if (!icon) {
-    btn.innerHTML = '<span class="composer-btn-icon" aria-hidden="true"></span>';
+    btn.innerHTML = '<span class="composer-btn-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2.1a.75.75 0 01.95-.37l10.5 4.5a.75.75 0 010 1.37l-10.5 4.5a.75.75 0 01-1.02-.88L3.88 8 2.43 4.78a.75.75 0 01.07-.68z"/></svg></span>';
     icon = btn.querySelector('.composer-btn-icon');
   }
   btn.dataset.action = 'submit';
-  btn.className = 'composer-send composer-send-hidden';
-  icon.textContent = '\\u25b6';
+  btn.className = 'composer-send';
   if (followupMode()) {
     btn.setAttribute('aria-label', 'Send follow-up');
     btn.setAttribute('title', 'Send follow-up (Cmd+Enter)');
@@ -179,11 +306,12 @@ function submitRun() {
   if (followupMode()) {
     var fuId = selectedRunId;
     var followupBody = { instruction: inst };
-    var uiEl = document.getElementById('uiModeSel');
-    if (uiEl && uiEl.value) followupBody.uiMode = uiEl.value;
+    followupBody.uiMode = composerModeValue();
     var followupModelEl = document.getElementById('modelSel');
     followupBody.model = '';
     if (followupModelEl) followupBody.model = followupModelEl.value;
+    var fuProj = typeof getSelectedProject === 'function' ? getSelectedProject() : null;
+    if (fuProj) followupBody.projectContext = { projectId: fuProj.id, projectLabel: fuProj.label };
     fetch('/api/runs/' + fuId + '/followup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(followupBody) })
       .then(function(r){ return r.json(); })
       .then(function(d){
@@ -205,11 +333,12 @@ function submitRun() {
               reviewFeedback: d.reviewFeedback !== undefined ? d.reviewFeedback : cur.reviewFeedback,
               nextActions: d.nextActions !== undefined ? d.nextActions : cur.nextActions,
               durationMs: cur.durationMs,
+              projectContext: d.projectContext !== undefined ? d.projectContext : cur.projectContext || (fuProj ? { projectId: fuProj.id, projectLabel: fuProj.label } : null),
             });
           } else {
             var ex = runsMap[fuId] || { runId: fuId };
             var prev = Array.isArray(ex.messages) ? ex.messages.slice() : [];
-            var nextKind = d.threadKind || (uiEl && uiEl.value) || ex.threadKind || 'ask';
+            var nextKind = d.threadKind || ex.threadKind || 'ask';
             var queuedPhase = nextKind === 'ask' ? 'routing' : 'planning';
             prev.push({ role: 'user', content: inst });
             curRunId = fuId;
@@ -220,6 +349,7 @@ function submitRun() {
               phase: queuedPhase,
               threadKind: nextKind,
               runMode: d.runMode || (nextKind === 'ask' ? 'chat' : 'code'),
+              projectContext: d.projectContext !== undefined ? d.projectContext : ex.projectContext || (fuProj ? { projectId: fuProj.id, projectLabel: fuProj.label } : null),
             });
             if (typeof syncTimelineFromRun === 'function') syncTimelineFromRun(fuId, runsMap[fuId]);
           }
@@ -227,6 +357,7 @@ function submitRun() {
           ta.style.height = 'auto';
           renderChatList();
           renderChatThread();
+          if (typeof renderProjectList === 'function') renderProjectList();
         } else st.textContent = 'Error: ' + (d.error||'unknown');
       })
       .catch(function(e){ st.textContent = 'Error: ' + e.message; })
@@ -237,12 +368,12 @@ function submitRun() {
   var body = { instruction: inst };
   var pdVal = pdTa ? pdTa.value.trim() : '';
   if (pdVal) body.planDoc = pdVal;
-  var uiEl = document.getElementById('uiModeSel');
-  if (uiEl && uiEl.value) body.uiMode = uiEl.value;
-  else body.runMode = 'auto';
+  body.uiMode = composerModeValue();
+  body.runMode = body.uiMode === 'ask' ? 'chat' : body.uiMode === 'plan' ? 'code' : 'auto';
   var mdEl = document.getElementById('modelSel');
   if (mdEl && mdEl.value) body.model = mdEl.value;
-  persistDashboardModeSel();
+  var proj = typeof getSelectedProject === 'function' ? getSelectedProject() : null;
+  if (proj) body.projectContext = { projectId: proj.id, projectLabel: proj.label };
   persistDashboardModelSel();
 
   st.textContent = 'Submitting\\u2026';
@@ -269,11 +400,13 @@ function submitRun() {
           verificationResult: d.verificationResult !== undefined ? d.verificationResult : existing.verificationResult,
           reviewFeedback: d.reviewFeedback !== undefined ? d.reviewFeedback : existing.reviewFeedback,
           nextActions: d.nextActions !== undefined ? d.nextActions : existing.nextActions,
+          projectContext: d.projectContext !== undefined ? d.projectContext : existing.projectContext || (proj ? { projectId: proj.id, projectLabel: proj.label } : null),
           savedAt: new Date().toISOString()
         });
         if (typeof syncTimelineFromRun === 'function') syncTimelineFromRun(d.runId, runsMap[d.runId]);
         renderChatList();
         renderChatThread();
+        if (typeof renderProjectList === 'function') renderProjectList();
         ta.value = '';
         ta.style.height = 'auto';
         if (pdTa) pdTa.value = '';
@@ -308,7 +441,7 @@ function stopRun() {
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (st) st.textContent = d.cancelled ? 'Stop requested' : 'No active run to stop';
-      fetch('/api/runs?limit=30')
+      fetch('/api/runs?limit=' + DASHBOARD_RUN_HISTORY_LIMIT)
         .then(function(r2){ return r2.json(); })
         .then(function(list){
           for (var i = 0; i < list.length; i++) {
@@ -331,57 +464,39 @@ function resumeRunById(runId) {
     }).catch(function(e){ document.getElementById('subSt').textContent = 'Error: ' + e.message; });
 }
 
-/* ---- Segmented mode control ---- */
-function setComposerMode(mode) {
-  var ctrl = document.getElementById('modeSegCtrl');
-  var sel = document.getElementById('uiModeSel');
-  if (!ctrl || !sel) return;
-  var btns = ctrl.querySelectorAll('.seg-btn');
-  for (var i = 0; i < btns.length; i++) {
-    var b = btns[i];
-    if (b.dataset.mode === mode) b.classList.add('active');
-    else b.classList.remove('active');
-  }
-  sel.value = mode === 'auto' ? '' : mode;
-  persistDashboardModeSel();
-}
-
 /* ---- Persistence ---- */
-function persistDashboardModeSel() {
-  persistDashboardSelect('uiModeSel', DASH_MODE_KEY);
-}
-
-function restoreDashboardModeSel() {
-  restoreDashboardSelect('uiModeSel', DASH_MODE_KEY);
-  syncSegCtrlFromSelect();
-}
-
 function persistDashboardModelSel() {
   persistDashboardSelect('modelSel', DASH_MODEL_KEY);
 }
 
 function restoreDashboardModelSel() {
+  var sel = document.getElementById('modelSel');
+  if (!sel) return;
   restoreDashboardSelect('modelSel', DASH_MODEL_KEY);
+  if (!sel.value) sel.value = 'gpt-5.4-mini';
+  persistDashboardModelSel();
 }
 
-function syncSegCtrlFromSelect() {
-  var sel = document.getElementById('uiModeSel');
-  var ctrl = document.getElementById('modeSegCtrl');
-  if (!sel || !ctrl) return;
-  var val = sel.value || 'auto';
-  var btns = ctrl.querySelectorAll('.seg-btn');
-  for (var i = 0; i < btns.length; i++) {
-    var b = btns[i];
-    if (b.dataset.mode === val) b.classList.add('active');
-    else b.classList.remove('active');
-  }
+function restoreDashboardModeSel() {
+  var saved = loadDashboardPref(DASH_MODE_KEY) || 'agent';
+  setComposerMode(saved);
 }
 
 /* ---- Composer init (call after DOM ready) ---- */
 function initComposer() {
   initComposerAutoGrow();
-  restoreDashboardModeSel();
   restoreDashboardModelSel();
+  restoreDashboardModeSel();
+
+  var modeSeg = document.getElementById('modeSegCtrl');
+  if (modeSeg) {
+    modeSeg.addEventListener('click', function(ev) {
+      var clicked = ev.target && ev.target.closest ? ev.target.closest('[data-action=\"setMode\"]') : null;
+      if (!clicked) return;
+      ev.preventDefault();
+      setComposerMode(clicked.dataset.mode || 'agent');
+    });
+  }
 
   var instrEl = document.getElementById('instr');
   if (instrEl) {
@@ -395,6 +510,15 @@ function initComposer() {
   }
 
   syncComposerUi();
+  syncProjectChrome();
 }
 `;
+}
+
+export function getProjectHeroHtml(): string {
+  return `
+<div class="project-hero" id="projectHero">
+  <div class="project-hero-title" id="projectHeroTitle">Default Project</div>
+  <div class="project-hero-sub" id="projectHeroSub">What would you like to work on?</div>
+</div>`;
 }

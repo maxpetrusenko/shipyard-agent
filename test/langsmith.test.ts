@@ -134,10 +134,10 @@ describe('langsmith tracing helpers', () => {
       expect(await resolveLangSmithRunUrl('')).toBeNull();
     });
 
-    it('returns internal workspace URL by default (no public sharing)', async () => {
+    it('returns internal workspace URL when public sharing explicitly disabled', async () => {
       process.env['LANGCHAIN_TRACING_V2'] = 'true';
       process.env['LANGCHAIN_API_KEY'] = 'key';
-      delete process.env['SHIPYARD_TRACE_PUBLIC'];
+      process.env['SHIPYARD_TRACE_PUBLIC'] = 'false';
 
       const mockClient = {
         readRunSharedLink: async () => { throw new Error('should not be called'); },

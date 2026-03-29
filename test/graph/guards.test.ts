@@ -173,6 +173,24 @@ describe('evaluateCandidateEditPath', () => {
     });
     expect(out.ok).toBe(true);
   });
+
+  it('allows canonical db counterpart when step targets legacy src/db path', () => {
+    const out = evaluateCandidateEditPath({
+      instruction:
+        'Create the canonical deliverable under /repo/api/db and preserve wrappers under /repo/api/src/db.',
+      steps: [
+        {
+          index: 0,
+          description: 'migrate orphan helper',
+          files: ['/repo/api/src/db/scripts/orphan-diagnostic.ts'],
+          status: 'pending',
+        },
+      ],
+      editedPaths: [],
+      candidatePath: '/repo/api/db/scripts/orphan-diagnostic.ts',
+    });
+    expect(out.ok).toBe(true);
+  });
 });
 
 describe('constrainPlanStepsToScope', () => {
@@ -237,6 +255,13 @@ describe('repo target guards', () => {
     expect(target).toBe('ship-refactored');
   });
 
+  it('extracts repo basename from explicit path target', () => {
+    const target = extractExplicitRepoTarget(
+      'build ship app in desktop/gauntlet/ship2. here is plan',
+    );
+    expect(target).toBe('ship2');
+  });
+
   it('detects mismatch between instruction target and active repo', () => {
     const mismatch = detectRepoTargetMismatch(
       'In ship-refactored, make exactly one minimal bugfix.',
@@ -254,6 +279,17 @@ describe('repo target guards', () => {
       '/Users/max/Desktop/Gauntlet/ship-agent',
     );
     expect(mismatch).toBeNull();
+  });
+
+  it('detects mismatch when instruction targets a repo path', () => {
+    const mismatch = detectRepoTargetMismatch(
+      'build ship app in desktop/gauntlet/ship2. here is plan',
+      '/Users/max/Desktop/Gauntlet/ship-agent',
+    );
+    expect(mismatch).toEqual({
+      targetRepo: 'ship2',
+      activeRepo: 'ship-agent',
+    });
   });
 });
 

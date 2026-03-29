@@ -11,6 +11,15 @@ export interface GithubRepoSummary {
   html_url: string;
 }
 
+export interface GithubInstallationSummary {
+  id: number;
+  account_login: string;
+  account_type: string;
+  target_type: string;
+  repository_selection: string;
+  html_url: string;
+}
+
 interface GithubAppConfig {
   issuer: string;
   privateKey: string;
@@ -45,12 +54,22 @@ function gitAuthArgs(token: string): string[] {
   return ['-c', `http.https://github.com/.extraheader=AUTHORIZATION: basic ${basic}`];
 }
 
+export function githubAppMissingEnv(): string[] {
+  const appId = process.env['GITHUB_APP_ID']?.trim() ?? '';
+  const clientId = process.env['GITHUB_APP_CLIENT_ID']?.trim() ?? '';
+  const privateKeyRaw = process.env['GITHUB_APP_PRIVATE_KEY']?.trim() ?? '';
+  const missing: string[] = [];
+  if (!appId && !clientId) missing.push('GITHUB_APP_ID or GITHUB_APP_CLIENT_ID');
+  if (!privateKeyRaw) missing.push('GITHUB_APP_PRIVATE_KEY');
+  return missing;
+}
+
 function githubAppConfig(): GithubAppConfig | null {
+  if (githubAppMissingEnv().length > 0) return null;
   const appId = process.env['GITHUB_APP_ID']?.trim() ?? '';
   const clientId = process.env['GITHUB_APP_CLIENT_ID']?.trim() ?? '';
   const issuer = clientId || appId;
   const privateKeyRaw = process.env['GITHUB_APP_PRIVATE_KEY']?.trim() ?? '';
-  if (!issuer || !privateKeyRaw) return null;
   const privateKey = privateKeyRaw.includes('\\n')
     ? privateKeyRaw.replace(/\\n/g, '\n')
     : privateKeyRaw;
@@ -128,6 +147,54 @@ export async function createInstallationTokenById(installationId: number): Promi
   const body = (await tokenRes.json()) as Record<string, unknown>;
   const token = String(body['token'] ?? '');
   return token || null;
+}
+
+export async function listGithubAppInstallations(): Promise<GithubInstallationSummary[]> {
+  const cfg = githubAppConfig();
+  if (!cfg) throw new Error('GitHub App is not configured.');
+  const appJwt = buildAppJwt(cfg);
+  const installations: GithubInstallationSummary[] = [];
+  let page = 1;
+
+  while (page <= 5) {
+    const res = await fetch(`https://api.github.com/app/installations?per_page=100&page=${page}`, {
+      headers: {
+        Authorization: `Bearer ${appJwt}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'shipyard-agent',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`GitHub app installations error (${res.status}): ${txt.slice(0, 240)}`);
+    }
+    const body = await res.json() as Array<Record<string, unknown>>;
+    const pageInstallations = Array.isArray(body) ? body : [];
+    if (pageInstallations.length === 0) break;
+
+    for (const installation of pageInstallations) {
+      const account = installation['account'] && typeof installation['account'] === 'object'
+        ? installation['account'] as Record<string, unknown>
+        : null;
+      const id = Number(installation['id'] ?? 0);
+      if (!id) continue;
+      installations.push({
+        id,
+        account_login: String(account?.['login'] ?? `installation-${id}`),
+        account_type: String(account?.['type'] ?? ''),
+        target_type: String(installation['target_type'] ?? ''),
+        repository_selection: String(installation['repository_selection'] ?? 'selected'),
+        html_url: String(installation['html_url'] ?? ''),
+      });
+    }
+
+    page += 1;
+  }
+
+  return installations.sort((a, b) => (
+    a.account_login.localeCompare(b.account_login) || a.id - b.id
+  ));
 }
 
 export async function listGithubReposForInstallation(installationId: number, query?: string): Promise<GithubRepoSummary[]> {
@@ -226,5 +293,5 @@ export async function githubCliAuthStatus(): Promise<boolean> {
 }
 
 export function githubAppConfigured(): boolean {
-  return Boolean(githubAppConfig());
+  return githubAppMissingEnv().length === 0;
 }

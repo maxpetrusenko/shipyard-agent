@@ -7,7 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_DIR="$(dirname "$SCRIPT_DIR")"
-RESULTS_DIR="${AGENT_DIR}/results"
+RESULTS_DIR="${SHIPYARD_BENCHMARK_RESULTS_DIR:-${SHIPYARD_RESULTS_DIR:-${AGENT_DIR}/results/benchmarks}}"
 
 if [ $# -lt 2 ]; then
   echo "Usage: $0 <target-dir> <label>"

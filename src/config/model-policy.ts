@@ -10,6 +10,40 @@ export interface ModelConfig {
   temperature: number;
 }
 
+const MODEL_ID_ALIASES: Record<string, string> = {
+  'gpt-5-mini': 'gpt-5.4-mini',
+  'gpt-5-nano': 'gpt-5.4-nano',
+  'gpt-5.1-codex': 'gpt-5.4',
+  'gpt-5.3-codex': 'gpt-5.4',
+  'agent 5.1': 'gpt-5.4',
+  'agent 5.3': 'gpt-5.4',
+  'agent-5.1': 'gpt-5.4',
+  'agent-5.3': 'gpt-5.4',
+  'agent5.1': 'gpt-5.4',
+  'agent5.3': 'gpt-5.4',
+};
+
+export function canonicalizeModelId(
+  model: string | null | undefined,
+): string | null | undefined {
+  if (model == null) return model;
+  const trimmed = model.trim();
+  if (!trimmed) return undefined;
+  return MODEL_ID_ALIASES[trimmed.toLowerCase()] ?? trimmed;
+}
+
+export function canonicalizeModelOverrides(
+  modelOverrides: Partial<Record<ModelRole, string>> | null | undefined,
+): Partial<Record<ModelRole, string>> | null | undefined {
+  if (!modelOverrides) return modelOverrides;
+  const next: Partial<Record<ModelRole, string>> = {};
+  for (const [role, model] of Object.entries(modelOverrides)) {
+    const canonical = canonicalizeModelId(model);
+    if (canonical) next[role as ModelRole] = canonical;
+  }
+  return next;
+}
+
 /** Models that require temperature=1 (extended thinking). */
 const TEMP_1_ONLY_MODELS = new Set([
   'claude-opus-4-6',
@@ -65,6 +99,30 @@ export const MODEL_CONFIGS = {
 
 export type ModelRole = keyof typeof MODEL_CONFIGS;
 
+const OPENAI_CHAT_MODEL_ALLOWLIST = new Set([
+  'gpt-5.4',
+  'gpt-5.4-mini',
+  'gpt-5.4-nano',
+  'gpt-4.1',
+  'gpt-4.1-mini',
+  'gpt-4o',
+  'gpt-4o-mini',
+]);
+
+function isOpenAiFamilyModelId(model: string): boolean {
+  const normalized = (canonicalizeModelId(model) ?? model).trim().toLowerCase();
+  return normalized.startsWith('gpt-') || /^o[1-4](?:$|[-.])/.test(normalized);
+}
+
+function normalizeResolvedModel(role: ModelRole, model: string): string {
+  const canonical = canonicalizeModelId(model) ?? model;
+  const normalized = canonical.trim().toLowerCase();
+  if (!isOpenAiFamilyModelId(normalized)) return canonical;
+  if (OPENAI_CHAT_MODEL_ALLOWLIST.has(normalized)) return canonical;
+  console.warn('[model-policy] Unknown model, falling back to default:', model);
+  return FAMILY_DEFAULT_MODELS.openai[role];
+}
+
 /** Optional per-role model id (e.g. Haiku for cheap smoke tests). Unset = use table defaults. */
 const MODEL_ENV_KEYS: Record<ModelRole, string> = {
   planning: 'SHIPYARD_PLANNING_MODEL',
@@ -78,9 +136,9 @@ const MODEL_ENV_KEYS: Record<ModelRole, string> = {
 
 export function getModelConfig(role: ModelRole): ModelConfig {
   const base = MODEL_CONFIGS[role];
-  const fromEnv = process.env[MODEL_ENV_KEYS[role]]?.trim();
+  const fromEnv = canonicalizeModelId(process.env[MODEL_ENV_KEYS[role]]);
   if (!fromEnv) return clampTemp(base);
-  return clampTemp({ ...base, model: fromEnv });
+  return clampTemp({ ...base, model: normalizeResolvedModel(role, fromEnv) });
 }
 
 // ---------------------------------------------------------------------------
@@ -145,19 +203,23 @@ export function getResolvedModelConfig(
   opts: ModelResolutionOpts,
 ): ModelConfig {
   const base = MODEL_CONFIGS[role];
-  const stageOverride = opts.modelOverrides?.[role]?.trim();
+  const stageOverride = canonicalizeModelId(opts.modelOverrides?.[role]);
   if (stageOverride) {
-    return clampTemp({ ...base, model: stageOverride });
+    return clampTemp({ ...base, model: normalizeResolvedModel(role, stageOverride) });
   }
-  if (opts.legacyCodingOverride?.trim()) {
-    return clampTemp({ ...base, model: opts.legacyCodingOverride.trim() });
+  const legacyOverride = canonicalizeModelId(opts.legacyCodingOverride);
+  if (legacyOverride) {
+    return clampTemp({ ...base, model: normalizeResolvedModel(role, legacyOverride) });
   }
-  const fromEnv = process.env[MODEL_ENV_KEYS[role]]?.trim();
+  const fromEnv = canonicalizeModelId(process.env[MODEL_ENV_KEYS[role]]);
   if (fromEnv) {
-    return clampTemp({ ...base, model: fromEnv });
+    return clampTemp({ ...base, model: normalizeResolvedModel(role, fromEnv) });
   }
   if (opts.modelFamily === 'anthropic' || opts.modelFamily === 'openai') {
-    return clampTemp({ ...base, model: FAMILY_DEFAULT_MODELS[opts.modelFamily][role] });
+    return clampTemp({
+      ...base,
+      model: normalizeResolvedModel(role, FAMILY_DEFAULT_MODELS[opts.modelFamily][role]),
+    });
   }
   return getModelConfig(role);
 }
@@ -174,15 +236,17 @@ export function getResolvedModelConfigFromState(
   return getResolvedModelConfig(role, {
     modelFamily: state.modelFamily ?? null,
     modelOverrides:
-      (state.modelOverrides as Partial<Record<ModelRole, string>> | null) ??
-      null,
-    legacyCodingOverride: state.modelOverride ?? null,
+      canonicalizeModelOverrides(
+        (state.modelOverrides as Partial<Record<ModelRole, string>> | null) ??
+          null,
+      ) ?? null,
+    legacyCodingOverride: canonicalizeModelId(state.modelOverride) ?? null,
   });
 }
 
 /** True when the execute node should use the OpenAI SDK (Chat Completions + tools). */
 export function isOpenAiModelId(model: string): boolean {
-  return model.trim().toLowerCase().startsWith('gpt-');
+  return isOpenAiFamilyModelId(model);
 }
 
 /** Same-provider fallback model for transient provider-level issues (e.g. 429). */
@@ -190,8 +254,10 @@ export function getRateLimitFallbackModel(
   role: ModelRole,
   currentModel: string,
 ): string {
-  const model = currentModel.trim().toLowerCase();
-  if (isOpenAiModelId(currentModel)) {
+  const model = (canonicalizeModelId(currentModel) ?? currentModel)
+    .trim()
+    .toLowerCase();
+  if (isOpenAiModelId(model)) {
     if (model === 'gpt-5.4-mini') return 'gpt-5.4';
     if (model === 'gpt-5.4-nano') return 'gpt-5.4-mini';
     return 'gpt-5.4-mini';
@@ -234,7 +300,7 @@ export const MODEL_CATALOG: { id: string; label: string }[] = [
  * `inputTokens` from the API represents non-cache-read tokens.
  * `cacheRead` tokens are charged at the discounted rate.
  *
- * Returns 0 for unknown models.
+ * Returns null for unknown models (not in COST_RATES).
  */
 export function estimateCost(
   model: string,
@@ -242,11 +308,11 @@ export function estimateCost(
   outputTokens: number,
   cacheRead = 0,
   cacheCreation = 0,
-): number {
+): number | null {
   const rate = COST_RATES[model];
-  if (!rate) return 0;
+  if (!rate) return null;
 
-  const uncachedInput = inputTokens - cacheCreation;
+  const uncachedInput = Math.max(0, inputTokens - cacheCreation);
   const inputCost =
     uncachedInput * rate.input +
     cacheCreation * rate.input * 1.25 +

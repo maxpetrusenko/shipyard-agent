@@ -21,10 +21,14 @@ import {
   pathMatchesAny,
   shouldRequireEdits,
 } from '../guards.js';
+import {
+  buildDeterministicBlockerGuidance,
+  hasNoEditJustification,
+} from './execute-progress.js';
 import { consumeLiveFollowups } from '../../runtime/live-followups.js';
 import { traceDecision, traceParser } from '../../runtime/trace-helpers.js';
 import { FileOverlay } from '../../tools/file-overlay.js';
-import type { ShipyardStateType, ReviewDecision, LLMMessage } from '../state.js';
+import { RETRYABLE_BLOCKER_CODES, type ShipyardStateType, type ReviewDecision, type LLMMessage } from '../state.js';
 
 const REVIEW_SYSTEM = `You are the Shipyard quality reviewer (Opus). You evaluate the work done by the coding agent.
 
@@ -60,23 +64,26 @@ function recentAssistantText(state: ShipyardStateType): string {
     .filter((m) => m.role === 'assistant')
     .slice(-4)
     .map((m) => m.content)
-    .join('\n')
-    .toLowerCase();
+    .join('\n');
 }
 
 function looksLikeValidatedNoOp(state: ShipyardStateType): boolean {
   if (!state.verificationResult?.passed) return false;
   if (state.fileEdits.length !== 0) return false;
+  const assistantText = recentAssistantText(state);
+  if (hasNoEditJustification(assistantText)) return true;
   const corpus = [
     state.instruction,
     ...state.steps.map((s) => s.description),
-    recentAssistantText(state),
+    assistantText,
   ]
     .join('\n')
     .toLowerCase();
   return (
     corpus.includes('no changes needed') ||
     corpus.includes('no changes are needed') ||
+    corpus.includes('no changes were needed') ||
+    corpus.includes('no edits were needed') ||
     corpus.includes('already contains') ||
     corpus.includes('already exists') ||
     corpus.includes('no edit is needed')
@@ -114,6 +121,82 @@ function looksLikeMissingExplicitTarget(
   ].some((needle) => corpus.includes(needle));
 }
 
+function enrichExecutionIssueFeedback(message: string): string {
+  const guidance = buildDeterministicBlockerGuidance(message);
+  if (!guidance) return message;
+  return `${message}\n\nRoot cause guidance:\n${guidance}`;
+}
+
+const CASCADE_REPLAN_RETRY_LIMIT = 1;
+const VERIFICATION_RETRY_OFFLOAD_LIMIT = 3;
+
+/**
+ * Text-based fallback for retryable watchdog detection (when blockerCode
+ * is not set — e.g. issues created before the blockerCode field existed).
+ */
+function isRetryableWatchdogIssueByText(corpus: string): boolean {
+  return (
+    corpus.includes('old_string matched') ||
+    corpus.includes('provide more surrounding context') ||
+    corpus.includes('old_string and new_string are identical') ||
+    corpus.includes('cannot edit directory as file') ||
+    corpus.includes('cannot read directory as file') ||
+    corpus.includes('old_string cannot be empty') ||
+    corpus.includes('step_complete without any successful edit')
+  );
+}
+
+/**
+ * Determine if a watchdog issue is retryable.
+ * Primary: structured blockerCode (programmatic, reliable).
+ * Fallback: text matching on corpus (backward compat).
+ */
+function isRetryableWatchdog(issue: NonNullable<ShipyardStateType['executionIssue']>): boolean {
+  // Primary: use structured blockerCode when available
+  if (issue.blockerCode && RETRYABLE_BLOCKER_CODES.has(issue.blockerCode)) {
+    return true;
+  }
+  // Fallback: text-based detection for backward compat
+  if (issue.kind === 'watchdog') {
+    const corpus = `${issue.kind} ${issue.message} ${issue.nextAction ?? ''}`.toLowerCase();
+    return isRetryableWatchdogIssueByText(corpus);
+  }
+  return false;
+}
+
+function shouldOffloadExecutionIssue(state: ShipyardStateType): boolean {
+  const issue = state.executionIssue;
+  if (!issue?.recoverable) return false;
+
+  // Retryable watchdogs should NOT offload — they can recover with better context
+  if (issue.kind === 'watchdog' && isRetryableWatchdog(issue)) {
+    return false;
+  }
+
+  const corpus = `${issue.kind} ${issue.message} ${issue.nextAction ?? ''}`.toLowerCase();
+  return (
+    issue.kind === 'watchdog' ||
+    corpus.includes('repeated identical tool call loop') ||
+    corpus.includes('discovery tool calls before first edit exceeded') ||
+    corpus.includes('first edit deadline exceeded') ||
+    corpus.includes('not a chat model') ||
+    corpus.includes('not supported in v1/chat/completions') ||
+    corpus.includes('unauthorized') ||
+    corpus.includes('forbidden')
+  );
+}
+
+function retryPhaseForExecutionIssue(
+  state: ShipyardStateType,
+): 'planning' | 'executing' {
+  const issue = state.executionIssue;
+  if (!issue?.recoverable) return 'planning';
+  if (issue.kind === 'watchdog' && isRetryableWatchdog(issue)) {
+    return 'executing';
+  }
+  return 'planning';
+}
+
 export async function reviewNode(
   state: ShipyardStateType,
 ): Promise<Partial<ShipyardStateType>> {
@@ -132,14 +215,22 @@ export async function reviewNode(
     state.fileEdits.some((edit) =>
       pathMatchesAny(edit.file_path, constraints.explicitFiles),
     );
-  const rollbackOverlays = async (): Promise<void> => {
-    if (!state.fileOverlaySnapshots) return;
+  const rollbackOverlays = async (): Promise<{ success: boolean; error?: string }> => {
+    if (!state.fileOverlaySnapshots) return { success: true };
     try {
       const overlay = FileOverlay.deserialize(state.fileOverlaySnapshots);
       await overlay.rollbackAll();
-    } catch { /* best-effort */ }
+      return { success: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[review] rollbackOverlays failed for run ${state.runId}: ${msg}`);
+      return { success: false, error: msg };
+    }
   };
-  const deterministicRetry = async (feedback: string): Promise<Partial<ShipyardStateType>> => {
+  const deterministicRetry = async (
+    feedback: string,
+    options?: { phase?: 'planning' | 'executing' },
+  ): Promise<Partial<ShipyardStateType>> => {
     const wouldExceed = state.retryCount >= state.maxRetries - 1;
     if (wouldExceed) {
       return {
@@ -154,7 +245,10 @@ export async function reviewNode(
       };
     }
     // Rollback partial edits before re-planning (mirrors error-recovery.ts:33)
-    await rollbackOverlays();
+    const rollbackResult = await rollbackOverlays();
+    const rollbackWarning = rollbackResult.success
+      ? ''
+      : `\n⚠ Rollback failed (${rollbackResult.error}). Working tree may contain stale edits from prior attempt.`;
 
     // Decide retry phase: if verification found errors but we have steps, keep
     // the plan and re-execute (don't waste a retry re-planning from scratch).
@@ -162,17 +256,33 @@ export async function reviewNode(
       typeof state.verificationResult?.newErrorCount === 'number' &&
       state.verificationResult.newErrorCount > 0 &&
       state.steps.length > 0;
-    const retryPhase = isVerificationRetry ? 'executing' as const : 'planning' as const;
+    const retryPhase = options?.phase ?? (isVerificationRetry ? 'executing' as const : 'planning' as const);
 
     return {
       phase: retryPhase,
       reviewDecision: 'retry',
-      reviewFeedback: feedback,
+      reviewFeedback: feedback + rollbackWarning,
       messages: [
         ...state.messages,
         { role: 'assistant', content: `[Review] retry (${retryPhase}): ${feedback}` },
       ],
       retryCount: state.retryCount + 1,
+      executionIssue: null,
+      fileOverlaySnapshots: null,
+      modelHint: 'opus',
+    };
+  };
+  const deterministicEscalate = async (feedback: string): Promise<Partial<ShipyardStateType>> => {
+    await rollbackOverlays();
+    return {
+      phase: 'error',
+      reviewDecision: 'escalate',
+      reviewFeedback: feedback,
+      error: feedback,
+      messages: [
+        ...state.messages,
+        { role: 'assistant', content: `[Review] escalate: ${feedback}` },
+      ],
       executionIssue: null,
       fileOverlaySnapshots: null,
       modelHint: 'opus',
@@ -203,37 +313,62 @@ export async function reviewNode(
   }, async (): Promise<Partial<ShipyardStateType> | null> => {
     // ExecutionIssue from execute node (single signal source for soft failures)
     if (state.executionIssue?.recoverable) {
-      return deterministicRetry(
+      const feedback = enrichExecutionIssueFeedback(
         `Execution issue (${state.executionIssue.kind}): ${state.executionIssue.message}`,
       );
+      if (shouldOffloadExecutionIssue(state)) {
+        return deterministicEscalate(
+          `Execution stalled without a viable auto-recovery path. Offloading instead of burning more retries. ${feedback}`,
+        );
+      }
+      return deterministicRetry(feedback, {
+        phase: retryPhaseForExecutionIssue(state),
+      });
     }
 
     // New errors introduced by this run (baseline-diffed)
     const newErrCount = state.verificationResult?.newErrorCount;
+
+    // Build truncated typecheck snippet for retry feedback so the executor
+    // knows exactly which files/lines to fix instead of re-discovering errors.
+    const typecheckSnippet = state.verificationResult?.typecheck_output
+      ? `\n\nTypecheck errors:\n${state.verificationResult.typecheck_output.slice(0, 2000)}`
+      : '';
 
     // Early bail: too many new errors → don't waste retries, escalate immediately.
     // Threshold is generous (80) because a single DB migration or setup failure can
     // cascade across all test suites — inflating newErrorCount well beyond the actual
     // number of root-cause issues.
     if (typeof newErrCount === 'number' && newErrCount > 80) {
-      await rollbackOverlays();
-      return {
-        phase: 'error',
-        reviewDecision: 'escalate',
-        reviewFeedback: `Too many errors (${newErrCount}) introduced. Escalating instead of retrying.`,
-        messages: [
-          ...state.messages,
-          { role: 'assistant', content: `[Review] escalate: Too many errors (${newErrCount}) introduced. Escalating instead of retrying.` },
-        ],
-        executionIssue: null,
-        fileOverlaySnapshots: null,
-        modelHint: 'opus',
-      };
+      return deterministicEscalate(
+        `Too many errors (${newErrCount}) introduced. Escalating instead of retrying.${typecheckSnippet}`,
+      );
+    }
+
+    if (typeof newErrCount === 'number' && newErrCount > 50) {
+      if (state.retryCount >= CASCADE_REPLAN_RETRY_LIMIT) {
+        return deterministicEscalate(
+          `Verification still shows ${newErrCount} new errors after a cascade recovery attempt. Offloading instead of looping.${typecheckSnippet}`,
+        );
+      }
+      return deterministicRetry(
+        `Verification found ${newErrCount} new error(s) introduced by this run. Treat this as a cascade: narrow scope, rollback broad edits, and retry a smaller repair.${typecheckSnippet}`,
+        { phase: 'planning' },
+      );
     }
 
     if (typeof newErrCount === 'number' && newErrCount > 0) {
+      const verificationRetryCap = Math.min(
+        VERIFICATION_RETRY_OFFLOAD_LIMIT,
+        Math.max(0, state.maxRetries - 1),
+      );
+      if (state.retryCount >= verificationRetryCap) {
+        return deterministicEscalate(
+          `Verification remains stuck with ${newErrCount} new error(s) after repeated repair attempts. Offloading instead of consuming the remaining retry budget.${typecheckSnippet}`,
+        );
+      }
       return deterministicRetry(
-        `Verification found ${newErrCount} new error(s) introduced by this run; fix before completion.`,
+        `Verification found ${newErrCount} new error(s) introduced by this run; fix before completion.${typecheckSnippet}`,
       );
     }
 
@@ -287,6 +422,7 @@ export async function reviewNode(
       return {
         phase: 'executing',
         currentStepIndex: state.currentStepIndex + 1,
+        currentStepEditBaseline: state.fileEdits.length,
         reviewDecision: 'continue',
         reviewFeedback: null,
         modelHint: 'sonnet',
@@ -478,6 +614,10 @@ export async function reviewNode(
       decision === 'continue'
         ? state.currentStepIndex + 1
         : state.currentStepIndex,
+    currentStepEditBaseline:
+      decision === 'continue'
+        ? state.fileEdits.length
+        : undefined,
     fileOverlaySnapshots: decision === 'retry' ? null : undefined,
     executionIssue: decision === 'retry' ? null : undefined,
     modelHint: decision === 'continue' ? 'sonnet' : 'opus',

@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ship Rebuild Run Audit</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f4ec;
+      --panel: #fffdf8;
+      --panel-2: #f3ede0;
+      --text: #1f2937;
+      --muted: #5f6b7a;
+      --line: #d9d1c2;
+      --accent: #0f6d8c;
+      --warn: #b7791f;
+      --bad: #c24157;
+      --good: #177245;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top right, rgba(15, 109, 140, 0.09), transparent 28%),
+        radial-gradient(circle at top left, rgba(183, 121, 31, 0.08), transparent 24%),
+        var(--bg);
+      color: var(--text);
+      font: 14px/1.5 "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+    }
+    .wrap {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 32px 24px 72px;
+    }
+    h1, h2 {
+      margin: 0 0 12px;
+      letter-spacing: 0.02em;
+    }
+    h1 { font-size: 32px; }
+    h2 { font-size: 18px; color: var(--accent); margin-top: 28px; }
+    p, li { color: var(--muted); }
+    code {
+      font: 12px/1.45 "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+      color: var(--text);
+      background: rgba(15, 23, 42, 0.05);
+      padding: 0.12rem 0.35rem;
+      border-radius: 6px;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.94), rgba(247,244,236,0.98));
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px 20px;
+      margin-top: 18px;
+      box-shadow: 0 18px 40px rgba(84, 70, 35, 0.08);
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .meta .card { margin-top: 0; }
+    .k { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .v { display: block; font-size: 20px; font-weight: 700; margin-top: 8px; }
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin: 18px 0 10px;
+    }
+    button {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 9px 14px;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover { border-color: var(--accent); }
+    .hint { color: var(--muted); font-size: 12px; }
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255,255,255,0.65);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1220px;
+    }
+    th, td {
+      padding: 14px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: rgba(255,253,248,0.97);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+    }
+    tr:hover td { background: rgba(15, 109, 140, 0.05); }
+    .status-bad, .status-failed { color: var(--bad); font-weight: 700; }
+    .status-mixed { color: var(--warn); font-weight: 700; }
+    .status-cancelled { color: var(--warn); font-weight: 700; }
+    .status-noop { color: var(--bad); font-weight: 700; }
+    .status-blocker { color: var(--bad); font-weight: 700; }
+    details {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.55);
+    }
+    details[open] { background: rgba(15, 109, 140, 0.04); }
+    summary { cursor: pointer; color: var(--text); font-weight: 700; }
+    .subtable { margin-top: 10px; }
+    .subtable table { min-width: 0; }
+    .small { font-size: 12px; color: var(--muted); }
+    .mono { font: 12px/1.45 "IBM Plex Mono", "SFMono-Regular", Menlo, monospace; }
+    .mono-wrap { font: 12px/1.45 "IBM Plex Mono", "SFMono-Regular", Menlo, monospace; word-break: break-all; white-space: normal; }
+    .badge {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 9px;
+      margin: 0 6px 6px 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    @media (max-width: 980px) {
+      .meta { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 640px) {
+      .meta { grid-template-columns: 1fr; }
+      .wrap { padding: 24px 14px 56px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Ship Rebuild Run Audit</h1>
+    <p>Folder lineage view. Newest first. Click column headers to sort. Expand <strong>Trace Chain</strong> to see related runs for the same target folder.</p>
+    <div class="meta">
+      <div class="card"><span class="k">What this is</span><span class="v">Grouped by target folder</span></div>
+      <div class="card"><span class="k">What this is not</span><span class="v">Single success trace</span></div>
+      <div class="card"><span class="k">Real ship compare</span><span class="v mono">/Users/maxpetrusenko/Desktop/Gauntlet/ship-refactored</span></div>
+      <div class="card"><span class="k">Grouping rule</span><span class="v">Direct build only</span></div>
+    </div>
+    <div class="card">
+      <h2>Read Me First</h2>
+      <p>Earlier output looked inconsistent because one later no-op run mentioned several <code>ship-rebuild*</code> folders inside plan text. That does not mean it directly built them. This page groups runs only when the target folder was the actual rebuild destination for that run.</p>
+      <p>Plan that caused multi-run spread: `docs/plans/2026-03-26-final-delivery-push.md:7`, `docs/plans/2026-03-26-final-delivery-push.md:79`, `docs/plans/2026-03-26-final-delivery-push.md:118`.</p>
+      <div>
+        <span class="badge">newest first</span>
+        <span class="badge">trace URLs included</span>
+        <span class="badge">related traces nested</span>
+        <span class="badge">stop reason preserved</span>
+        <span class="badge">edit tools = edit_file + write_file</span>
+        <span class="badge">lineage columns ready for future runs</span>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button id="sortRecent">Sort: recent</button>
+      <button id="sortTokens">Sort: total tokens</button>
+      <button id="sortTime">Sort: total time</button>
+      <span class="hint">Default sort: latest run descending.</span>
+    </div>
+    <div class="table-wrap card">
+      <table id="auditTable">
+        <thead>
+          <tr>
+            <th data-key="latestStart">Latest Start</th>
+            <th data-key="outputFolder">Output Folder</th>
+            <th data-key="folder">Run Group</th>
+            <th data-key="runCount">Run Count</th>
+            <th data-key="totalMinutes">Time</th>
+            <th data-key="totalTokens">Tokens</th>
+            <th data-key="toolCalls">Tools</th>
+            <th data-key="editTools">Edit Tools</th>
+            <th data-key="campaignId">Campaign</th>
+            <th data-key="rootRunId">Root Run</th>
+            <th data-key="parentRunId">Parent Run</th>
+            <th data-key="status">Status</th>
+            <th data-key="latestTrace">Latest Trace</th>
+            <th data-key="chain">Trace Chain</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Evidence</h2>
+      <p>Bogus no-op completion: <code>results/b3dbbeac-aab0-42b4-ab94-e328c728c4d8.json:865</code>, <code>results/b3dbbeac-aab0-42b4-ab94-e328c728c4d8.json:937</code>, <code>results/b3dbbeac-aab0-42b4-ab94-e328c728c4d8.json:945</code>.</p>
+      <p>Pre-fix chat-model blocker: <code>results/36d13a37-e21b-4f61-af04-aab230e445b9.json:13</code>, <code>results/36d13a37-e21b-4f61-af04-aab230e445b9.json:277</code>.</p>
+      <p>Seed-clone + resume-loop architecture: <code>docs/plans/2026-03-26-final-delivery-push.md:7</code>, <code>docs/plans/2026-03-26-final-delivery-push.md:38</code>, <code>docs/plans/2026-03-26-final-delivery-push.md:79</code>, <code>docs/plans/2026-03-26-final-delivery-push.md:118</code>.</p>
+      <p>Tool taxonomy in these traces: no separate <code>create_file</code> tool showed up. Create-like behavior came from <code>write_file</code>; in-place edits came from <code>edit_file</code>.</p>
+      <p>Lineage columns use the new run metadata: <code>campaignId</code>, <code>rootRunId</code>, <code>parentRunId</code>. Legacy runs show <code>—</code> because they predate the fix.</p>
+    </div>
+  </div>
+  <script>
+    const rows = [
+      {
+        latestStart: '2026-03-27T17:31:21.974Z',
+        outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild',
+        folder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild',
+        runCount: 1,
+        totalMinutes: 5.21,
+        totalTokens: 1166724,
+        toolCalls: 72,
+        editTools: 0,
+        campaignId: null,
+        rootRunId: null,
+        parentRunId: null,
+        status: 'noop',
+        statusLabel: 'False completion',
+        latestTrace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/b3dbbeac-aab0-42b4-ab94-e328c728c4d8',
+        note: 'Run claimed completion without real file edits; later plan text mentioned many folders and polluted earlier grep results.',
+        runs: [
+          {
+            id: 'b3dbbeac-aab0-42b4-ab94-e328c728c4d8',
+            outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild',
+            startedAt: '2026-03-27T17:31:21.974Z',
+            minutes: 5.21,
+            input: 1104171,
+            output: 62553,
+            total: 1166724,
+            stop: 'Bogus no-op completion',
+            trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/b3dbbeac-aab0-42b4-ab94-e328c728c4d8',
+            evidence: 'results/b3dbbeac-aab0-42b4-ab94-e328c728c4d8.json:865, :937, :945'
+          }
+        ]
+      },
+      {
+        latestStart: '2026-03-27T05:32:30.231Z',
+        outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c',
+        folder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c',
+        runCount: 11,
+        totalMinutes: 54.11,
+        totalTokens: 20915574,
+        toolCalls: 1311,
+        editTools: 124,
+        campaignId: null,
+        rootRunId: null,
+        parentRunId: null,
+        status: 'mixed',
+        statusLabel: 'Retry chain',
+        latestTrace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/8d8aa0da-4019-42b0-aacb-5584f27a769f',
+        note: 'Same target folder across 11 retries. Stops include verify regressions, coordinator conflict, guardrail type explosions, and final out-of-scope edit guardrail.',
+        runs: [
+          { id: '8d8aa0da-4019-42b0-aacb-5584f27a769f', toolCalls: 144, editTools: 3, campaignId: null, rootRunId: null, parentRunId: null, outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c', startedAt: '2026-03-27T05:32:30.231Z', minutes: 3.12, input: 1013336, output: 14428, total: 1027764, stop: 'Out-of-scope edits in upload services', trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/8d8aa0da-4019-42b0-aacb-5584f27a769f', evidence: 'results/8d8aa0da-4019-42b0-aacb-5584f27a769f.json:2' },
+          { id: 'dcea0941-a39b-4f9c-b6fa-fc093eb55906', toolCalls: 110, editTools: 3, campaignId: null, rootRunId: null, parentRunId: null, outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c', startedAt: '2026-03-27T05:16:20.753Z', minutes: 4.75, input: 1679725, output: 27047, total: 1706772, stop: 'Verification found 4 new errors', trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/dcea0941-a39b-4f9c-b6fa-fc093eb55906', evidence: 'results/dcea0941-a39b-4f9c-b6fa-fc093eb55906.json:2' },
+          { id: '6a9c4969-6db6-4f5f-95e8-6d9917638186', toolCalls: 125, editTools: 6, campaignId: null, rootRunId: null, parentRunId: null, outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c', startedAt: '2026-03-27T05:10:21.006Z', minutes: 3.98, input: 1569842, output: 20156, total: 1589998, stop: 'Verification found 7 new errors', trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/6a9c4969-6db6-4f5f-95e8-6d9917638186', evidence: 'results/6a9c4969-6db6-4f5f-95e8-6d9917638186.json:2' },
+          { id: '593448b4-3983-4c0a-b51c-9b41ba0b66ac', toolCalls: 130, editTools: 8, campaignId: null, rootRunId: null, parentRunId: null, outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c', startedAt: '2026-03-27T05:04:38.258Z', minutes: 4.05, input: 1335143, output: 20339, total: 1355482, stop: 'Guardrail: 744 new type errors', trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/593448b4-3983-4c0a-b51c-9b41ba0b66ac', evidence: 'results/593448b4-3983-4c0a-b51c-9b41ba0b66ac.json:2' },
+          { id: '19caf7a7-dd7c-4e9a-9946-6ab977c010b3', toolCalls: 103, editTools: 3, campaignId: null, rootRunId: null, parentRunId: null, outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c', startedAt: '2026-03-27T04:56:35.244Z', minutes: 3.11, input: 1106999, output: 14029, total: 1121028, stop: 'Guardrail: 741 new type errors', trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/19caf7a7-dd7c-4e9a-9946-6ab977c010b3', evidence: 'results/19caf7a7-dd7c-4e9a-9946-6ab977c010b3.json:2' },
+          { id: '7eb17184-ca62-41c7-ba4d-f3ce9bbf5e29', toolCalls: 75, editTools: 1, campaignId: null, rootRunId: null, parentRunId: null, outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c', startedAt: '2026-03-27T04:31:42.484Z', minutes: 2.80, input: 1101303, output: 10044, total: 1111347, stop: 'Guardrail: 741 new type errors', trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/7eb17184-ca62-41c7-ba4d-f3ce9bbf5e29', evidence: 'results/7eb17184-ca62-41c7-ba4d-f3ce9bbf5e29.json:2' },
+          { id: '0ebfafa6-5314-4a0d-aba5-86d6eb14e45f', toolCalls: 88, editTools: 0, campaignId: null, rootRunId: null, parentRunId: null, outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c', startedAt: '2026-03-27T04:25:54.001Z', minutes: 3.06, input: 1331810, output: 16166, total: 1347976, stop: 'Guardrail: 734 new type errors', trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/0ebfafa6-5314-4a0d-aba5-86d6eb14e45f', evidence: 'results/0ebfafa6-5314-4a0d-aba5-86d6eb14e45f.json:2' },
+          { id: '8febad5f-57ca-486c-8cbe-fe99c9b962d5', toolCalls: 76, editTools: 17, campaignId: null, rootRunId: null, parentRunId: null, outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c', startedAt: '2026-03-27T04:04:19.923Z', minutes: 7.23, input: 2572312, output: 25897, total: 2598209, stop: 'Verification found 1 new error', trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/8febad5f-57ca-486c-8cbe-fe99c9b962d5', evidence: 'results/8febad5f-57ca-486c-8cbe-fe99c9b962d5.json:2' },
+          { id: '9bf2a5ed-87fd-4900-b6f1-c19637909554', toolCalls: 77, editTools: 20, campaignId: null, rootRunId: null, parentRunId: null, outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c', startedAt: '2026-03-27T03:55:02.683Z', minutes: 4.25, input: 1424071, output: 22699, total: 1446770, stop: 'User cancelled', trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/9bf2a5ed-87fd-4900-b6f1-c19637909554', evidence: 'results/9bf2a5ed-87fd-4900-b6f1-c19637909554.json:2' },
+          { id: 'a6ea2992-ae30-4f7f-a846-f400c9545b0f', toolCalls: 236, editTools: 62, campaignId: null, rootRunId: null, parentRunId: null, outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c', startedAt: '2026-03-27T01:02:52.555Z', minutes: 12.40, input: 5863039, output: 62243, total: 5925282, stop: 'Coordinator merge conflict in api/src/services/audit.ts', trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/a6ea2992-ae30-4f7f-a846-f400c9545b0f', evidence: 'results/a6ea2992-ae30-4f7f-a846-f400c9545b0f.json:2' },
+          { id: 'bc0428f8-eeaa-4ba7-b97e-949428131763', toolCalls: 147, editTools: 1, campaignId: null, rootRunId: null, parentRunId: null, outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c', startedAt: '2026-03-27T00:56:01.864Z', minutes: 5.35, input: 1647235, output: 37711, total: 1684946, stop: 'Verification found 4 new errors', trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/bc0428f8-eeaa-4ba7-b97e-949428131763', evidence: 'results/bc0428f8-eeaa-4ba7-b97e-949428131763.json:2' }
+        ]
+      },
+      {
+        latestStart: '2026-03-27T00:42:10.877Z',
+        outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260326',
+        folder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260326',
+        runCount: 1,
+        totalMinutes: 5.23,
+        totalTokens: 2471023,
+        toolCalls: 193,
+        editTools: 29,
+        campaignId: null,
+        rootRunId: null,
+        parentRunId: null,
+        status: 'failed',
+        statusLabel: 'Transport error',
+        latestTrace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/620747f9-4b6a-4acd-95a7-f4a387c138a1',
+        note: 'Run failed before real rebuild progress due invalid JSON request body.',
+        runs: [
+          {
+            id: '620747f9-4b6a-4acd-95a7-f4a387c138a1',
+            outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260326',
+            startedAt: '2026-03-27T00:42:10.877Z',
+            minutes: 5.23,
+            input: 2442061,
+            output: 28962,
+            total: 2471023,
+            stop: '400 invalid JSON request body',
+            trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/620747f9-4b6a-4acd-95a7-f4a387c138a1',
+            evidence: 'results/620747f9-4b6a-4acd-95a7-f4a387c138a1.json:2'
+          }
+        ]
+      },
+      {
+        latestStart: '2026-03-27T00:34:25.993Z',
+        outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-final',
+        folder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-final',
+        runCount: 1,
+        totalMinutes: 6.79,
+        totalTokens: 3500934,
+        toolCalls: 184,
+        editTools: 24,
+        campaignId: null,
+        rootRunId: null,
+        parentRunId: null,
+        status: 'cancelled',
+        statusLabel: 'Partial start only',
+        latestTrace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/387d2352-59bc-4205-80cd-5fa687e3dc5c',
+        note: 'This target was first created as a fresh clone of ship-refactored, then the traced run began targeted edits and was cancelled by user.',
+        runs: [
+          {
+            id: '387d2352-59bc-4205-80cd-5fa687e3dc5c',
+            outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-final',
+            startedAt: '2026-03-27T00:34:25.993Z',
+            minutes: 6.79,
+            input: 3455744,
+            output: 45190,
+            total: 3500934,
+            stop: 'User cancelled',
+            trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/387d2352-59bc-4205-80cd-5fa687e3dc5c',
+            evidence: 'results/387d2352-59bc-4205-80cd-5fa687e3dc5c.json:1'
+          }
+        ]
+      },
+      {
+        latestStart: '2026-03-27T17:07:39.664Z',
+        outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild',
+        folder: 'Root-cause blocker before valid rebuild routing',
+        runCount: 1,
+        totalMinutes: 29.46,
+        totalTokens: 14986415,
+        toolCalls: 0,
+        editTools: 0,
+        campaignId: null,
+        rootRunId: null,
+        parentRunId: null,
+        status: 'blocker',
+        statusLabel: 'Pre-fix blocker',
+        latestTrace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/36d13a37-e21b-4f61-af04-aab230e445b9',
+        note: 'Not a clean rebuild folder result. Included because it explains the original 404 and why later retries existed at all.',
+        runs: [
+          {
+            id: '36d13a37-e21b-4f61-af04-aab230e445b9',
+            outputFolder: '/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild',
+            startedAt: '2026-03-27T17:07:39.664Z',
+            minutes: 29.46,
+            input: 14771199,
+            output: 215216,
+            total: 14986415,
+            stop: '404 not a chat model',
+            trace: 'https://smith.langchain.com/o/default/projects/p/ship-agent/r/36d13a37-e21b-4f61-af04-aab230e445b9',
+            evidence: 'results/36d13a37-e21b-4f61-af04-aab230e445b9.json:13, :277'
+          }
+        ]
+      }
+    ];
+    const tbody = document.querySelector('#auditTable tbody');
+    let currentSort = { key: 'latestStart', dir: 'desc' };
+    function fmtNumber(value) {
+      return value.toLocaleString('en-US');
+    }
+    function fmtDate(value) {
+      return new Date(value).toLocaleString('en-US', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false, timeZone: 'UTC'
+      }) + ' UTC';
+    }
+    function fmtMinutes(value) {
+      return value.toFixed(2) + 'm';
+    }
+    function fmtId(value) {
+      return value ? `<span class="mono-wrap">${value}</span>` : '—';
+    }
+    function compare(a, b, key, dir) {
+      const left = a[key];
+      const right = b[key];
+      const factor = dir === 'asc' ? 1 : -1;
+      if (key === 'folder' || key === 'outputFolder' || key === 'status' || key === 'campaignId' || key === 'rootRunId' || key === 'parentRunId') return String(left ?? '').localeCompare(String(right ?? '')) * factor;
+      if (key === 'latestTrace' || key === 'chain') return 0;
+      if (key === 'latestStart') return (new Date(left) - new Date(right)) * factor;
+      return (left - right) * factor;
+    }
+    function render() {
+      const sorted = [...rows].sort((a, b) => compare(a, b, currentSort.key, currentSort.dir));
+      tbody.innerHTML = sorted.map(row => `
+        <tr>
+          <td>${fmtDate(row.latestStart)}</td>
+          <td><div class="mono-wrap">${row.outputFolder}</div></td>
+          <td>
+            <div class="mono">${row.folder}</div>
+            <div class="small">${row.note}</div>
+          </td>
+          <td>${row.runCount}</td>
+          <td>${fmtMinutes(row.totalMinutes)}</td>
+          <td>${fmtNumber(row.totalTokens)}</td>
+          <td>${fmtNumber(row.toolCalls)}</td>
+          <td>${fmtNumber(row.editTools)}</td>
+          <td>${fmtId(row.campaignId)}</td>
+          <td>${fmtId(row.rootRunId)}</td>
+          <td>${fmtId(row.parentRunId)}</td>
+          <td><span class="status-${row.status}">${row.statusLabel}</span></td>
+          <td><a class="mono-wrap" href="${row.latestTrace}" target="_blank" rel="noreferrer">${row.latestTrace}</a></td>
+          <td>
+            <details>
+              <summary>${row.runCount} ${row.runCount === 1 ? 'trace' : 'related traces'}</summary>
+              <div class="subtable">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Run</th>
+                      <th>Output Folder</th>
+                      <th>Started</th>
+                      <th>Time</th>
+                      <th>Tokens</th>
+                      <th>Tools</th>
+                      <th>Edit Tools</th>
+                      <th>Campaign</th>
+                      <th>Root Run</th>
+                      <th>Parent Run</th>
+                      <th>Stop</th>
+                      <th>Trace</th>
+                      <th>Evidence</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${row.runs.map(run => `
+                      <tr>
+                        <td class="mono">${run.id}</td>
+                        <td class="mono-wrap">${run.outputFolder}</td>
+                        <td>${fmtDate(run.startedAt)}</td>
+                        <td>${fmtMinutes(run.minutes)}</td>
+                        <td>${fmtNumber(run.total)}<div class="small">${fmtNumber(run.input)} in / ${fmtNumber(run.output)} out</div></td>
+                        <td>${fmtNumber(run.toolCalls)}</td>
+                        <td>${fmtNumber(run.editTools)}</td>
+                        <td>${fmtId(run.campaignId)}</td>
+                        <td>${fmtId(run.rootRunId)}</td>
+                        <td>${fmtId(run.parentRunId)}</td>
+                        <td>${run.stop}</td>
+                        <td><a class="mono-wrap" href="${run.trace}" target="_blank" rel="noreferrer">${run.trace}</a></td>
+                        <td class="mono small">${run.evidence}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </td>
+        </tr>
+      `).join('');
+    }
+    document.querySelectorAll('th[data-key]').forEach(th => {
+      th.addEventListener('click', () => {
+        const key = th.dataset.key;
+        if (key === 'latestTrace' || key === 'chain') return;
+        currentSort = {
+          key,
+          dir: currentSort.key === key && currentSort.dir === 'desc' ? 'asc' : 'desc'
+        };
+        render();
+      });
+    });
+    document.getElementById('sortRecent').addEventListener('click', () => {
+      currentSort = { key: 'latestStart', dir: 'desc' };
+      render();
+    });
+    document.getElementById('sortTokens').addEventListener('click', () => {
+      currentSort = { key: 'totalTokens', dir: 'desc' };
+      render();
+    });
+    document.getElementById('sortTime').addEventListener('click', () => {
+      currentSort = { key: 'totalMinutes', dir: 'desc' };
+      render();
+    });
+    render();
+  </script>
+</body>
+</html>

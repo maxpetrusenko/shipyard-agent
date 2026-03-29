@@ -9,6 +9,36 @@ sanitize_int() {
   echo "${val:-0}"
 }
 
+sum_process_tree_rss_kb() {
+  local root_pid="${1:-}"
+  [ -n "$root_pid" ] || { echo 0; return; }
+
+  local total=0
+  local queue=("$root_pid")
+  local seen=" "
+
+  while [ ${#queue[@]} -gt 0 ]; do
+    local pid="${queue[0]}"
+    queue=("${queue[@]:1}")
+    case "$seen" in
+      *" ${pid} "*) continue ;;
+    esac
+    seen+="${pid} "
+
+    local rss
+    rss=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    if [[ "$rss" =~ ^[0-9]+$ ]]; then
+      total=$((total + rss))
+    fi
+
+    while IFS= read -r child_pid; do
+      [ -n "$child_pid" ] && queue+=("$child_pid")
+    done < <(pgrep -P "$pid" 2>/dev/null || true)
+  done
+
+  echo "$total"
+}
+
 # Usage: ./scripts/bench.sh <instruction-name>
 # Example: ./scripts/bench.sh 01-strict-typescript
 
@@ -26,6 +56,8 @@ fi
 
 BENCH_NAME="$1"
 INSTRUCTION_FILE="${AGENT_DIR}/instructions/${BENCH_NAME}.md"
+BENCHMARK_PROJECT_ID="benchmark:bench"
+BENCHMARK_PROJECT_LABEL="Benchmark Suite"
 
 if [ ! -f "$INSTRUCTION_FILE" ]; then
   echo "Error: instruction file not found: $INSTRUCTION_FILE"
@@ -35,7 +67,7 @@ fi
 INSTRUCTION=$(cat "$INSTRUCTION_FILE")
 TIMESTAMP=$(date -u +"%Y%m%dT%H%M%S")
 BENCH_ID="bench-${BENCH_NAME}-${TIMESTAMP}"
-RESULTS_DIR="${AGENT_DIR}/results"
+RESULTS_DIR="${SHIPYARD_BENCHMARK_RESULTS_DIR:-${SHIPYARD_RESULTS_DIR:-${AGENT_DIR}/results/benchmarks}}"
 RESULT_FILE="${RESULTS_DIR}/${BENCH_ID}.json"
 
 mkdir -p "$RESULTS_DIR"
@@ -75,12 +107,17 @@ cd "$AGENT_DIR"
 set -a
 source .env 2>/dev/null || true
 SHIPYARD_WORK_DIR="$TARGET"
+SHIPYARD_RESULTS_DIR="$RESULTS_DIR"
+SHIPYARD_BENCHMARK_RESULTS_DIR="$RESULTS_DIR"
 export SHIPYARD_WORK_DIR
+export SHIPYARD_RESULTS_DIR
+export SHIPYARD_BENCHMARK_RESULTS_DIR
 set +a
 
 npx tsx src/index.ts &
 SERVER_PID=$!
 trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+PEAK_RSS_KB=0
 
 # Step 4: Wait for health
 echo "[4/8] Waiting for server health..."
@@ -112,8 +149,11 @@ if [ -n "$CLAUDE_MD" ]; then
   REQUEST_BODY=$(jq -n \
     --arg instruction "$INSTRUCTION" \
     --argjson claudemd "$CLAUDE_MD" \
+    --arg projectId "$BENCHMARK_PROJECT_ID" \
+    --arg projectLabel "$BENCHMARK_PROJECT_LABEL" \
     '{
       instruction: $instruction,
+      projectContext: { projectId: $projectId, projectLabel: $projectLabel },
       contexts: [{
         label: "CLAUDE.md",
         content: $claudemd,
@@ -123,7 +163,9 @@ if [ -n "$CLAUDE_MD" ]; then
 else
   REQUEST_BODY=$(jq -n \
     --arg instruction "$INSTRUCTION" \
-    '{ instruction: $instruction }')
+    --arg projectId "$BENCHMARK_PROJECT_ID" \
+    --arg projectLabel "$BENCHMARK_PROJECT_LABEL" \
+    '{ instruction: $instruction, projectContext: { projectId: $projectId, projectLabel: $projectLabel } }')
 fi
 
 START_TIME=$(date +%s)
@@ -142,8 +184,17 @@ while [ "$PHASE" != "done" ] && [ "$PHASE" != "error" ]; do
   sleep 5
   RUN_RESPONSE=$(curl -sf "${BASE_URL}/runs/${RUN_ID}" || echo '{"phase":"polling"}')
   PHASE=$(echo "$RUN_RESPONSE" | jq -r '.phase // "polling"')
+  CURRENT_RSS_KB=$(sum_process_tree_rss_kb "$SERVER_PID")
+  if [ "$CURRENT_RSS_KB" -gt "$PEAK_RSS_KB" ]; then
+    PEAK_RSS_KB="$CURRENT_RSS_KB"
+  fi
   echo "  Phase: ${PHASE}"
 done
+
+CURRENT_RSS_KB=$(sum_process_tree_rss_kb "$SERVER_PID")
+if [ "$CURRENT_RSS_KB" -gt "$PEAK_RSS_KB" ]; then
+  PEAK_RSS_KB="$CURRENT_RSS_KB"
+fi
 
 END_TIME=$(date +%s)
 DURATION_MS=$(( (END_TIME - START_TIME) * 1000 ))
@@ -212,11 +263,13 @@ fi
 # ── Edit tier distribution ──────────────────────────────────
 echo "📊 Analyzing edit tiers..."
 TIER1=0; TIER2=0; TIER3=0; TIER4=0
+EDIT_TOOL_CALLS=0
 if [ -f "${RESULTS_DIR}/${RUN_ID}.json" ]; then
   TIER1=$(python3 -c "import json; d=json.load(open('${RESULTS_DIR}/${RUN_ID}.json')); print(sum(1 for e in d.get('fileEdits',[]) if e.get('tier')==1))" 2>/dev/null || echo "0")
   TIER2=$(python3 -c "import json; d=json.load(open('${RESULTS_DIR}/${RUN_ID}.json')); print(sum(1 for e in d.get('fileEdits',[]) if e.get('tier')==2))" 2>/dev/null || echo "0")
   TIER3=$(python3 -c "import json; d=json.load(open('${RESULTS_DIR}/${RUN_ID}.json')); print(sum(1 for e in d.get('fileEdits',[]) if e.get('tier')==3))" 2>/dev/null || echo "0")
   TIER4=$(python3 -c "import json; d=json.load(open('${RESULTS_DIR}/${RUN_ID}.json')); print(sum(1 for e in d.get('fileEdits',[]) if e.get('tier')==4))" 2>/dev/null || echo "0")
+  EDIT_TOOL_CALLS=$(python3 -c "import json; d=json.load(open('${RESULTS_DIR}/${RUN_ID}.json')); print(sum(1 for e in d.get('toolCallHistory',[]) if e.get('tool_name') in ('edit_file','write_file')))" 2>/dev/null || echo "0")
 fi
 
 # Sanitize ALL numeric variables before jq (prevent empty/multiline breakage)
@@ -237,6 +290,8 @@ TIER1=$(sanitize_int "$TIER1")
 TIER2=$(sanitize_int "$TIER2")
 TIER3=$(sanitize_int "$TIER3")
 TIER4=$(sanitize_int "$TIER4")
+EDIT_TOOL_CALLS=$(sanitize_int "$EDIT_TOOL_CALLS")
+PEAK_RSS_KB=$(sanitize_int "$PEAK_RSS_KB")
 
 # Sanitize string vars (ensure non-empty)
 PHASE="${PHASE:-unknown}"
@@ -259,12 +314,14 @@ JQ_ERR=$(jq -n \
   --arg startedAt "$(date -u -r "$START_TIME" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
   --arg completedAt "$(date -u -r "$END_TIME" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
   --argjson durationMs "$DURATION_MS" \
+  --argjson peakRssKb "$PEAK_RSS_KB" \
   --arg phase "$PHASE" \
   --argjson tokenInput "$TOKEN_INPUT" \
   --argjson tokenOutput "$TOKEN_OUTPUT" \
   --arg estimatedCost "\$${COST}" \
   --arg traceUrl "$TRACE_URL" \
   --argjson filesChanged "$FILES_CHANGED" \
+  --argjson editToolCalls "$EDIT_TOOL_CALLS" \
   --argjson linesAdded "$LINES_ADDED" \
   --argjson linesRemoved "$LINES_REMOVED" \
   --arg baselineTypecheck "$BASELINE_TYPECHECK" \
@@ -290,11 +347,13 @@ JQ_ERR=$(jq -n \
     startedAt: $startedAt,
     completedAt: $completedAt,
     durationMs: $durationMs,
+    peakRssKb: $peakRssKb,
     phase: $phase,
     tokenUsage: { input: $tokenInput, output: $tokenOutput },
     estimatedCost: $estimatedCost,
     traceUrl: $traceUrl,
     filesChanged: $filesChanged,
+    editToolCalls: $editToolCalls,
     linesAdded: $linesAdded,
     linesRemoved: $linesRemoved,
     typecheck: { before: $baselineTypecheck, after: $afterTypecheck, errorDelta: $tcErrors },
@@ -332,6 +391,7 @@ echo "=== Benchmark Complete ==="
 echo "Result: ${RESULT_FILE}"
 echo "Phase: ${PHASE}"
 echo "Duration: ${DURATION_MS}ms"
+echo "Peak RSS: ${PEAK_RSS_KB} KB"
 echo "Files changed: ${FILES_CHANGED}"
 echo "Lines: +${LINES_ADDED} -${LINES_REMOVED}"
 echo "Typecheck: ${BASELINE_TYPECHECK} -> ${AFTER_TYPECHECK}"
@@ -340,6 +400,11 @@ echo "Trace: ${TRACE_URL}"
 if [ "$ERROR_MSG" != "null" ]; then
   echo "Error: ${ERROR_MSG}"
 fi
+
+echo "📚 Regenerating docs..."
+cd "$AGENT_DIR"
+pnpm exec tsx scripts/render-benchmarks.ts
+pnpm exec tsx scripts/render-issues.ts
 
 # Kill server
 kill $SERVER_PID 2>/dev/null || true

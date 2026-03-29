@@ -110,6 +110,22 @@ describe('dangerous command blocking', () => {
     expect(result.message).toContain('Blocked');
   });
 
+  it('blocks in-place perl rewrites', async () => {
+    const result = await runBash({
+      command: "find src -name '*.ts' -print0 | xargs -0 perl -0pi -e 's/foo/bar/g'",
+    });
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('Blocked');
+  });
+
+  it('blocks in-place sed rewrites', async () => {
+    const result = await runBash({
+      command: "sed -i '' 's/foo/bar/g' src/index.ts",
+    });
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('Blocked');
+  });
+
   it('blocks mkfs commands', async () => {
     const result = await runBash({ command: 'mkfs.ext4 /dev/sda1' });
     expect(result.success).toBe(false);
@@ -138,6 +154,12 @@ describe('dangerous command blocking', () => {
     // curl alone without piping to sh should not be blocked
     const result = await runBash({ command: 'echo "curl is fine alone"' });
     expect(result.success).toBe(true);
+  });
+
+  it('allows non-mutating sed reads', async () => {
+    const result = await runBash({ command: "printf 'a\nb\n' | sed -n '1p'" });
+    expect(result.success).toBe(true);
+    expect(result.stdout.trim()).toBe('a');
   });
 });
 

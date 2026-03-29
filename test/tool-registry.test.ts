@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { TOOL_SCHEMAS, getExecutionToolSchemas } from '../src/tools/index.js';
+import { TOOL_SCHEMAS, dispatchTool, getExecutionToolSchemas } from '../src/tools/index.js';
 
 describe('tool registry', () => {
   const toolNames = TOOL_SCHEMAS.map((t) => t.name);
 
-  it('registers all 12 tools', () => {
-    expect(toolNames).toHaveLength(12);
+  it('registers all 13 tools', () => {
+    expect(toolNames).toHaveLength(13);
   });
 
   it('includes core file tools', () => {
@@ -18,6 +18,7 @@ describe('tool registry', () => {
     expect(toolNames).toContain('grep');
     expect(toolNames).toContain('glob');
     expect(toolNames).toContain('ls');
+    expect(toolNames).toContain('web_search');
   });
 
   it('includes execution tools', () => {
@@ -51,5 +52,21 @@ describe('tool registry', () => {
   it('keeps commit_and_open_pr available when the user explicitly asks for a PR', () => {
     const names = getExecutionToolSchemas('Update README.md, commit it, push it, and open a PR.').map((tool) => tool.name);
     expect(names).toContain('commit_and_open_pr');
+  });
+
+  it('rejects missing required tool fields at runtime', async () => {
+    const result = await dispatchTool('read_file', {});
+    expect(result).toEqual({
+      success: false,
+      message: 'Missing required field: file_path',
+    });
+  });
+
+  it('rejects invalid runtime field types', async () => {
+    const result = await dispatchTool('bash', { command: 42 as unknown as string });
+    expect(result).toEqual({
+      success: false,
+      message: 'Invalid field type for command: expected string.',
+    });
   });
 });

@@ -7,7 +7,7 @@ import type { ShipyardStateType } from './state.js';
 
 /** Strong signals the user wants repo / code work (not casual Q&A). */
 const CODE_HINT =
-  /\b(refactor|implement|re-?implement|fix\s|bug\b|add\s+(a\s+)?(test|file|route|handler|component|endpoint)|create\s+(a\s+)?(file|component|route|test)|delete\s|remove\s|update\s|change\s|migrate|rename\b|extract\s|wire\s|hook\s|typescript|typecheck|eslint|vitest|pnpm\s|npm\s|import\s+[\w*{}\s,]+from|\.tsx?\b|\.jsx?\b|src\/|packages\/|codebase|repository|pull\s+request|commit\b|branch\b|test\s+failure|failing\s+test|open\s+pr|shipyard)\b/i;
+  /\b(refactor|implement|re-?implement|rebuild|fix\s|bug\b|add\s+(a\s+)?(test|file|route|handler|component|endpoint)|create\s+(a\s+)?(file|component|route|test|repo|repository)|delete\s|remove\s|update\s|change\s|migrate|rename\b|extract\s|wire\s|hook\s|build\s+(?:the\s+)?(?:[\w.-]+\s+){0,3}(?:app|repo|repository|project|site)|typescript|typecheck|eslint|vitest|pnpm\s|npm\s|import\s+[\w*{}\s,]+from|\.tsx?\b|\.jsx?\b|src\/|packages\/|codebase|repository|worktree|pull\s+request|commit\b|branch\b|test\s+failure|failing\s+test|open\s+pr|shipyard)\b/i;
 
 export function looksLikeCodeRequest(instruction: string): boolean {
   const t = instruction.trim();

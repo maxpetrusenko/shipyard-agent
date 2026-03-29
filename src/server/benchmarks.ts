@@ -6,6 +6,7 @@
  */
 
 import type { Request, Response } from 'express';
+import { WORK_DIR } from '../config/work-dir.js';
 import {
   NAV_STYLES,
   SHIPYARD_BASE_STYLES,
@@ -13,9 +14,21 @@ import {
   topNav,
 } from './html-shared.js';
 
+function escAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function renderPageHtml(defaultSnapshotDir: string): string {
+  return PAGE_HTML.replace('__DEFAULT_SNAPSHOT_DIR__', escAttr(defaultSnapshotDir));
+}
+
 export function benchmarksHandler() {
   return (_req: Request, res: Response) => {
-    res.type('html').send(PAGE_HTML);
+    res.type('html').send(renderPageHtml(WORK_DIR || process.cwd()));
   };
 }
 
@@ -113,7 +126,7 @@ ${NAV_STYLES}
       Run typecheck, tests, security audit, and LOC count on a target directory. Results are stored for comparison.
     </div>
     <div class="snapshot-form">
-      <input id="snapDir" placeholder="Target directory (absolute path)" style="width:320px" value="">
+      <input id="snapDir" placeholder="Target directory (absolute path)" style="width:320px" value="__DEFAULT_SNAPSHOT_DIR__">
       <input id="snapLabel" placeholder="Label (e.g. original, refactored)" style="width:160px">
       <button id="snapBtn" onclick="captureSnapshot()">Capture Snapshot</button>
     </div>
@@ -259,10 +272,28 @@ function buildRadarDatasets(data, activeKeys) {
 function buildLineDatasets(data, activeKeys) {
   if (data.runs.length === 0) return { labels: [], datasets: [] };
 
+  function formatTexasLabel(value) {
+    try {
+      var parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Chicago',
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).formatToParts(new Date(value));
+      var map = {};
+      parts.forEach(function(part) { map[part.type] = part.value; });
+      var hour = map.hour === '24' ? '00' : (map.hour || '00');
+      return (map.month || '0') + '/' + (map.day || '0') + ' ' + hour + ':' + (map.minute || '00') + ' CT';
+    } catch (e) {
+      return value || '';
+    }
+  }
+
   var labels = data.runs.map(function(r, i) {
     if (r.savedAt) {
-      var d = new Date(r.savedAt);
-      return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+      return formatTexasLabel(r.savedAt);
     }
     return 'Run ' + (i + 1);
   });

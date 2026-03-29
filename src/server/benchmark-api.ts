@@ -7,11 +7,12 @@
 
 import { Router, json } from 'express';
 import type { Request, Response, NextFunction } from 'express';
-import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
+import { hasBenchmarkProjectContext, resolveBenchmarkResultsDirs } from '../reporting/benchmark-scope.js';
 
-const RESULTS_DIR = resolve(process.env['SHIPYARD_RESULTS_DIR'] ?? join(process.cwd(), 'results'));
+const PRIMARY_RESULTS_DIR = resolveBenchmarkResultsDirs()[0] ?? resolve(join(process.cwd(), 'results', 'benchmarks'));
 
 function wrap(fn: (req: Request, res: Response, next: NextFunction) => Promise<void> | void) {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -39,6 +40,7 @@ interface SnapshotResult {
   timestamp: string;
   path: string;
   typecheck: { status: string; errors: number };
+  build?: { status: string; durationMs: number };
   tests: { total: number; passed: number; failed: number };
   security: { vulnerabilities: number };
   loc: number;
@@ -56,6 +58,8 @@ interface RunResult {
   verificationResult?: { passed: boolean; error_count: number } | null;
   savedAt?: string;
   error?: string | null;
+  projectContext?: { projectId?: string; projectLabel?: string } | null;
+  traceUrl?: string | null;
 }
 
 interface BenchResult {
@@ -147,9 +151,27 @@ function readJsonSafe<T>(path: string): T | null {
 }
 
 function listResultFiles(): string[] {
-  try {
-    return readdirSync(RESULTS_DIR).filter(f => f.endsWith('.json')).sort();
-  } catch { return []; }
+  const files: string[] = [];
+  const seen = new Set<string>();
+  for (const dir of resolveBenchmarkResultsDirs()) {
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir).filter((file) => file.endsWith('.json')).sort()) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      files.push(join(dir, name));
+    }
+  }
+  return files;
+}
+
+function readPreferredResultFile<T>(fileName: string): T | null {
+  for (const dir of resolveBenchmarkResultsDirs()) {
+    const fullPath = join(dir, fileName);
+    if (!existsSync(fullPath)) continue;
+    const value = readJsonSafe<T>(fullPath);
+    if (value) return value;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,14 +186,15 @@ export interface BenchmarkData {
     savedAt: string;
     durationMs: number;
     scores: CriterionScore[];
+    traceUrl?: string | null;
   }>;
   criteria: string[];
 }
 
-function buildBenchmarkData(): BenchmarkData {
+export function buildBenchmarkData(): BenchmarkData {
   const files = listResultFiles();
-  const baseline = readJsonSafe<BaselineResult>(join(RESULTS_DIR, 'baseline.json'));
-  const comparison = readJsonSafe<Record<string, unknown>>(join(RESULTS_DIR, 'comparison.json'));
+  const baseline = readPreferredResultFile<BaselineResult>('baseline.json');
+  const comparison = readPreferredResultFile<Record<string, unknown>>('comparison.json');
 
   const baselineLoc = (comparison as { original?: { loc?: number } })?.original?.loc ?? 0;
 
@@ -189,9 +212,9 @@ function buildBenchmarkData(): BenchmarkData {
   const snapshots: BenchmarkData['snapshots'] = [];
   const runs: BenchmarkData['runs'] = [];
 
-  for (const fname of files) {
+  for (const fpath of files) {
+    const fname = basename(fpath);
     if (fname === 'baseline.json' || fname === 'comparison.json') continue;
-    const fpath = join(RESULTS_DIR, fname);
     const raw = readJsonSafe<Record<string, unknown>>(fpath);
     if (!raw) continue;
 
@@ -222,6 +245,7 @@ function buildBenchmarkData(): BenchmarkData {
         runId: bench.benchId,
         savedAt: bench.startedAt ?? '',
         durationMs: bench.durationMs,
+        traceUrl: (bench as unknown as Record<string, unknown>)['traceUrl'] as string | null ?? null,
         scores: [
           scoreTypeSafety(bench.typecheck?.after ?? 'unknown', bench.typecheck?.errorDelta ?? 0),
           scoreTestHealth(bench.tests?.after?.passed ?? 0, bench.tests?.after?.total ?? 0),
@@ -238,6 +262,7 @@ function buildBenchmarkData(): BenchmarkData {
 
     if ('runId' in raw) {
       const run = raw as unknown as RunResult;
+      if (!hasBenchmarkProjectContext(run.projectContext)) continue;
       if (!run.durationMs || run.durationMs < 1000) continue;
       const tok = run.tokenUsage ?? { input: 0, output: 0 };
       if ((tok.input ?? 0) < 100) continue;
@@ -263,6 +288,7 @@ function buildBenchmarkData(): BenchmarkData {
         runId: run.runId,
         savedAt: run.savedAt ?? '',
         durationMs: run.durationMs,
+        traceUrl: run.traceUrl ?? null,
         scores: [
           scoreTypeSafety(vr ? (vr.passed ? 'pass' : 'fail') : 'unknown', vr?.error_count ?? 0),
           scoreTestHealth(
@@ -344,11 +370,14 @@ function captureSnapshot(targetDir: string, label: string): SnapshotResult {
   } catch { /* count failed */ }
 
   let buildDurationMs = 0;
+  let buildStatus = 'pass';
   try {
     const buildStart = Date.now();
     execSync('pnpm build 2>&1', { cwd: targetDir, timeout: 120_000, encoding: 'utf-8' });
     buildDurationMs = Date.now() - buildStart;
-  } catch { /* build failed or not available */ }
+  } catch {
+    buildStatus = 'fail';
+  }
 
   const snapshot: SnapshotResult = {
     type: 'snapshot',
@@ -356,6 +385,7 @@ function captureSnapshot(targetDir: string, label: string): SnapshotResult {
     timestamp,
     path: targetDir,
     typecheck: { status: tcStatus, errors: tcErrors },
+    build: { status: buildStatus, durationMs: buildDurationMs },
     tests: { total: testTotal, passed: testPassed, failed: testFailed },
     security: { vulnerabilities: vulns },
     loc,
@@ -363,9 +393,9 @@ function captureSnapshot(targetDir: string, label: string): SnapshotResult {
     buildDurationMs,
   };
 
-  mkdirSync(RESULTS_DIR, { recursive: true });
+  mkdirSync(PRIMARY_RESULTS_DIR, { recursive: true });
   const fname = `snapshot-${label}-${timestamp.replace(/[:.]/g, '')}.json`;
-  writeFileSync(join(RESULTS_DIR, fname), JSON.stringify(snapshot, null, 2));
+  writeFileSync(join(PRIMARY_RESULTS_DIR, fname), JSON.stringify(snapshot, null, 2));
 
   return snapshot;
 }

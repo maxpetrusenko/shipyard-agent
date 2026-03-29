@@ -135,8 +135,9 @@ export async function errorRecoveryNode(
         try {
           const overlay = FileOverlay.deserialize(state.fileOverlaySnapshots);
           await overlay.rollbackAll();
-        } catch {
-          // Best-effort rollback; proceed with retry regardless
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[error-recovery] Rollback failed for run ${state.runId ?? 'unknown'}: ${msg}. Working tree may contain stale edits.`);
         }
       }
 

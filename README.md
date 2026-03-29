@@ -7,8 +7,8 @@ Autonomous coding agent that takes a natural language instruction, decomposes it
 Shipyard runs as a stateful LangGraph `StateGraph` with conditional edges:
 
 ```
-START -> plan -> execute -> verify -> review
-                                       |-> continue -> execute (next step)
+START -> plan -> coordinate -> verify -> review
+                            |-> execute (fallback only)
                                        |-> done -> report -> END
                                        |-> retry -> plan (with feedback)
                                        |-> escalate -> error_recovery
@@ -19,13 +19,16 @@ START -> plan -> execute -> verify -> review
 | Node | Model | Purpose |
 |------|-------|---------|
 | `plan` | GPT-5.3 Codex (default) | Decompose instruction into steps, explore codebase |
-| `execute` | GPT-5.4 Mini (default) | Execute current step via tool calls (25 rounds max) |
+| `coordinate` | logic + worker agents | Spawn one worker per vertical step, run verify after every worker, spawn repair workers on failures |
+| `execute` | GPT-5.4 Mini (default) | Single-agent fallback path used only when worker orchestration is disabled for recovery |
 | `verify` | bash | Run lint (if configured) + `tsc --noEmit`; run tests on final step |
 | `review` | GPT-5.3 Codex (default) | Quality gate: continue / done / retry / escalate |
 | `error_recovery` | logic | Decide retry (with file rollback) vs abort |
 | `report` | GPT-5.4 Mini (default) | Summarize results/cost + policy-driven next actions |
 
-Tools: `read_file`, `edit_file` (4-tier surgical edit with fuzzy fallback), `write_file`, `bash`, `grep`, `glob`, `ls`, `spawn_agent`, `ask_user`, `commit_and_open_pr`, `inject_context`.
+Tools: `read_file`, `edit_file` (4-tier surgical edit with fuzzy fallback), `write_file`, `bash`, `grep`, `glob`, `ls`, `web_search`, `spawn_agent`, `ask_user`, `commit_and_open_pr`, `inject_context`.
+
+Default execution strategy: the parent run stays small-context and orchestration-focused. It plans once, then spawns isolated worker agents for each vertical step. After each worker, Shipyard runs deterministic verification; if verification fails, the coordinator spawns a repair worker for that same step before moving on.
 
 File edits use anchor-based string replacement: exact match, whitespace-normalized, Levenshtein fuzzy (< 10% distance), full rewrite as last resort.
 
@@ -59,6 +62,20 @@ pnpm build
 pnpm start
 ```
 
+For hot reload while editing Shipyard itself:
+
+```bash
+pnpm dev:watch
+```
+
+Use plain `pnpm dev` for long-running agent sessions so file changes in the workspace do not restart the server mid-run.
+
+## Live Deployment
+
+- Hostinger
+- Dashboard: `https://agent.ship.187.77.7.226.sslip.io/dashboard`
+- Base URL: `https://agent.ship.187.77.7.226.sslip.io`
+
 ## Web UI
 
 - `/dashboard` — chat-style workspace for ask, plan, and agent runs
@@ -80,6 +97,9 @@ All env vars are documented in `.env.example`. Copy it and fill in your values.
 | `SHIPYARD_PORT` | No | `4200` | HTTP + WebSocket server port |
 | `SHIPYARD_WORK_DIR` | No | `cwd()` | Working directory the agent operates in (the target repo) |
 | `SHIPYARD_API_KEY` | No | -- | Bearer token for API authentication. When set, all endpoints except `/api/health` require `Authorization: Bearer <key>`. |
+| `SHIPYARD_ADMIN_TOKEN` | No | -- | Admin token for non-local settings, GitHub install selection, repo connect, and other sensitive write routes. |
+| `SHIPYARD_ENABLE_WEB_SEARCH` | No | `false` | Enables the guarded `web_search` tool for outbound exact-error lookup. |
+| `BRAVE_SEARCH_API_KEY` | No | -- | Brave Search API key used by `web_search` when enabled. |
 | `SHIPYARD_DB_URL` | No | -- | PostgreSQL connection string for persistent run storage. Falls back to in-memory. |
 | `LANGCHAIN_TRACING_V2` | No | `false` | Set `true` to enable LangSmith tracing |
 | `LANGCHAIN_API_KEY` | No | -- | LangSmith API key (also accepts `LANGSMITH_API_KEY`) |
@@ -101,6 +121,20 @@ Submit an instruction. Returns `{ runId }`.
 curl -X POST http://localhost:4200/api/run \
   -H "Content-Type: application/json" \
   -d '{"instruction": "Add strict TypeScript to all files"}'
+```
+
+With a supplied execution plan (planner bypass):
+
+```bash
+curl -X POST http://localhost:4200/api/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instruction": "Run rebuild vertical 1",
+    "executionPlan": [
+      {"description": "Refactor API surface", "files": ["src/server/routes.ts"]},
+      {"description": "Add regression tests", "files": ["test/server/routes.test.ts"]}
+    ]
+  }'
 ```
 
 With context injection:
@@ -197,7 +231,7 @@ open "http://localhost:4200/api/github/install/start"
 
 ### `GET /api/github/install/callback`
 
-Setup URL callback endpoint for GitHub App installation flow. Set this as your GitHub App "Setup URL".
+Setup URL callback endpoint for GitHub App installation flow. Set this as your GitHub App "Setup URL" using your public deploy URL, for example `https://your-host/api/github/install/callback`. If you run behind a proxy that rewrites host/proto, set `SHIPYARD_PUBLIC_BASE_URL=https://your-host`.
 
 ### `POST /api/github/repos`
 
@@ -261,7 +295,30 @@ Place instruction markdown files in `instructions/` (e.g., `instructions/01-stri
 
 The harness resets the target repo, captures baseline metrics, starts the server, submits the instruction, polls until completion, runs post-verification (typecheck + tests), and writes a JSON result to `results/`.
 
-Set `SHIPYARD_TARGET` to override the default target repo path.
+Set `SHIPYARD_TARGET` to override the default target repo path. `scripts/setup-target.sh` now honors the same env var, so temp bench clones are safe.
+
+Benchmark docs:
+
+```bash
+pnpm exec tsx scripts/render-benchmarks.ts
+pnpm exec tsx scripts/render-issues.ts
+```
+
+`bench.sh` refreshes both docs automatically after each benchmark run.
+
+When a seeded issue changes because of a specific run, use the run-truth updater so the run id, trace, seed JSON, and generated docs stay in sync:
+
+```bash
+./scripts/update-run-truth.sh \
+  --issue bare-step-complete-late-step-drift \
+  --run 743fb053-da31-4229-a59d-268485d8cd5d \
+  --status fixed \
+  --patch-status patched \
+  --test-status verified \
+  --benchmark-status verified
+```
+
+Pass `--create` to seed a brand new issue from a run, then rerender `docs/issues.md` and `docs/benchmarks.md` automatically.
 
 ## Tests
 

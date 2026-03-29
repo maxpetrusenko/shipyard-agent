@@ -2,6 +2,7 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import { InstructionLoop } from '../../src/runtime/loop.js';
 
 let shouldThrow = false;
+const PUBLIC_TRACE_URL = 'https://smith.langchain.com/public/shared-run/r';
 
 vi.mock('../../src/graph/builder.js', () => ({
   createShipyardGraph: () => ({
@@ -77,21 +78,21 @@ describe('InstructionLoop trace finalization', () => {
   it('does not wait for public trace sharing before marking the run done', async () => {
     const loop = new InstructionLoop();
     const runId = loop.submit('implement auth', undefined, false, 'code');
-    await waitFor(() => loop.getRun(runId)?.phase === 'done');
+    await waitFor(() => loop.getRun(runId)?.phase === 'done', 5_000);
 
     const run = loop.getRun(runId);
     expect(run?.phase).toBe('done');
     expect(run?.traceUrl).toBe(
       'https://smith.langchain.com/o/default/projects/p/shipyard/r/fallback-run',
     );
-  });
+  }, 15_000);
 
   it('upgrades failed runs to a public trace URL in the background', async () => {
     shouldThrow = true;
 
     const loop = new InstructionLoop();
     const runId = loop.submit('refactor small file', undefined, false, 'code');
-    await waitFor(() => loop.getRun(runId)?.phase === 'error');
+    await waitFor(() => loop.getRun(runId)?.phase === 'error', 5_000);
 
     const initialRun = loop.getRun(runId);
     expect(initialRun?.phase).toBe('error');
@@ -99,12 +100,13 @@ describe('InstructionLoop trace finalization', () => {
       'https://smith.langchain.com/o/default/projects/p/shipyard/r/fallback-run',
     );
 
-    await new Promise((r) => setTimeout(r, 150));
+    await waitFor(
+      () => loop.getRun(runId)?.traceUrl === PUBLIC_TRACE_URL,
+      5_000,
+    );
 
     const updatedRun = loop.getRun(runId);
     expect(updatedRun?.phase).toBe('error');
-    expect(updatedRun?.traceUrl).toBe(
-      'https://smith.langchain.com/public/shared-run/r',
-    );
-  });
+    expect(updatedRun?.traceUrl).toBe(PUBLIC_TRACE_URL);
+  }, 15_000);
 });

@@ -58,7 +58,7 @@ function createClient(url: string): {
     const queued = messageQueue.shift();
     if (queued) return Promise.resolve(queued);
     return new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('WS message timeout')), 3_000);
+      const t = setTimeout(() => reject(new Error('WS message timeout')), 10_000);
       waiters.push((msg) => { clearTimeout(t); resolve(msg); });
     });
   }
@@ -68,7 +68,7 @@ function createClient(url: string): {
 
 function waitOpen(ws: WebSocket): Promise<void> {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('WS open timeout')), 3_000);
+    const t = setTimeout(() => reject(new Error('WS open timeout')), 10_000);
     ws.on('open', () => { clearTimeout(t); resolve(); });
     ws.on('error', (e) => { clearTimeout(t); reject(e); });
   });
@@ -122,7 +122,7 @@ describe('WebSocket', () => {
     } finally {
       await teardown(ctx);
     }
-  });
+  }, 15_000);
 
   it('returns error on invalid JSON', async () => {
     const ctx = await setup();

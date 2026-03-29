@@ -7,6 +7,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { getRunAbortSignal } from '../runtime/run-signal.js';
 import { emitTextChunk } from '../tools/hooks.js';
 import { OPS } from '../server/ops.js';
+import { withTransientRetry } from '../llm/retry.js';
 
 // ---------------------------------------------------------------------------
 // Cache metrics
@@ -39,19 +40,23 @@ export async function messagesCreate(
   },
 ): Promise<Anthropic.Message> {
   const signal = getRunAbortSignal();
-  const response = await client.messages.create(
-    params,
-    {
-      signal: signal ?? undefined,
-      langsmithExtra:
-        opts?.traceName || opts?.traceMetadata || opts?.traceTags
-          ? {
-              ...(opts?.traceName ? { name: opts.traceName } : {}),
-              ...(opts?.traceMetadata ? { metadata: opts.traceMetadata } : {}),
-              ...(opts?.traceTags ? { tags: opts.traceTags } : {}),
-            }
-          : undefined,
-    } as Anthropic.RequestOptions,
+  const response = await withTransientRetry(
+    () =>
+      client.messages.create(
+        params,
+        {
+          signal: signal ?? undefined,
+          langsmithExtra:
+            opts?.traceName || opts?.traceMetadata || opts?.traceTags
+              ? {
+                  ...(opts?.traceName ? { name: opts.traceName } : {}),
+                  ...(opts?.traceMetadata ? { metadata: opts.traceMetadata } : {}),
+                  ...(opts?.traceTags ? { tags: opts.traceTags } : {}),
+                }
+              : undefined,
+        } as Anthropic.RequestOptions,
+      ),
+    { label: 'Anthropic messagesCreate' },
   );
 
   // Log cache utilization when prompt caching is active

@@ -45,15 +45,20 @@ import {
 import { checkBlastRadius } from '../../tools/blast-radius.js';
 import { runBash } from '../../tools/bash.js';
 import {
+  buildAmbiguousEditRecoveryNudge,
   createExecutionIssue,
   decideNoEditProgressAction,
+  deriveBlockerCode,
   deriveBlockingReasonFromToolResult,
   formatExecuteWatchdogError,
+  resolveEditsInCurrentExecuteStep,
+  shouldTreatCompletionAsNoEdit,
   shouldFastTrackNoEditStall,
   type ExecuteProgressDiagnostics,
 } from './execute-progress.js';
 import {
   buildContextBlock,
+  RETRYABLE_BLOCKER_CODES,
   type ShipyardStateType,
   type ExecutionIssue,
   type FileEdit,
@@ -75,6 +80,7 @@ Rules:
 - Use edit_file for surgical changes (preferred over write_file)
 - Use write_file only for new files
 - Use bash for running commands (build, lint, format) — always cd to ${WORK_DIR} first
+- If repo reads + bash output are not enough to unblock an exact error, use web_search with the exact error text before guessing
 - Make one logical change at a time
 - If converting an existing file into a wrapper, shim, or pure re-export, replace the entire file contents; do not prepend a new export onto the old implementation
 - If a file should only re-export another module, the final file must contain only the wrapper/re-export code plus any required header comments
@@ -106,6 +112,7 @@ function deriveMaxNoEditToolRounds(stepCount: number): number {
 }
 const MAX_FORCED_EDIT_NUDGES = 2;
 const EXECUTE_COMPACTION_MAX_CHARS = 100_000;
+const MAX_IDENTICAL_TOOL_CALL_REPEATS = 3;
 
 /** Cap tool call history to prevent unbounded memory growth in long sessions.
  *  Keeps the most recent MAX_TOOL_HISTORY entries; drops oldest. */
@@ -114,6 +121,108 @@ export function capToolHistory<T>(history: T[]): T[] {
   return history.length > MAX_TOOL_HISTORY
     ? history.slice(-MAX_TOOL_HISTORY)
     : history;
+}
+
+function stableSerializeToolInput(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableSerializeToolInput(entry)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableSerializeToolInput(entry)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function summarizeToolLoopInput(input: Record<string, unknown>): string {
+  const filePath = input['file_path'];
+  if (typeof filePath === 'string' && filePath.trim()) return filePath;
+  const command = input['command'];
+  if (typeof command === 'string' && command.trim()) return command.slice(0, 120);
+  return stableSerializeToolInput(input).slice(0, 120);
+}
+
+const READ_BACKED_NOOP_STOP_WORDS = new Set([
+  'implement', 'implemented', 'update', 'updated', 'ensure', 'ensures', 'full',
+  'behavior', 'module', 'routes', 'route', 'surface', 'complete', 'required',
+  'specified', 'standardized', 'response', 'responses', 'request', 'current',
+  'step', 'hub', 'file', 'files', 'using', 'used', 'align', 'harden', 'review',
+  'validate', 'support', 'with', 'from', 'into',
+  'that', 'this', 'they', 'them', 'their', 'your', 'while', 'after', 'before',
+  'without', 'under', 'also', 'then', 'than', 'there', 'already', 'keep',
+  'keeps', 'preserve', 'preserving', 'stable', 'centralized', 'shape'
+]);
+
+function normalizeEvidenceToken(token: string): string {
+  return token.toLowerCase().replace(/[^a-z0-9_]/g, '');
+}
+
+function extractReadBackedKeywords(stepDescription: string): string[] {
+  const raw = stepDescription.match(/[A-Za-z_][A-Za-z0-9_-]{3,}/g) ?? [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const token of raw) {
+    const candidates = new Set<string>();
+    const normalized = normalizeEvidenceToken(token);
+    if (normalized) candidates.add(normalized);
+    const expanded = token
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/[_-]+/g, ' ')
+      .split(/\s+/)
+      .map((part) => normalizeEvidenceToken(part))
+      .filter(Boolean);
+    for (const part of expanded) candidates.add(part);
+    for (const candidate of candidates) {
+      if (candidate.length < 4) continue;
+      if (READ_BACKED_NOOP_STOP_WORDS.has(candidate)) continue;
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      out.push(candidate);
+    }
+  }
+  return out.slice(0, 24);
+}
+
+function hasReadBackedStepSatisfaction(params: {
+  stepDescription: string;
+  stepFiles: string[];
+  readCache: Map<string, Record<string, unknown>>;
+}): boolean {
+  if (params.stepFiles.length === 0 || params.stepFiles.length > 3) return false;
+  const chunks: string[] = [];
+  for (const filePath of params.stepFiles) {
+    for (const [cacheKey, result] of params.readCache.entries()) {
+      if (!cacheKey.startsWith(`${filePath}:`)) continue;
+      const content = result['content'];
+      if (typeof content === 'string' && content.trim()) chunks.push(content.toLowerCase());
+    }
+  }
+  const combined = chunks.join('\n');
+  if (!combined) return false;
+  const keywords = extractReadBackedKeywords(params.stepDescription);
+  if (keywords.length < 3) return false;
+  const matches = keywords.filter((token) => combined.includes(token));
+  const minMatches = Math.min(6, Math.max(3, Math.ceil(keywords.length / 3)));
+  return matches.length >= minMatches;
+}
+
+export function detectRepeatedToolCallLoop(
+  history: ToolCallRecord[],
+  repeatCount = MAX_IDENTICAL_TOOL_CALL_REPEATS,
+): string | null {
+  if (history.length < repeatCount) return null;
+  const recent = history.slice(-repeatCount);
+  const first = recent[0];
+  if (!first) return null;
+  const fingerprint = `${first.tool_name}:${stableSerializeToolInput(first.tool_input)}`;
+  const identical = recent.every((entry) =>
+    `${entry.tool_name}:${stableSerializeToolInput(entry.tool_input)}` === fingerprint,
+  );
+  if (!identical) return null;
+  const target = summarizeToolLoopInput(first.tool_input);
+  return `Watchdog: repeated identical tool call loop detected (${first.tool_name} ×${repeatCount}${target ? ` on ${target}` : ''}). Switch strategy instead of repeating the same call.`;
 }
 
 export async function executeNode(
@@ -174,11 +283,22 @@ export async function executeNode(
   // Base 25, +2 per step beyond 5, capped at 40.
   const maxToolRounds = Math.min(40, 25 + Math.max(0, state.steps.length - 5) * 2);
   const maxNoEditRounds = deriveMaxNoEditToolRounds(state.steps.length);
-  const stepEditBaseline = state.fileEdits.length;
+  const stepEditBaseline =
+    typeof state.currentStepEditBaseline === 'number'
+      ? state.currentStepEditBaseline
+      : state.fileEdits.length;
+  const stepStartsWithEdits =
+    resolveEditsInCurrentExecuteStep({
+      totalFileEdits: state.fileEdits.length,
+      currentStepEditBaseline: stepEditBaseline,
+    }) > 0;
 
   // Wait for the background verification fingerprint to complete before
   // modifying any files, so the baseline reflects the true pre-edit state.
-  await getBaselineFingerprint(state.runId);
+  await Promise.race([
+    getBaselineFingerprint(state.runId),
+    new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Baseline fingerprint timeout (60s)')), 60_000)),
+  ]).catch(() => null);
 
   const hooks = createRecordingHooks(newEdits, newHistory);
   const overlay = new FileOverlay();
@@ -186,13 +306,14 @@ export async function executeNode(
   const READ_CACHE_MAX = 50;
   const discoveryCallLimit = deriveDiscoveryCallLimit(state.instruction);
   const firstEditDeadlineMs = deriveFirstEditDeadlineMs(state.instruction);
-  const firstEditWindowStart = state.fileEdits.length === 0 ? Date.now() : null;
-  let discoveryCallsBeforeFirstEdit =
-    state.fileEdits.length === 0
-      ? state.toolCallHistory.filter((t) => isDiscoveryToolName(t.tool_name)).length
-      : 0;
+  const firstEditWindowStart = stepStartsWithEdits ? null : Date.now();
+  let discoveryCallsBeforeFirstEdit = 0;
   let guardrailViolation: string | null = null;
+  let repeatedToolLoopMessage: string | null = null;
   let lastBlockingReason: string | null = null;
+  /** Track last failing edit_file params for enhanced ambiguous edit recovery. */
+  let lastFailingEditPath: string | null = null;
+  let lastFailingEditOldString: string | null = null;
   let forcedEditNudges = 0;
   let noEditToolRounds = 0;
 
@@ -209,8 +330,16 @@ export async function executeNode(
     name: string,
     input: Record<string, unknown>,
   ): Promise<Record<string, unknown>> => {
-    const hasEdits = state.fileEdits.length + newEdits.length > 0;
-    if (!hasEdits && firstEditWindowStart != null && firstEditDeadlineMs != null) {
+    const hasCurrentStepEdits =
+      resolveEditsInCurrentExecuteStep({
+        totalFileEdits: newEdits.length,
+        currentStepEditBaseline: stepEditBaseline,
+      }) > 0;
+    if (
+      !hasCurrentStepEdits &&
+      firstEditWindowStart != null &&
+      firstEditDeadlineMs != null
+    ) {
       const elapsed = Date.now() - firstEditWindowStart;
       if (elapsed > firstEditDeadlineMs) {
         guardrailViolation =
@@ -219,7 +348,7 @@ export async function executeNode(
         return { success: false, message: guardrailViolation };
       }
     }
-    if (!hasEdits && isDiscoveryToolName(name)) {
+    if (!hasCurrentStepEdits && isDiscoveryToolName(name)) {
       discoveryCallsBeforeFirstEdit += 1;
       if (
         discoveryCallLimit != null &&
@@ -308,7 +437,10 @@ export async function executeNode(
       /\.(ts|tsx)$/.test(input['file_path'] as string)
     ) {
       const PER_EDIT_ERROR_THRESHOLD = 5;
-      const baseline = await getBaselineFingerprint(state.runId);
+      const baseline = await Promise.race([
+        getBaselineFingerprint(state.runId),
+        new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Baseline fingerprint timeout (60s)')), 60_000)),
+      ]).catch(() => null);
       // Skip per-edit typecheck if no baseline — large projects may have hundreds of
       // pre-existing errors that would false-positive without baseline comparison.
       if (baseline) {
@@ -328,7 +460,11 @@ export async function executeNode(
           if (newErrors.length > PER_EDIT_ERROR_THRESHOLD) {
             // Rollback THIS specific file immediately
             const filePath = input['file_path'] as string;
-            await overlay.rollbackFile(filePath);
+            try {
+              await overlay.rollbackFile(filePath);
+            } catch (rollbackErr) {
+              console.warn(`[execute] rollbackFile failed for ${filePath}:`, rollbackErr);
+            }
             const msg = `Per-edit typecheck: reverted ${filePath} — introduced ${newErrors.length} new TS errors. Use a different approach (adapter/re-export pattern for hub files).`;
             lastBlockingReason = msg;
             return { success: false, message: msg, reverted: true, newErrorCount: newErrors.length };
@@ -340,11 +476,24 @@ export async function executeNode(
     const blockingReason = deriveBlockingReasonFromToolResult(name, result);
     if (blockingReason) {
       lastBlockingReason = blockingReason;
+      // Track failing edit params for enhanced ambiguous edit recovery
+      if (name === 'edit_file') {
+        lastFailingEditPath = typeof input['file_path'] === 'string' ? input['file_path'] : null;
+        lastFailingEditOldString = typeof input['old_string'] === 'string' ? input['old_string'] : null;
+      }
     } else if (
       (name === 'edit_file' || name === 'write_file') &&
       result['success'] === true
     ) {
       lastBlockingReason = null;
+      lastFailingEditPath = null;
+      lastFailingEditOldString = null;
+    }
+    const repeatedToolLoop = detectRepeatedToolCallLoop(newHistory);
+    if (repeatedToolLoop) {
+      repeatedToolLoopMessage = repeatedToolLoop;
+      lastBlockingReason = repeatedToolLoop;
+      return { success: false, message: repeatedToolLoop };
     }
     return result;
   };
@@ -431,6 +580,122 @@ export async function executeNode(
     // - end_turn WITH tool calls in previous rounds but not this one = likely done
     const isExplicitComplete = fullText.includes('STEP_COMPLETE');
     const isEndTurnNoTools = response.stop_reason === 'end_turn' && toolBlocks.length === 0;
+    const editsInCurrentExecuteStep = resolveEditsInCurrentExecuteStep({
+      totalFileEdits: newEdits.length,
+      currentStepEditBaseline: stepEditBaseline,
+    });
+    if (
+      shouldTreatCompletionAsNoEdit({
+        completionSignaled: isExplicitComplete || isEndTurnNoTools,
+        assistantText: fullText,
+        editsInCurrentExecuteStep,
+      })
+    ) {
+      lastBlockingReason =
+        'STEP_COMPLETE without any successful edit or NO_EDIT_JUSTIFIED evidence';
+      newMessages.push({ role: 'assistant', content: fullText });
+      messages.push({ role: 'assistant', content: response.content });
+      noEditToolRounds += 1;
+      if (
+        shouldFastTrackNoEditStall({
+          noEditToolRounds,
+          lastBlockingReason,
+        })
+      ) {
+        noEditToolRounds = maxNoEditRounds;
+      }
+      // Resolve file content for ambiguous-edit recovery nudge
+      let failingEditFileContent: string | null = null;
+      if (lastFailingEditPath) {
+        for (const [cacheKey, cached] of readCache.entries()) {
+          if (cacheKey.startsWith(`${lastFailingEditPath}:`)) {
+            const content = cached['content'];
+            if (typeof content === 'string') { failingEditFileContent = content; break; }
+          }
+        }
+      }
+      const action = decideNoEditProgressAction({
+        noEditToolRounds,
+        maxNoEditToolRounds: maxNoEditRounds,
+        forcedEditNudges,
+        maxForcedEditNudges: MAX_FORCED_EDIT_NUDGES,
+        editsInCurrentExecuteStep,
+        discoveryCallsBeforeFirstEdit,
+        discoveryCallLimit,
+        stepDescription: currentStep.description,
+        stepFiles: currentStep.files,
+        assistantText: fullText,
+        readBackedSatisfied: hasReadBackedStepSatisfaction({
+          stepDescription: currentStep.description,
+          stepFiles: currentStep.files,
+          readCache,
+        }),
+        lastBlockingReason,
+        lastFailingEditFilePath: lastFailingEditPath,
+        lastFailingEditOldString,
+        lastFailingEditFileContent: failingEditFileContent,
+      });
+      if (action.kind === 'nudge') {
+        forcedEditNudges += 1;
+        noEditToolRounds = 0;
+        messages.push({ role: 'user', content: action.nudgeMessage });
+        newMessages.push({
+          role: 'assistant',
+          content:
+            `[Watchdog] Rejected empty completion ${forcedEditNudges}/${MAX_FORCED_EDIT_NUDGES}: step still requires a concrete edit or justified no-op.`,
+        });
+        continue;
+      }
+      if (action.kind === 'validated_noop') {
+        newMessages.push({
+          role: 'assistant',
+          content: `NO_EDIT_JUSTIFIED: ${action.reason}\nSTEP_COMPLETE`,
+        });
+        const finalSteps = updatedSteps.map((s, i) =>
+          i === state.currentStepIndex ? { ...s, status: 'done' as const } : s,
+        );
+        const snapshotJson = overlay.dirty
+          ? overlay.serialize()
+          : state.fileOverlaySnapshots ?? null;
+        return {
+          phase: 'verifying',
+          steps: finalSteps,
+          fileEdits: newEdits,
+          toolCallHistory: newHistory,
+          messages: newMessages,
+          tokenUsage: tokens.snapshot(),
+          fileOverlaySnapshots: snapshotJson,
+          executeDiagnostics: action.diagnostics,
+        };
+      }
+      if (action.kind === 'stall') {
+        const earlyBlockerCode = deriveBlockerCode(lastBlockingReason);
+        const issue = createExecutionIssue({
+          kind: 'watchdog',
+          message: formatExecuteWatchdogError(action.diagnostics, action.nextAction),
+          nextAction: action.nextAction,
+          stopReason: 'stalled_no_edit_rounds',
+          blockerCode: earlyBlockerCode,
+        });
+        const failedSteps = updatedSteps.map((s, i) =>
+          i === state.currentStepIndex ? { ...s, status: 'failed' as const } : s,
+        );
+        const snapshotJson = overlay.dirty
+          ? overlay.serialize()
+          : state.fileOverlaySnapshots ?? null;
+        return {
+          phase: 'verifying',
+          steps: failedSteps,
+          fileEdits: newEdits,
+          toolCallHistory: newHistory,
+          messages: newMessages,
+          tokenUsage: tokens.snapshot(),
+          fileOverlaySnapshots: snapshotJson,
+          executeDiagnostics: action.diagnostics,
+          executionIssue: issue,
+        };
+      }
+    }
     if (isExplicitComplete || isEndTurnNoTools) {
       newMessages.push({ role: 'assistant', content: fullText });
 
@@ -499,6 +764,37 @@ export async function executeNode(
         };
       }
 
+      if (repeatedToolLoopMessage) {
+        const nextAction = 'Switch strategy now: stop repeating the same tool call, make one concrete in-scope edit, or justify a no-op.';
+        const issue = createExecutionIssue({
+          kind: 'watchdog',
+          message: formatExecuteWatchdogError(
+            snapshotExecuteDiagnostics('stalled_no_edit_rounds'),
+            nextAction,
+          ),
+          nextAction,
+          stopReason: 'stalled_no_edit_rounds',
+          blockerCode: 'repeated_tool_loop',
+        });
+        const failedSteps = updatedSteps.map((s, i) =>
+          i === state.currentStepIndex ? { ...s, status: 'failed' as const } : s,
+        );
+        const snapshotJson = overlay.dirty
+          ? overlay.serialize()
+          : state.fileOverlaySnapshots ?? null;
+        return {
+          phase: 'verifying',
+          steps: failedSteps,
+          fileEdits: newEdits,
+          toolCallHistory: newHistory,
+          messages: newMessages,
+          tokenUsage: tokens.snapshot(),
+          fileOverlaySnapshots: snapshotJson,
+          executeDiagnostics: snapshotExecuteDiagnostics('stalled_no_edit_rounds'),
+          executionIssue: issue,
+        };
+      }
+
       if (newEdits.length === editsBefore) {
         noEditToolRounds += 1;
       } else {
@@ -515,20 +811,49 @@ export async function executeNode(
       }
 
       if (noEditToolRounds >= maxNoEditRounds) {
+        // Ambiguous edits get extra nudges (4 instead of 2) because the
+        // enhanced nudge with match locations often resolves the issue.
+        const currentBlockerCode = deriveBlockerCode(lastBlockingReason);
+        const effectiveMaxNudges = RETRYABLE_BLOCKER_CODES.has(currentBlockerCode) && currentBlockerCode === 'ambiguous_edit'
+          ? MAX_FORCED_EDIT_NUDGES + 2  // 4 total for ambiguous edits
+          : MAX_FORCED_EDIT_NUDGES;
+        // Resolve file content for ambiguous-edit recovery
+        let failingContent: string | null = null;
+        if (lastFailingEditPath) {
+          for (const [cacheKey, cached] of readCache.entries()) {
+            if (cacheKey.startsWith(`${lastFailingEditPath}:`)) {
+              const content = cached['content'];
+              if (typeof content === 'string') { failingContent = content; break; }
+            }
+          }
+        }
         const action = decideNoEditProgressAction({
           noEditToolRounds,
           maxNoEditToolRounds: maxNoEditRounds,
           forcedEditNudges,
-          maxForcedEditNudges: MAX_FORCED_EDIT_NUDGES,
-          editsInCurrentExecuteStep: Math.max(0, newEdits.length - stepEditBaseline),
+          maxForcedEditNudges: effectiveMaxNudges,
+          editsInCurrentExecuteStep: resolveEditsInCurrentExecuteStep({
+            totalFileEdits: newEdits.length,
+            currentStepEditBaseline: stepEditBaseline,
+          }),
           discoveryCallsBeforeFirstEdit,
           discoveryCallLimit,
           stepDescription: currentStep.description,
+          stepFiles: currentStep.files,
+          readBackedSatisfied: hasReadBackedStepSatisfaction({
+            stepDescription: currentStep.description,
+            stepFiles: currentStep.files,
+            readCache,
+          }),
           lastBlockingReason,
+          lastFailingEditFilePath: lastFailingEditPath,
+          lastFailingEditOldString,
+          lastFailingEditFileContent: failingContent,
         });
         if (action.kind === 'nudge') {
           forcedEditNudges += 1;
           noEditToolRounds = 0;
+
           messages.push({
             role: 'user',
             content: action.nudgeMessage,
@@ -536,7 +861,7 @@ export async function executeNode(
           newMessages.push({
             role: 'assistant',
             content:
-              `[Watchdog] Recovery nudge ${forcedEditNudges}/${MAX_FORCED_EDIT_NUDGES}: forcing one concrete edit attempt now.`,
+              `[Watchdog] Recovery nudge ${forcedEditNudges}/${effectiveMaxNudges}: forcing one concrete edit attempt now.`,
           });
           continue;
         }
@@ -574,6 +899,7 @@ export async function executeNode(
             message: formatExecuteWatchdogError(action.diagnostics, action.nextAction),
             nextAction: action.nextAction,
             stopReason: 'stalled_no_edit_rounds',
+            blockerCode: currentBlockerCode,
           });
           const failedSteps = updatedSteps.map((s, i) =>
             i === state.currentStepIndex ? { ...s, status: 'failed' as const } : s,

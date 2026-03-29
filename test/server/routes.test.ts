@@ -103,6 +103,66 @@ describe('POST /run validation', () => {
     expect(body.runId).toBeTruthy();
   });
 
+  it('echoes project context on accepted runs', async () => {
+    const res = await fetch(`${baseUrl}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'test instruction with project',
+        projectContext: { projectId: 'ship-agent', projectLabel: 'Ship Agent' },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      runId: string;
+      projectContext: { projectId: string; projectLabel: string } | null;
+    };
+    expect(body.runId).toBeTruthy();
+    expect(body.projectContext).toEqual({ projectId: 'ship-agent', projectLabel: 'Ship Agent' });
+
+    const runRes = await fetch(`${baseUrl}/runs/${body.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as {
+      projectContext: { projectId: string; projectLabel: string } | null;
+    };
+    expect(runBody.projectContext).toEqual({ projectId: 'ship-agent', projectLabel: 'Ship Agent' });
+  });
+
+  it('stores and returns explicit run lineage ids', async () => {
+    const res = await fetch(`${baseUrl}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'lineage test run',
+        campaignId: 'campaign-123',
+        rootRunId: 'root-456',
+        parentRunId: 'parent-789',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      runId: string;
+      campaignId: string | null;
+      rootRunId: string | null;
+      parentRunId: string | null;
+    };
+    expect(body.runId).toBeTruthy();
+    expect(body.campaignId).toBe('campaign-123');
+    expect(body.rootRunId).toBe('root-456');
+    expect(body.parentRunId).toBe('parent-789');
+
+    const runRes = await fetch(`${baseUrl}/runs/${body.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as {
+      campaignId: string | null;
+      rootRunId: string | null;
+      parentRunId: string | null;
+    };
+    expect(runBody.campaignId).toBe('campaign-123');
+    expect(runBody.rootRunId).toBe('root-456');
+    expect(runBody.parentRunId).toBe('parent-789');
+  });
+
   it('applies the composer model picker to the whole run', async () => {
     const loop2 = new InstructionLoop();
     const app2 = createApp(loop2);
@@ -130,15 +190,55 @@ describe('POST /run validation', () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    const debugRes = await fetch(`${baseUrl2}/runs/${body.runId}/debug`);
-    expect(debugRes.status).toBe(200);
-    const debugBody = await debugRes.json() as {
+    const runRes = await fetch(`${baseUrl2}/runs/${body.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as {
       modelOverride: string | null;
       resolvedModels: Record<string, string>;
     };
-    expect(debugBody.modelOverride).toBe('gpt-5-mini');
-    expect(debugBody.resolvedModels.coding).toBe('gpt-5-mini');
-    expect(debugBody.resolvedModels.planning).toBe('gpt-5-mini');
+    expect(runBody.modelOverride).toBe('gpt-5.4-mini');
+    expect(runBody.resolvedModels.coding).toBe('gpt-5.4-mini');
+    expect(runBody.resolvedModels.planning).toBe('gpt-5.4-mini');
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  }, 15_000);
+
+  it('canonicalizes stale codex overrides before queuing a run', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const res = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'refactor small file',
+        uiMode: 'plan',
+        model: 'gpt-5.3-codex',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { runId: string };
+    expect(body.runId).toBeTruthy();
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    const runRes = await fetch(`${baseUrl2}/runs/${body.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as {
+      modelOverride: string | null;
+      resolvedModels: Record<string, string>;
+    };
+    expect(runBody.modelOverride).toBe('gpt-5.4');
+    expect(runBody.resolvedModels.planning).toBe('gpt-5.4');
+    expect(runBody.resolvedModels.coding).toBe('gpt-5.4');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   }, 15_000);
@@ -155,6 +255,139 @@ describe('POST /run validation', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { runId: string };
     expect(body.runId).toBeTruthy();
+  });
+
+  it('accepts supplied execution plans and disables confirm-plan waits', async () => {
+    const res = await fetch(`${baseUrl}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'execute rebuild plan',
+        uiMode: 'plan',
+        confirmPlan: true,
+        executionPlan: [
+          { description: 'refactor api', files: ['/repo/api.ts'] },
+          { description: 'refactor web', files: ['/repo/web.ts'] },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      runId: string;
+      confirmPlan: boolean;
+      runMode: string;
+    };
+    expect(body.runId).toBeTruthy();
+    expect(body.confirmPlan).toBe(false);
+    expect(body.runMode).toBe('code');
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const runRes = await fetch(`${baseUrl}/runs/${body.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as {
+      steps: Array<{ description: string }>;
+    };
+    expect(runBody.steps.map((step) => step.description)).toEqual(['refactor api', 'refactor web']);
+  });
+
+  it('accepts planDoc and creates run successfully', async () => {
+    const res = await fetch(`${baseUrl}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'rebuild with PRD',
+        planDoc: '# Ship PRD\n\nBuild a collaborative editor.',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { runId: string };
+    expect(body.runId).toBeTruthy();
+  });
+
+  it('uses attached plan docs as execution guidance instead of awaiting plan confirmation', async () => {
+    const res = await fetch(`${baseUrl}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'ship this PRD',
+        uiMode: 'plan',
+        planDoc: '# Plan\n\n1. Update API\n2. Update dashboard',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      runId: string;
+      confirmPlan: boolean;
+      runMode: string;
+      requestedUiMode: string | null;
+    };
+    expect(body.runId).toBeTruthy();
+    expect(body.confirmPlan).toBe(false);
+    expect(body.runMode).toBe('code');
+    expect(body.requestedUiMode).toBe('agent');
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const runRes = await fetch(`${baseUrl}/runs/${body.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as {
+      phase: string;
+      requestedUiMode: string | null;
+    };
+    expect(runBody.phase).not.toBe('awaiting_confirmation');
+    expect(runBody.requestedUiMode).toBe('agent');
+  });
+
+  it('treats agent-mode plan docs as code runs and derives execution steps', async () => {
+    const res = await fetch(`${baseUrl}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'build ship app from attached plan',
+        uiMode: 'agent',
+        planDoc: '# Ship Rebuild\n\nVertical 1: Database schema and migrations\nVertical 2: Auth and session management\nVertical 3: Document CRUD API',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      runId: string;
+      confirmPlan: boolean;
+      runMode: string;
+      requestedUiMode: string | null;
+    };
+    expect(body.runId).toBeTruthy();
+    expect(body.confirmPlan).toBe(false);
+    expect(body.runMode).toBe('code');
+    expect(body.requestedUiMode).toBe('agent');
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const runRes = await fetch(`${baseUrl}/runs/${body.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as {
+      steps: Array<{ description: string }>;
+    };
+    expect(runBody.steps.map((step) => step.description)).toEqual([
+      'Database schema and migrations',
+      'Auth and session management',
+      'Document CRUD API',
+    ]);
+  });
+
+  it('rejects planDoc exceeding max size (500KB)', async () => {
+    const hugeDoc = 'x'.repeat(500 * 1024 + 1);
+    const res = await fetch(`${baseUrl}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'rebuild',
+        planDoc: hugeDoc,
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain('planDoc exceeds max size');
   });
 
   it('returns immediate ask result for trivial hi', async () => {
@@ -247,7 +480,7 @@ describe('POST /run validation', () => {
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });
 
-  it('keeps requested agent ui mode visible in debug snapshots even when execution resolves to ask', async () => {
+  it('keeps requested agent ui mode visible in stored runs even when execution resolves to ask', async () => {
     const loop2 = new InstructionLoop();
     const app2 = createApp(loop2);
     const server2 = createServer(app2);
@@ -268,18 +501,18 @@ describe('POST /run validation', () => {
     const body = await res.json() as { runId: string };
     expect(body.runId).toBeTruthy();
 
-    const debugRes = await fetch(`${baseUrl2}/runs/${body.runId}/debug`);
-    expect(debugRes.status).toBe(200);
-    const debugBody = await debugRes.json() as {
+    const runRes = await fetch(`${baseUrl2}/runs/${body.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as {
       requestedUiMode: string | null;
       runMode: string | null;
       threadKind: string | null;
       executionPath: string | null;
     };
-    expect(debugBody.requestedUiMode).toBe('agent');
-    expect(debugBody.runMode).toBe('auto');
-    expect(debugBody.threadKind).toBe('ask');
-    expect(debugBody.executionPath).toBe('local-shortcut');
+    expect(runBody.requestedUiMode).toBe('agent');
+    expect(runBody.runMode).toBe('auto');
+    expect(runBody.threadKind).toBe('ask');
+    expect(runBody.executionPath).toBe('local-shortcut');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });
@@ -357,14 +590,14 @@ describe('POST /runs/:id/followup', () => {
     });
     expect(res.status).toBe(200);
 
-    const debugRes = await fetch(`${baseUrl2}/runs/${created.runId}/debug`);
-    expect(debugRes.status).toBe(200);
-    const debugBody = await debugRes.json() as {
+    const runRes = await fetch(`${baseUrl2}/runs/${created.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as {
       modelOverride: string | null;
       resolvedModels: Record<string, string>;
     };
-    expect(debugBody.modelOverride).toBe('gpt-5-mini');
-    expect(debugBody.resolvedModels.chat).toBe('gpt-5-mini');
+    expect(runBody.modelOverride).toBe('gpt-5.4-mini');
+    expect(runBody.resolvedModels.chat).toBe('gpt-5.4-mini');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });
@@ -403,14 +636,14 @@ describe('POST /runs/:id/followup', () => {
     });
     expect(res.status).toBe(200);
 
-    const debugRes = await fetch(`${baseUrl2}/runs/${created.runId}/debug`);
-    expect(debugRes.status).toBe(200);
-    const debugBody = await debugRes.json() as {
+    const runRes = await fetch(`${baseUrl2}/runs/${created.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as {
       modelOverride: string | null;
       resolvedModels: Record<string, string>;
     };
-    expect(debugBody.modelOverride).toBeNull();
-    expect(debugBody.resolvedModels.chat).toBe('gpt-5.4-mini');
+    expect(runBody.modelOverride).toBeNull();
+    expect(runBody.resolvedModels.chat).toBe('gpt-5.4-mini');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   }, 15_000);
@@ -446,6 +679,11 @@ describe('POST /runs/:id/followup', () => {
     const body = await res.json() as { runId: string; queued: boolean };
     expect(body.runId).toBe(created.runId);
     expect(body.queued).toBe(true);
+
+    const run = loop2.getRun(created.runId);
+    expect(run?.rootRunId).toBe(created.runId);
+    expect(run?.campaignId).toBe(created.runId);
+    expect(run?.parentRunId).toBeNull();
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });
@@ -489,7 +727,7 @@ describe('POST /runs/:id/followup', () => {
     expect(run?.runId).toBe(created.runId);
     expect(run?.threadKind).toBe('agent');
     expect(run?.runMode).toBe('code');
-    expect(run?.modelOverride).toBe('gpt-5-mini');
+    expect(run?.modelOverride).toBe('gpt-5.4-mini');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });
@@ -507,7 +745,43 @@ describe('GET /runs/:id', () => {
     expect(body.error).toContain('Run not found');
   });
 
-  it('returns a debug snapshot with local trace fallback', async () => {
+  it('returns the stored run payload for a known run', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const createRes = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'hi', uiMode: 'ask' }),
+    });
+    expect(createRes.status).toBe(200);
+    const created = await createRes.json() as { runId: string };
+
+    const res = await fetch(`${baseUrl2}/runs/${created.runId}`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      runId: string;
+      executionPath: string;
+      traceUrl: string | null;
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(body.runId).toBe(created.runId);
+    expect(body.executionPath).toBe('local-shortcut');
+    expect(body.traceUrl).toBeNull();
+    expect(body.messages[0]?.role).toBe('user');
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+
+  it('returns the compact debug snapshot for a known run', async () => {
     const loop2 = new InstructionLoop();
     const app2 = createApp(loop2);
     const server2 = createServer(app2);
@@ -531,16 +805,16 @@ describe('GET /runs/:id', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as {
       runId: string;
-      executionPath: string;
-      openTraceUrl: string;
       localTraceUrl: string;
-      primaryModel: string | null;
+      openTraceUrl: string;
+      traceUrl: string | null;
+      instruction: string;
     };
     expect(body.runId).toBe(created.runId);
-    expect(body.executionPath).toBe('local-shortcut');
     expect(body.localTraceUrl).toBe(`/api/runs/${created.runId}/debug`);
-    expect(body.openTraceUrl).toBe(body.localTraceUrl);
-    expect(body.primaryModel).toBeNull();
+    expect(body.openTraceUrl).toBe(`/api/runs/${created.runId}/debug`);
+    expect(body.traceUrl).toBeNull();
+    expect(body.instruction).toBe('hi');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });

@@ -9,9 +9,9 @@
 - [x] write_file emits file_edit events (tier-4)
 - [x] Plan node exploration streams tool_activity to dashboard
 - [x] DB migration for token_input/token_output columns
-- [ ] Plan doc upload per run
-- [ ] Plan-then-confirm (show plan, user approves before execute)
-- [ ] Repo map context (generate once, inject into every run)
+- [x] Plan doc upload per run
+- [x] Plan-then-confirm (show plan, user approves before execute)
+- [x] Repo map context (generate once, inject into every run)
 
 ## Architecture
 
@@ -26,6 +26,7 @@ hooks.ts                     loop.ts                    ws.ts              dashb
 ```
 
 - `LiveFeedEvent` union type in `hooks.ts` covers `file_edit` and `tool` events
+- `tool` events now carry `tool_input`, serialized `tool_result`, and `duration_ms` so live timeline cards match persisted run detail without reload
 - Module-level `liveFeedListener` set/cleared by `loop.ts` around `graph.stream()`
 - `createRecordingHooks()` fires for execute node (edit_file + write_file)
 - `createPlanLiveHooks()` fires for plan node (read_file, grep, glob, bash)
@@ -37,7 +38,7 @@ Allow attaching a requirements/plan document per run:
 1. Dashboard textarea or file upload for plan doc content
 2. `POST /api/run` accepts optional `planDoc` field
 3. Plan doc injected as a context entry (`source: 'user'`, `label: 'Plan Document'`)
-4. Plan node sees it in `state.contexts` and scopes work accordingly
+4. Agent uses it as execution guidance; if the user picked `uiMode: "plan"`, Shipyard skips the plan confirmation stop and runs as an agent thread instead
 
 ### Plan-then-Confirm (planned)
 
@@ -49,10 +50,13 @@ Two-phase run: plan first, then user approves before execution.
 4. `POST /api/runs/:id/confirm` with optional edited steps resumes execution
 5. Skips plan node, starts at execute with the confirmed steps
 
-### Repo Map (planned)
+### Repo Map experiment (historical)
 
-Cached file tree + key exports, injected as context to avoid re-exploration.
+Tried cached file tree + key exports as injected context to avoid re-exploration.
 
+Result: not active. Token cost stayed high, utility low, so the runtime hook was removed.
+
+Original idea:
 1. On server start (or on first run), generate repo map via `find + grep`
 2. Store as a context entry (`source: 'system'`, `label: 'Repo Map'`)
 3. Plan node receives it, reducing glob/grep rounds from ~8 to ~2

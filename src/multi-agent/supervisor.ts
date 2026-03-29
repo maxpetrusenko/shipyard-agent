@@ -38,11 +38,74 @@ const DECOMPOSE_SYSTEM = `You are a task supervisor. Decompose the given task in
 
 Rules:
 - Each subtask should be self-contained and work on different files when possible
-- If tasks MUST touch the same file, flag them as sequential (not parallel)
+- CRITICAL: Every subtask MUST list ALL files it will read or write in the "files" array. Include files the task will likely need to modify based on imports, routes, and shared modules.
+- If two subtasks share ANY file in their "files" arrays, they MUST appear together in "sequential_pairs". Parallel execution of tasks sharing files causes merge conflicts.
 - Keep subtasks focused: one concern per subtask
 
 Output as JSON:
 {"subtasks": [{"id": "1", "description": "...", "files": ["..."], "role": "frontend|backend|test"}], "sequential_pairs": [["1", "2"]]}`;
+
+/**
+ * Extract relative file paths from a subtask description.
+ * Matches patterns like `routes/files.ts`, `src/services/auth.ts`, `api/src/routes/files.ts`.
+ * Requires at least one `/` separator and a file extension to avoid false positives.
+ */
+export function extractRelativePaths(description: string): string[] {
+  const seen = new Set<string>();
+  // Match word-char sequences with at least one `/` and a file extension
+  const regex = /(?:^|\s|`|"|')([a-zA-Z0-9_@.-]+\/[a-zA-Z0-9_/.@-]+\.[a-zA-Z]{1,8})(?=$|\s|[.,;:()`"'])/g;
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(description)) !== null) {
+    const raw = m[1]?.trim();
+    if (raw && !raw.startsWith('http') && !raw.startsWith('//')) {
+      seen.add(raw);
+    }
+  }
+  return [...seen];
+}
+
+/**
+ * Post-decomposition validation: scan subtask descriptions for file paths
+ * not listed in files[], add them, and auto-serialize tasks with shared files.
+ */
+export function enforceFileOwnership(
+  subtasks: SubTask[],
+  sequentialPairs: string[][],
+): { subtasks: SubTask[]; sequentialPairs: string[][] } {
+  // 1. Enrich each subtask's files[] with paths found in description
+  const enriched = subtasks.map((task) => {
+    const found = extractRelativePaths(task.description);
+    const existing = new Set(task.files ?? []);
+    for (const p of found) {
+      existing.add(p);
+    }
+    return { ...task, files: [...existing] };
+  });
+
+  // 2. Detect cross-task file overlaps and auto-add sequential pairs
+  const pairSet = new Set(sequentialPairs.map((p) => `${p[0]}:${p[1]}`));
+  const newPairs = [...sequentialPairs];
+
+  for (let i = 0; i < enriched.length; i++) {
+    for (let j = i + 1; j < enriched.length; j++) {
+      const a = enriched[i]!;
+      const b = enriched[j]!;
+      const aFiles = new Set(a.files);
+      const hasOverlap = b.files.some((f) => aFiles.has(f));
+      if (hasOverlap) {
+        const key = `${a.id}:${b.id}`;
+        const keyRev = `${b.id}:${a.id}`;
+        if (!pairSet.has(key) && !pairSet.has(keyRev)) {
+          newPairs.push([a.id, b.id]);
+          pairSet.add(key);
+          pairSet.add(keyRev);
+        }
+      }
+    }
+  }
+
+  return { subtasks: enriched, sequentialPairs: newPairs };
+}
 
 function isRateLimitLikeError(err: unknown): boolean {
   const msg =
@@ -61,24 +124,94 @@ function isRateLimitLikeError(err: unknown): boolean {
   );
 }
 
-function extractJsonPayload(text: string): {
+function parseDecomposePayload(candidate: string): {
   subtasks: SubTask[];
   sequentialPairs: string[][];
 } | null {
   try {
-    const jsonMatch = text.match(/\{[\s\S]*"subtasks"[\s\S]*\}/);
-    if (!jsonMatch) return null;
-    const parsed = JSON.parse(jsonMatch[0]) as {
+    const parsed = JSON.parse(candidate) as {
       subtasks: SubTask[];
       sequential_pairs?: string[][];
+      sequentialPairs?: string[][];
     };
+    if (!Array.isArray(parsed.subtasks)) return null;
     return {
       subtasks: parsed.subtasks,
-      sequentialPairs: parsed.sequential_pairs ?? [],
+      sequentialPairs:
+        parsed.sequential_pairs ??
+        parsed.sequentialPairs ??
+        [],
     };
   } catch {
     return null;
   }
+}
+
+function extractBalancedJsonObjects(text: string): string[] {
+  const objects: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === undefined) continue;
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === '{') {
+      if (depth === 0) start = i;
+      depth += 1;
+      continue;
+    }
+
+    if (ch === '}') {
+      if (depth === 0) continue;
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return objects;
+}
+
+export function extractJsonPayload(text: string): {
+  subtasks: SubTask[];
+  sequentialPairs: string[][];
+} | null {
+  const fencedBlocks = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)]
+    .map((match) => match[1] ?? '')
+    .filter(Boolean);
+  const candidates = [text, ...fencedBlocks].flatMap(extractBalancedJsonObjects);
+
+  for (const candidate of candidates) {
+    const parsed = parseDecomposePayload(candidate);
+    if (parsed) return parsed;
+  }
+
+  return null;
 }
 
 async function decomposeWithModel(
@@ -173,7 +306,9 @@ export async function decomposeTask(
   }
 
   const parsed = extractJsonPayload(text);
-  if (parsed && parsed.subtasks.length > 0) return parsed;
+  if (parsed && parsed.subtasks.length > 0) {
+    return enforceFileOwnership(parsed.subtasks, parsed.sequentialPairs);
+  }
 
   // Fallback: single task
   return {

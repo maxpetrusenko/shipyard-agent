@@ -9,6 +9,7 @@ import {
   requireScope,
   extractToken,
   isValidToken,
+  requestLooksLocal,
 } from '../../src/server/auth-scopes.js';
 import type { Request } from 'express';
 
@@ -47,11 +48,23 @@ function clearTokenEnv(): void {
 function fakeRequest(opts: {
   authorization?: string;
   invokeToken?: string;
+  host?: string;
+  forwardedHost?: string;
+  forwardedFor?: string;
+  ip?: string;
+  remoteAddress?: string;
 }): Request {
   const headers: Record<string, string | undefined> = {};
   if (opts.authorization) headers['authorization'] = opts.authorization;
   if (opts.invokeToken) headers['x-shipyard-invoke-token'] = opts.invokeToken;
-  return { headers } as unknown as Request;
+  if (opts.host) headers['host'] = opts.host;
+  if (opts.forwardedHost) headers['x-forwarded-host'] = opts.forwardedHost;
+  if (opts.forwardedFor) headers['x-forwarded-for'] = opts.forwardedFor;
+  return {
+    headers,
+    ip: opts.ip,
+    socket: { remoteAddress: opts.remoteAddress },
+  } as unknown as Request;
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +321,31 @@ describe('auth-scopes', () => {
       expect(requireScope(req, 'retry')).toBe(true);
       expect(requireScope(req, 'admin')).toBe(true);
       expect(requireScope(req, 'read')).toBe(true);
+    });
+  });
+
+  describe('requestLooksLocal', () => {
+    it('returns true for loopback host and address', () => {
+      const req = fakeRequest({ host: 'localhost:4200', remoteAddress: '127.0.0.1' });
+      expect(requestLooksLocal(req)).toBe(true);
+    });
+
+    it('returns false for non-local forwarded host', () => {
+      const req = fakeRequest({
+        host: 'localhost:4200',
+        forwardedHost: 'agent.example.com',
+        remoteAddress: '127.0.0.1',
+      });
+      expect(requestLooksLocal(req)).toBe(false);
+    });
+
+    it('returns false for non-local forwarded client address', () => {
+      const req = fakeRequest({
+        host: 'localhost:4200',
+        forwardedFor: '203.0.113.5',
+        remoteAddress: '127.0.0.1',
+      });
+      expect(requestLooksLocal(req)).toBe(false);
     });
   });
 });

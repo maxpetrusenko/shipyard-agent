@@ -3,8 +3,10 @@ import {
   runBeforeHooks,
   runAfterHooks,
   createRecordingHooks,
+  createPlanLiveHooks,
   createLoggingHooks,
   mergeHooks,
+  setLiveFeedListener,
 } from '../src/tools/hooks.js';
 import type { FileEdit, ToolCallRecord } from '../src/graph/state.js';
 
@@ -149,6 +151,24 @@ describe('createRecordingHooks', () => {
     expect(history[0].tool_result).toContain('"success":true');
   });
 
+  it('caps tool call history at 500 entries', async () => {
+    const edits: FileEdit[] = [];
+    const history: ToolCallRecord[] = [];
+    const hooks = createRecordingHooks(edits, history);
+
+    for (let index = 0; index < 520; index += 1) {
+      await runAfterHooks(hooks, {
+        tool_name: 'bash',
+        tool_input: { command: `echo ${index}` },
+        tool_result: { success: true, output: String(index) },
+        duration_ms: 1,
+      });
+    }
+
+    expect(history).toHaveLength(500);
+    expect(history[0].tool_result).toContain('20');
+  });
+
   it('truncates large tool results in history', async () => {
     const edits: FileEdit[] = [];
     const history: ToolCallRecord[] = [];
@@ -164,6 +184,77 @@ describe('createRecordingHooks', () => {
     });
 
     expect(history[0].tool_result.length).toBeLessThanOrEqual(10_000);
+  });
+
+  it('emits full live tool payload for rich timeline cards', async () => {
+    const edits: FileEdit[] = [];
+    const history: ToolCallRecord[] = [];
+    const hooks = createRecordingHooks(edits, history);
+    const liveFeed = vi.fn();
+    setLiveFeedListener(liveFeed);
+
+    await runAfterHooks(hooks, {
+      tool_name: 'bash',
+      tool_input: { command: 'echo hello' },
+      tool_result: { success: true, output: 'hello' },
+      duration_ms: 100,
+    });
+
+    expect(liveFeed).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'tool',
+      tool_name: 'bash',
+      tool_input: { command: 'echo hello' },
+      tool_result: expect.stringContaining('"output":"hello"'),
+      duration_ms: 100,
+    }));
+    setLiveFeedListener(null);
+  });
+});
+
+describe('createPlanLiveHooks', () => {
+  it('emits live plan tool payload for web search cards', async () => {
+    const hooks = createPlanLiveHooks();
+    const liveFeed = vi.fn();
+    setLiveFeedListener(liveFeed);
+
+    await runAfterHooks(hooks, {
+      tool_name: 'websearch',
+      tool_input: { query: 'latest bun release' },
+      tool_result: { success: true, results: [{ title: 'Bun', url: 'https://bun.sh' }] },
+      duration_ms: 42,
+    });
+
+    expect(liveFeed).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'tool',
+      tool_name: 'websearch',
+      detail: 'latest bun release',
+      tool_input: { query: 'latest bun release' },
+      tool_result: expect.stringContaining('"results"'),
+      duration_ms: 42,
+    }));
+    setLiveFeedListener(null);
+  });
+
+  it('fans out live feed events to multiple listeners without clobbering', async () => {
+    const hooks = createPlanLiveHooks();
+    const first = vi.fn();
+    const second = vi.fn();
+    const clearFirst = setLiveFeedListener(first);
+    const clearSecond = setLiveFeedListener(second);
+
+    await runAfterHooks(hooks, {
+      tool_name: 'websearch',
+      tool_input: { query: 'shipyard' },
+      tool_result: { success: true, results: [] },
+      duration_ms: 12,
+    });
+
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+
+    clearFirst?.();
+    clearSecond?.();
+    setLiveFeedListener(null);
   });
 });
 

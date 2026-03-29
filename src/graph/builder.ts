@@ -10,6 +10,7 @@
  *                                          ├─ retry -> plan
  *                                          └─ escalate -> error_recovery
  *                                                          ├─ plan (retry)
+ *                                                          ├─ execute (verification retry)
  *                                                          └─ report (fatal) -> END
  */
 
@@ -60,6 +61,8 @@ export function createShipyardGraph(opts?: CreateShipyardGraphOptions) {
   graph.addEdge(START, 'gate');
   graph.addConditionalEdges('gate', afterGate, {
     plan: 'plan',
+    coordinate: 'coordinate',
+    execute: 'execute',
     end: END,
   });
 
@@ -85,6 +88,7 @@ export function createShipyardGraph(opts?: CreateShipyardGraphOptions) {
   // Conditional: after error recovery
   graph.addConditionalEdges('error_recovery', afterErrorRecovery, {
     plan: 'plan',
+    execute: 'execute',
     report: 'report',
   });
 

@@ -34,7 +34,11 @@ export function ensureShipyardPgSchema(pool: Pool): Promise<void> {
       await pool.query(`
         ALTER TABLE shipyard_runs
           ADD COLUMN IF NOT EXISTS token_input INTEGER,
-          ADD COLUMN IF NOT EXISTS token_output INTEGER;
+          ADD COLUMN IF NOT EXISTS token_output INTEGER,
+          ADD COLUMN IF NOT EXISTS campaign_id TEXT,
+          ADD COLUMN IF NOT EXISTS root_run_id TEXT,
+          ADD COLUMN IF NOT EXISTS parent_run_id TEXT,
+          ADD COLUMN IF NOT EXISTS project_context JSONB;
       `);
     })().catch((e) => {
       pgSchemaReady = null;
@@ -64,6 +68,15 @@ function isFilePersistenceEnabled(): boolean {
     !process.env['VITEST'];
 }
 
+function latestUserMessageContent(messages: RunResult['messages'] | undefined): string {
+  const list = Array.isArray(messages) ? messages : [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const msg = list[i];
+    if (msg?.role === 'user' && msg.content.trim()) return msg.content.trim();
+  }
+  return '';
+}
+
 // ---------------------------------------------------------------------------
 // File-based persistence (default-on outside tests)
 // ---------------------------------------------------------------------------
@@ -79,6 +92,10 @@ function ensureResultsDir(dir: string = getResultsDir()): void {
 function serializeRun(result: RunResult): Record<string, unknown> {
   return {
     runId: result.runId,
+    campaignId: result.campaignId ?? null,
+    rootRunId: result.rootRunId ?? null,
+    parentRunId: result.parentRunId ?? null,
+    instruction: result.instruction ?? latestUserMessageContent(result.messages),
     phase: result.phase,
     steps: result.steps,
     fileEdits: result.fileEdits,
@@ -90,6 +107,7 @@ function serializeRun(result: RunResult): Record<string, unknown> {
     verificationResult: result.verificationResult ?? null,
     reviewFeedback: result.reviewFeedback ?? null,
     durationMs: result.durationMs,
+    peakRssKb: result.peakRssKb ?? null,
     requestedUiMode: result.requestedUiMode ?? null,
     threadKind: result.threadKind ?? null,
     runMode: result.runMode ?? null,
@@ -100,6 +118,7 @@ function serializeRun(result: RunResult): Record<string, unknown> {
     modelFamily: result.modelFamily ?? null,
     modelOverrides: result.modelOverrides ?? null,
     resolvedModels: result.resolvedModels ?? null,
+    projectContext: result.projectContext ?? null,
     completionStatus: result.completionStatus ?? null,
     cancellation: result.cancellation ?? null,
     loopDiagnostics: result.loopDiagnostics ?? null,
@@ -125,7 +144,12 @@ export function saveRunToFile(
   // Atomic write: tmp file + rename prevents corruption if process crashes mid-write.
   const tmpPath = `${filePath}.tmp`;
   writeFileSync(tmpPath, JSON.stringify(serializeRun(result), null, 2) + '\n');
-  renameSync(tmpPath, filePath);
+  try {
+    renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { unlinkSync(tmpPath); } catch {}
+    throw err;
+  }
   return filePath;
 }
 
@@ -196,6 +220,16 @@ function parseRunFile(filePath: string): RunResult | null {
 
     return {
       runId: data['runId'] as string,
+      campaignId:
+        typeof data['campaignId'] === 'string' ? data['campaignId'] : null,
+      rootRunId:
+        typeof data['rootRunId'] === 'string' ? data['rootRunId'] : null,
+      parentRunId:
+        typeof data['parentRunId'] === 'string' ? data['parentRunId'] : null,
+      instruction:
+        typeof data['instruction'] === 'string'
+          ? data['instruction']
+          : latestUserMessageContent((data['messages'] as RunResult['messages']) ?? []),
       phase: data['phase'] as RunResult['phase'],
       steps: (data['steps'] as RunResult['steps']) ?? [],
       fileEdits: (data['fileEdits'] as RunResult['fileEdits']) ?? [],
@@ -209,6 +243,7 @@ function parseRunFile(filePath: string): RunResult | null {
       reviewFeedback:
         (data['reviewFeedback'] as RunResult['reviewFeedback']) ?? null,
       durationMs: typeof data['durationMs'] === 'number' ? data['durationMs'] : 0,
+      peakRssKb: typeof data['peakRssKb'] === 'number' ? data['peakRssKb'] : null,
       requestedUiMode:
         data['requestedUiMode'] === 'ask' ||
         data['requestedUiMode'] === 'plan' ||
@@ -251,6 +286,12 @@ function parseRunFile(filePath: string): RunResult | null {
         data['resolvedModels'] &&
         typeof data['resolvedModels'] === 'object'
           ? (data['resolvedModels'] as RunResult['resolvedModels'])
+          : null,
+      projectContext:
+        data['projectContext'] &&
+        typeof data['projectContext'] === 'object' &&
+        !Array.isArray(data['projectContext'])
+          ? (data['projectContext'] as RunResult['projectContext'])
           : null,
       completionStatus:
         data['completionStatus'] === 'completed' ||
@@ -314,8 +355,8 @@ export async function createRun(
 
   await pool.query(
     `INSERT INTO shipyard_runs
-       (id, instruction, phase, steps, file_edits, token_input, token_output, trace_url, error, duration_ms)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (id, instruction, phase, steps, file_edits, token_input, token_output, trace_url, error, duration_ms, campaign_id, root_run_id, parent_run_id, project_context)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      ON CONFLICT (id) DO UPDATE SET
        instruction = EXCLUDED.instruction,
        phase       = EXCLUDED.phase,
@@ -325,7 +366,11 @@ export async function createRun(
        token_output= EXCLUDED.token_output,
        trace_url   = EXCLUDED.trace_url,
        error       = EXCLUDED.error,
-       duration_ms = EXCLUDED.duration_ms`,
+       duration_ms = EXCLUDED.duration_ms,
+       campaign_id = EXCLUDED.campaign_id,
+       root_run_id = EXCLUDED.root_run_id,
+       parent_run_id = EXCLUDED.parent_run_id,
+       project_context = EXCLUDED.project_context`,
     [
       run.runId,
       instruction,
@@ -337,6 +382,10 @@ export async function createRun(
       run.traceUrl ?? null,
       run.error ?? null,
       run.durationMs,
+      run.campaignId ?? null,
+      run.rootRunId ?? null,
+      run.parentRunId ?? null,
+      run.projectContext ? JSON.stringify(run.projectContext) : null,
     ],
   );
 }
@@ -383,6 +432,10 @@ export function pgRowToRunSummary(row: Record<string, unknown>): RunResult {
       : null;
   const steps = parsePgJsonb(row['steps'], [] as RunResult['steps']);
   const fileEdits = parsePgJsonb(row['file_edits'], [] as RunResult['fileEdits']);
+  const projectContext = parsePgJsonb(
+    row['project_context'],
+    null as RunResult['projectContext'],
+  );
   const created = row['created_at'];
   const savedAt =
     created instanceof Date
@@ -392,6 +445,10 @@ export function pgRowToRunSummary(row: Record<string, unknown>): RunResult {
         : undefined;
   return {
     runId: String(row['id'] ?? ''),
+    campaignId: (row['campaign_id'] as string) ?? null,
+    rootRunId: (row['root_run_id'] as string) ?? null,
+    parentRunId: (row['parent_run_id'] as string) ?? null,
+    instruction,
     phase: (row['phase'] as RunResult['phase']) ?? 'idle',
     steps,
     fileEdits,
@@ -404,6 +461,7 @@ export function pgRowToRunSummary(row: Record<string, unknown>): RunResult {
     reviewFeedback: null,
     durationMs: Number(row['duration_ms'] ?? 0),
     nextActions: [],
+    projectContext,
     savedAt,
   };
 }

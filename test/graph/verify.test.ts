@@ -24,7 +24,7 @@ vi.mock('../../src/runtime/trace-helpers.js', () => ({
   traceToolCall: (_name: string, _meta: unknown, fn: () => unknown) => fn(),
 }));
 
-import { verifyNode } from '../../src/graph/nodes/verify.js';
+import { runVerification, verifyNode } from '../../src/graph/nodes/verify.js';
 
 function baseState() {
   return {
@@ -189,5 +189,30 @@ describe('verifyNode', () => {
     expect(out.verificationResult?.newErrorCount).toBe(0);
     expect(out.verificationResult?.typecheck_output).toContain('Skipped verification');
     expect(mocks.runBash).not.toHaveBeenCalled();
+  });
+
+  it('can force test execution on non-final steps', async () => {
+    mocks.runBash.mockResolvedValue({
+      success: true,
+      exit_code: 0,
+      stdout: '',
+      stderr: '',
+    });
+
+    const state = {
+      ...baseState(),
+      steps: [
+        { index: 0, description: 'step1', files: ['/repo/a.ts'], status: 'pending' },
+        { index: 1, description: 'step2', files: ['/repo/b.ts'], status: 'pending' },
+      ],
+      currentStepIndex: 0,
+      fileEdits: [{ file_path: '/repo/a.ts', tier: 1 as const, old_string: 'a', new_string: 'b', timestamp: 1 }],
+    };
+
+    const out = await runVerification(state as any, { runTests: 'always' });
+
+    expect(out.verificationResult?.passed).toBe(true);
+    expect(mocks.runBash).toHaveBeenCalledTimes(3);
+    expect(mocks.runBash.mock.calls[2]?.[0]?.command).toContain('pnpm test');
   });
 });

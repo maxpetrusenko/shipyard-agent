@@ -47,7 +47,7 @@ Base defaults (overridden by `SHIPYARD_*_MODEL` env vars, then by UI/API):
 | Family | Planning / review | Coding / verification / summary / chat |
 |--------|-------------------|-----------------------------------------|
 | `anthropic` | Sonnet 4.5 | Haiku 4.5 for coding; Sonnet elsewhere |
-| `openai` | `gpt-5.3-codex` for planning + review | `gpt-5-mini` for coding, verification, summary, chat |
+| `openai` | `gpt-5.4` for planning + review | `gpt-5.4-mini` for coding, verification, summary, chat |
 
 **Per-stage overrides**: `POST /api/run` and `POST /api/runs/:id/followup` accept `modelFamily` (`anthropic` \| `openai`) and `models` (map of stage → model id). WebSocket `submit` supports the same fields for new runs. The dashboard `/settings` page stores `{ family, models }` in `localStorage` (`shipyard_model_prefs`) and sends them on each turn, including Ask follow-ups. A single `model` / `modelOverride` applies to the whole run unless a stage-specific override exists.
 
@@ -179,6 +179,7 @@ Supervisor (Opus)
 | `grep` | Ripgrep content search | plan, execute |
 | `glob` | File pattern matching | plan, execute |
 | `ls` | Directory listing | plan, execute |
+| `web_search` | Guarded Brave web search for exact errors/current docs | execute |
 | `spawn_agent` | Isolated sub-graph worker | execute (multi-agent) |
 | `ask_user` | HITL interrupt | execute, review |
 | `inject_context` | Add context mid-loop | execute |
@@ -186,6 +187,12 @@ Supervisor (Opus)
 ---
 
 ## 5. Server & API
+
+### Live Deployment
+
+- Provider: Hostinger
+- Base URL: `https://agent.ship.187.77.7.226.sslip.io`
+- Dashboard: `https://agent.ship.187.77.7.226.sslip.io/dashboard`
 
 ### HTML Pages
 
@@ -464,7 +471,6 @@ shipyard/
     context/
       store.ts                  # Context registry
       injector.ts               # System prompt builder
-      repo-map.ts               # Repository map context
   scripts/
     bench.sh                    # Benchmark harness (portable, awk fallback)
     run-rebuild.sh              # Rebuild pipeline driver
@@ -727,7 +733,6 @@ Rebuild pipeline was attempted against fresh clones of `ship-refactored`, but th
 
 ### Known Issues
 - 3 pre-existing test failures in `github-thread-continuity.test.ts` (event dedup race condition)
-- tsx watch server crashes during long rebuild runs (target file changes trigger restart)
 
 ### Not Started
 - [ ] Demo video (3-5 min)
@@ -792,7 +797,7 @@ We did **not** complete the full Ship rebuild from scratch. What we did achieve:
 
 1. **Coordinator merge conflict** (step 04, pass 1): Multiple workers edited the same routes file. Root cause: multi-agent merge strategy in Section 3.
 2. **Hub file export removal** (steps 04-06, pass 1): Agent's Tier 4 full rewrite removed exports from visibility.ts/auth.ts/api-tokens.ts. 700+ cascade errors. **Root fix**: blast radius guard + per-edit typecheck (Section 8).
-3. **Server crash during long runs**: tsx watch restarts on file changes in target dir. Workaround: ensure target is outside watch scope.
+3. **Dev watch restarts during long runs**: resolved by making `pnpm dev` non-watch and moving file-watch behavior to `pnpm dev:watch`.
 
 ### Root Cause Analysis (Rebuild Failures)
 

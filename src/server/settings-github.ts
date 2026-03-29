@@ -53,6 +53,11 @@ h1 span{color:var(--accent)}
 .note{font-size:10px;color:var(--dim);line-height:1.4;margin-top:6px}
 .status{font-size:11px;color:var(--dim);line-height:1.4;white-space:pre-wrap}
 .alert{font-size:11px;line-height:1.4;color:var(--red);background:var(--danger-bg-soft);border:1px solid var(--danger-border-soft);border-radius:var(--radius);padding:8px 10px;margin-top:8px}
+.connector-block{border:1px solid var(--border);border-radius:var(--radius);padding:10px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01));margin-top:10px}
+.connector-hd{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text);margin-bottom:6px}
+.connector-copy{font-size:11px;color:var(--dim);line-height:1.45;margin-bottom:8px}
+.connector-meta{margin-top:6px;padding:8px 10px;border:1px dashed var(--border);border-radius:var(--radius);background:var(--bg2);font-size:11px;color:var(--dim);line-height:1.45}
+.connector-meta strong{color:var(--text)}
 ${SHIPYARD_BADGE_STYLES}
 ${NAV_STYLES}
 </style>
@@ -73,7 +78,7 @@ ${NAV_STYLES}
 
     <main class="main">
       <div class="title">GitHub Connector</div>
-      <div class="sub">Click <code>Connect GitHub</code>, approve app installation + repository access in popup, then pick repository.</div>
+      <div class="sub">Click <code>Connect GitHub</code>. If GitHub leaves you on an existing install settings page, load installations here, choose yours, then load repos.</div>
 
       <div class="sec">
         <div class="sec-hd">Connection</div>
@@ -92,14 +97,29 @@ ${NAV_STYLES}
 
       <div class="sec">
         <div class="sec-hd">Repository Connection</div>
-        <div class="row" style="margin-top:8px">
-          <input class="input" id="query" placeholder="Filter repositories" style="flex:1">
-          <button type="button" class="btn btn-g" id="loadBtn">Load</button>
+        <div class="connector-block">
+          <div class="connector-hd">Installation Access</div>
+          <div class="connector-copy">Pick the installation tied to the repos you granted. Selecting one here auto-loads repos.</div>
+          <div class="row" style="margin-top:8px">
+            <select class="select" id="instSel" style="flex:1"><option value="">(load installations first)</option></select>
+            <button type="button" class="btn btn-g" id="instLoadBtn">Refresh</button>
+            <button type="button" class="btn btn-g" id="instUseBtn">Bind</button>
+          </div>
+          <div id="instMeta" class="connector-meta">No installation loaded yet.</div>
         </div>
-        <label class="label" for="repoSel">Repository</label>
-        <select class="select" id="repoSel"><option value="">(load repos first)</option></select>
-        <div class="row" style="margin-top:8px">
-          <button type="button" class="btn btn-p" id="connectRepoBtn">Connect Repo</button>
+        <div class="connector-block">
+          <div class="connector-hd">Granted Repositories</div>
+          <div class="connector-copy">Leave search blank to load every repo granted to the selected installation.</div>
+          <div class="row" style="margin-top:8px">
+            <input class="input" id="query" placeholder="Optional filter, blank = all granted repos" style="flex:1">
+            <button type="button" class="btn btn-g" id="loadBtn">Load Repos</button>
+          </div>
+          <div id="repoMeta" class="connector-meta">No repos loaded yet.</div>
+          <label class="label" for="repoSel">Repository</label>
+          <select class="select" id="repoSel"><option value="">(load repos first)</option></select>
+          <div class="row" style="margin-top:8px">
+            <button type="button" class="btn btn-p" id="connectRepoBtn">Connect Repo</button>
+          </div>
         </div>
         <div id="repoStatus" class="status" style="margin-top:8px"></div>
       </div>
@@ -109,32 +129,97 @@ ${NAV_STYLES}
 
 <script>
 var LS = {
-  repo: 'shipyard_settings_gh_repo'
+  repo: 'shipyard_settings_gh_repo',
+  installation: 'shipyard_settings_gh_installation'
 };
-var st = { githubInstallConfigured:false, githubConnected:false, githubInstallationId:null };
+var st = { githubInstallConfigured:false, githubAppConfigured:false, githubInstallMissing:[], githubAppMissing:[], githubInstallCallbackUrl:null, githubConnected:false, githubInstallationId:null };
+var githubInstallPollTimer = 0;
+var githubInstallPollUntil = 0;
+var githubVisibleInstallations = [];
+var githubVisibleRepos = [];
 function g(id){ return document.getElementById(id); }
 function lget(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
 function lset(k,v){ try{ if(v) localStorage.setItem(k,v); else localStorage.removeItem(k);}catch(e){} }
+function esc(v){ return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function repoAccessLabel(repositorySelection){ return repositorySelection === 'all' ? 'all repos' : 'selected repos'; }
+function selectedInstallation() {
+  var instSel = g('instSel');
+  var installationId = String(st.githubInstallationId || (instSel ? instSel.value : '') || '');
+  if (!installationId) return null;
+  for (var i = 0; i < githubVisibleInstallations.length; i++) {
+    if (String(githubVisibleInstallations[i].id) === installationId) return githubVisibleInstallations[i];
+  }
+  return null;
+}
+function installationSummary(inst) {
+  if (!inst) return '';
+  return inst.account_login + ' · ' + repoAccessLabel(inst.repository_selection) + ' · #' + inst.id;
+}
+function stopGithubInstallPolling() {
+  if (githubInstallPollTimer) {
+    window.clearInterval(githubInstallPollTimer);
+    githubInstallPollTimer = 0;
+  }
+}
+function startGithubInstallPolling(popupRef) {
+  stopGithubInstallPolling();
+  githubInstallPollUntil = Date.now() + 90 * 1000;
+  githubInstallPollTimer = window.setInterval(function(){
+    if (Date.now() >= githubInstallPollUntil || (popupRef && popupRef.closed)) stopGithubInstallPolling();
+    void loadInstallations({ quiet:true, autoSelectSingle:true, autoUsePreferred:true });
+  }, 2500);
+}
+function updateConnectorMeta() {
+  var instMeta = g('instMeta');
+  var repoMeta = g('repoMeta');
+  var instSel = g('instSel');
+  var repoSel = g('repoSel');
+  var inst = selectedInstallation();
+  var instSummary = installationSummary(inst);
+  if (instMeta) {
+    if (st.githubConnected && st.githubInstallationId && instSummary) instMeta.innerHTML = '<strong>Bound installation:</strong> ' + esc(instSummary) + '.';
+    else if (st.githubConnected && st.githubInstallationId) instMeta.innerHTML = '<strong>Bound installation:</strong> #' + st.githubInstallationId + '.';
+    else if (instSel && instSel.value && instSummary) instMeta.innerHTML = '<strong>Pending bind:</strong> ' + esc(instSummary) + '.';
+    else if (instSel && instSel.value) instMeta.innerHTML = '<strong>Pending bind:</strong> installation #' + esc(instSel.value) + '.';
+    else instMeta.innerHTML = 'No installation loaded yet. Click <strong>Refresh</strong> if you already granted access in GitHub.';
+  }
+  if (repoMeta) {
+    if (repoSel && repoSel.value && githubVisibleRepos.length > 0 && inst) repoMeta.innerHTML = '<strong>Ready to connect:</strong> ' + esc(repoSel.value) + '. ' + githubVisibleRepos.length + ' granted repo(s) visible from ' + esc(inst.account_login) + '.';
+    else if (repoSel && repoSel.value) repoMeta.innerHTML = '<strong>Ready to connect:</strong> ' + esc(repoSel.value);
+    else if (githubVisibleRepos.length > 0 && inst) repoMeta.innerHTML = '<strong>Granted repos loaded:</strong> ' + githubVisibleRepos.length + ' visible from ' + esc(inst.account_login) + ' (' + esc(repoAccessLabel(inst.repository_selection)) + ').';
+    else if (st.githubConnected) repoMeta.innerHTML = 'Installation bound. Leave search blank to pull every granted repo.';
+    else repoMeta.innerHTML = 'Bind an installation first. Then repos appear here.';
+  }
+}
 function updateUi() {
   var badge = g('connBadge');
   var summary = g('connSummary');
   var alert = g('setupAlert');
+  var installMissing = Array.isArray(st.githubInstallMissing) ? st.githubInstallMissing : [];
+  var appMissing = Array.isArray(st.githubAppMissing) ? st.githubAppMissing : [];
+  var callbackUrl = st.githubInstallCallbackUrl || '/api/github/install/callback';
   badge.className = 'status-badge ' + (st.githubConnected ? 'ok' : 'off');
   badge.textContent = st.githubConnected ? 'Connected' : 'Disconnected';
-  if (st.githubConnected) {
+  if (st.githubConnected) stopGithubInstallPolling();
+  if (installMissing.length > 0) {
+    summary.textContent = 'Missing ' + installMissing.join(', ');
+  } else if (appMissing.length > 0) {
+    summary.textContent = 'Missing ' + appMissing.join(', ');
+  } else if (st.githubConnected) {
     summary.textContent = st.githubInstallationId
       ? ('GitHub App installed (installation #' + st.githubInstallationId + ')')
       : 'Connected';
   } else {
     summary.textContent = 'Not connected';
   }
-  if (!st.githubInstallConfigured) {
+  if (installMissing.length > 0 || appMissing.length > 0) {
     alert.style.display = 'block';
-    alert.textContent = 'GitHub App connector is not configured on server.';
+    alert.textContent = 'GitHub App setup: Setup URL = ' + callbackUrl + '. Missing install vars: ' + (installMissing.length ? installMissing.join(', ') : 'none') + '. Missing token vars: ' + (appMissing.length ? appMissing.join(', ') : 'none') + '.';
   } else {
     alert.style.display = 'none';
     alert.textContent = '';
   }
+  updateConnectorMeta();
 }
 function refreshStatus() {
   return fetch('/api/settings/status')
@@ -142,6 +227,10 @@ function refreshStatus() {
     .then(function(x){
       st = {
         githubInstallConfigured: !!x.githubInstallConfigured,
+        githubAppConfigured: !!x.githubAppConfigured,
+        githubInstallMissing: Array.isArray(x.githubInstallMissing) ? x.githubInstallMissing : [],
+        githubAppMissing: Array.isArray(x.githubAppMissing) ? x.githubAppMissing : [],
+        githubInstallCallbackUrl: x.githubInstallCallbackUrl || null,
         githubConnected: !!x.githubConnected,
         githubInstallationId: x.githubInstallationId || null,
       };
@@ -155,17 +244,101 @@ function startInstallFlow() {
   }
   var w = window.open('/api/github/install/start', 'shipyard_github_install', 'width=760,height=860');
   if (!w) { g('repoStatus').textContent = 'Popup blocked.'; return; }
-  g('repoStatus').textContent = 'Waiting for GitHub app install...';
+  g('repoStatus').textContent = 'Popup opened. If GitHub stays on install settings, this page keeps refreshing installations and binds one when you pick it.';
+  startGithubInstallPolling(w);
+  window.setTimeout(function(){ loadInstallations({ quiet:true, autoSelectSingle:true, autoUsePreferred:true }); }, 1200);
 }
 function logout() {
   fetch('/api/github/install/logout', { method:'POST' })
     .then(function(r){ return r.json(); })
-    .then(function(){ g('repoStatus').textContent = 'Disconnected.'; refreshStatus(); })
+    .then(function(){
+      lset(LS.installation, '');
+      githubVisibleInstallations = [];
+      githubVisibleRepos = [];
+      var instSel = g('instSel');
+      if (instSel) instSel.innerHTML = '<option value="">(load installations first)</option>';
+      var repoSel = g('repoSel');
+      if (repoSel) repoSel.innerHTML = '<option value="">(load repos first)</option>';
+      stopGithubInstallPolling();
+      g('repoStatus').textContent = 'Disconnected.';
+      refreshStatus();
+    })
     .catch(function(e){ g('repoStatus').textContent = 'Disconnect failed: ' + e.message; });
+}
+function loadInstallations(opts) {
+  var o = { quiet: !!(opts && opts.quiet), autoSelectSingle: !!(opts && opts.autoSelectSingle), autoUsePreferred: !!(opts && opts.autoUsePreferred) };
+  if (!o.quiet) g('repoStatus').textContent = 'Loading installations...';
+  return fetch('/api/github/installations', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: '{}'
+  }).then(function(r){
+    return r.json().then(function(b){ return { ok: r.ok, body: b }; });
+  }).then(function(x){
+    if (!x.ok) throw new Error((x.body && x.body.error) || 'Installation load failed');
+    var installs = Array.isArray(x.body.installations) ? x.body.installations : [];
+    githubVisibleInstallations = installs;
+    var sel = g('instSel');
+    if (sel) {
+      sel.innerHTML = installs.length
+        ? installs.map(function(inst){
+            var label = inst.account_login + ' · ' + repoAccessLabel(inst.repository_selection || 'selected') + ' · #' + inst.id;
+            return '<option value="' + esc(inst.id) + '">' + esc(label) + '</option>';
+          }).join('')
+        : '<option value="">(no installations found)</option>';
+      var preferred = String(st.githubInstallationId || lget(LS.installation) || '');
+      if (preferred) {
+        for (var i = 0; i < sel.options.length; i++) if (sel.options[i].value === preferred) sel.value = preferred;
+      }
+      if ((!preferred || !sel.value) && o.autoSelectSingle && installs.length === 1) {
+        sel.value = String(installs[0].id);
+      }
+      updateConnectorMeta();
+      if (sel.value && (o.autoUsePreferred || (o.autoSelectSingle && installs.length === 1))) {
+        return useInstallation(true);
+      }
+    }
+    if (!o.quiet) g('repoStatus').textContent = installs.length ? ('Loaded ' + installs.length + ' installations.') : 'No installations found.';
+    return false;
+  }).catch(function(e){
+    if (!o.quiet) g('repoStatus').textContent = 'Installation load failed: ' + e.message;
+    return false;
+  });
+}
+function useInstallation(autoLoadRepos) {
+  var instSel = g('instSel');
+  var installationId = instSel ? instSel.value : '';
+  if (!installationId) {
+    g('repoStatus').textContent = 'Select installation.';
+    return Promise.resolve(false);
+  }
+  lset(LS.installation, installationId);
+  githubVisibleRepos = [];
+  var repoSel = g('repoSel');
+  if (repoSel) repoSel.innerHTML = '<option value="">(loading repos after bind)</option>';
+  g('repoStatus').textContent = 'Using installation #' + installationId + '...';
+  updateConnectorMeta();
+  return fetch('/api/github/install/select', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ installationId: Number(installationId) })
+  }).then(function(r){
+    return r.json().then(function(b){ return { ok: r.ok, body: b }; });
+  }).then(function(x){
+    if (!x.ok) throw new Error((x.body && x.body.error) || 'Installation select failed');
+    g('repoStatus').textContent = 'Using installation #' + installationId + '.';
+    return refreshStatus().then(function(){
+      if (autoLoadRepos) return loadRepos().then(function(){ return true; });
+      return true;
+    });
+  }).catch(function(e){
+    g('repoStatus').textContent = 'Installation select failed: ' + e.message;
+    return false;
+  });
 }
 function loadRepos() {
   g('repoStatus').textContent = 'Loading repositories...';
-  fetch('/api/github/repos', {
+  return fetch('/api/github/repos', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ query: g('query').value.trim() })
@@ -174,16 +347,23 @@ function loadRepos() {
   }).then(function(x){
     if (!x.ok) throw new Error((x.body && x.body.error) || 'Load failed');
     var repos = Array.isArray(x.body.repos) ? x.body.repos : [];
+    githubVisibleRepos = repos;
     var sel = g('repoSel');
     sel.innerHTML = repos.length
-      ? repos.map(function(r){ return '<option value="' + r.full_name + '">' + r.full_name + '</option>'; }).join('')
+      ? repos.map(function(r){ return '<option value="' + esc(r.full_name) + '">' + esc(r.full_name) + '</option>'; }).join('')
       : '<option value="">(no repos found)</option>';
     var saved = lget(LS.repo);
     if (saved) {
       for (var i = 0; i < sel.options.length; i++) if (sel.options[i].value === saved) sel.value = saved;
     }
-    g('repoStatus').textContent = repos.length ? ('Loaded ' + repos.length + ' repos.') : 'No repos found.';
-  }).catch(function(e){ g('repoStatus').textContent = 'Load failed: ' + e.message; });
+    if (!sel.value && repos.length === 1) {
+      sel.value = repos[0].full_name;
+      lset(LS.repo, repos[0].full_name);
+    }
+    updateConnectorMeta();
+    g('repoStatus').textContent = repos.length ? ('Loaded ' + repos.length + ' repos.') : 'No repos found. Try a different query, or leave search blank for all granted repos.';
+    return repos;
+  }).catch(function(e){ githubVisibleRepos = []; g('repoStatus').textContent = 'Load failed: ' + e.message; return []; });
 }
 function connectRepo() {
   var repo = g('repoSel').value;
@@ -202,18 +382,25 @@ function connectRepo() {
     }).catch(function(e){ g('repoStatus').textContent = 'Connect failed: ' + e.message; });
 }
 window.addEventListener('message', function(ev){
+  if (ev.origin !== window.location.origin) return;
   var data = ev && ev.data;
   if (!data || data.type !== 'shipyard_github_install') return;
   g('repoStatus').textContent = data.ok ? 'GitHub install completed.' : ('Install failed: ' + (data.message || 'unknown'));
-  refreshStatus();
-  if (data.ok) loadRepos();
+  stopGithubInstallPolling();
+  refreshStatus().then(function(){ return loadInstallations({ quiet:true, autoSelectSingle:true, autoUsePreferred:true }); }).then(function(selected){
+    if (data.ok && (st.githubConnected || selected)) return loadRepos();
+    return null;
+  });
 });
-refreshStatus();
+refreshStatus().then(function(){ return loadInstallations({ quiet:true, autoSelectSingle:true, autoUsePreferred:true }); });
 g('connectBtn').addEventListener('click', startInstallFlow);
 g('disconnectBtn').addEventListener('click', logout);
+g('instLoadBtn').addEventListener('click', function(){ loadInstallations(); });
+g('instUseBtn').addEventListener('click', function(){ useInstallation(true); });
 g('loadBtn').addEventListener('click', loadRepos);
 g('connectRepoBtn').addEventListener('click', connectRepo);
-g('repoSel').addEventListener('change', function(){ lset(LS.repo, g('repoSel').value || ''); });
+g('instSel').addEventListener('change', function(){ lset(LS.installation, g('instSel').value || ''); githubVisibleRepos = []; lset(LS.repo, ''); g('repoSel').innerHTML = '<option value="">(load repos after bind)</option>'; updateConnectorMeta(); if (g('instSel').value) void useInstallation(true); });
+g('repoSel').addEventListener('change', function(){ lset(LS.repo, g('repoSel').value || ''); updateConnectorMeta(); });
 </script>
 </body>
 </html>`;

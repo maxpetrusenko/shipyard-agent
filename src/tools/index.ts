@@ -13,6 +13,7 @@ import { runBash } from './bash.js';
 import { grepSearch } from './grep.js';
 import { globSearch } from './glob.js';
 import { listDirectory } from './ls.js';
+import { webSearch } from './web-search.js';
 import { spawnAgent } from './spawn-agent.js';
 import { askUser } from './ask-user.js';
 import { injectContext } from './inject-context.js';
@@ -106,6 +107,22 @@ export const TOOL_SCHEMAS: Anthropic.Tool[] = [
         cwd: { type: 'string', description: 'Working directory' },
       },
       required: ['command'],
+    },
+  },
+  {
+    name: 'web_search',
+    description:
+      'Search the web for exact errors, library behavior, or current docs. Disabled unless SHIPYARD_ENABLE_WEB_SEARCH=true.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        query: { type: 'string', description: 'Exact search query or error message' },
+        count: { type: 'number', description: 'Max result count (default 5, max 10)' },
+        country: { type: 'string', description: 'Optional country code (e.g. US)' },
+        search_lang: { type: 'string', description: 'Optional search language (e.g. en)' },
+        freshness: { type: 'string', description: 'Optional freshness hint (e.g. pd, pw, pm, py)' },
+      },
+      required: ['query'],
     },
   },
   {
@@ -236,6 +253,56 @@ export function getExecutionToolSchemas(instruction: string): Anthropic.Tool[] {
   return TOOL_SCHEMAS.filter((tool) => tool.name !== COMMIT_AND_OPEN_PR_TOOL_NAME);
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function matchesSchemaType(value: unknown, expectedType: string): boolean {
+  switch (expectedType) {
+    case 'string':
+      return typeof value === 'string';
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value);
+    case 'integer':
+      return Number.isInteger(value);
+    case 'boolean':
+      return typeof value === 'boolean';
+    case 'array':
+      return Array.isArray(value);
+    case 'object':
+      return isPlainObject(value);
+    default:
+      return true;
+  }
+}
+
+function validateToolInput(
+  name: string,
+  input: Record<string, unknown>,
+): string | null {
+  const schema = TOOL_SCHEMAS.find((tool) => tool.name === name)?.input_schema as {
+    required?: string[];
+    properties?: Record<string, { type?: string | string[] }>;
+  } | undefined;
+  if (!schema) return null;
+  if (!isPlainObject(input)) return 'Tool input must be an object.';
+
+  for (const key of schema.required ?? []) {
+    if (input[key] === undefined) return `Missing required field: ${key}`;
+  }
+
+  for (const [key, property] of Object.entries(schema.properties ?? {})) {
+    const value = input[key];
+    if (value === undefined || property.type === undefined) continue;
+    const expectedTypes = Array.isArray(property.type) ? property.type : [property.type];
+    if (!expectedTypes.some((type) => matchesSchemaType(value, type))) {
+      return `Invalid field type for ${key}: expected ${expectedTypes.join(' or ')}.`;
+    }
+  }
+
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Tool dispatch (raw, no hooks)
 // ---------------------------------------------------------------------------
@@ -256,6 +323,8 @@ async function dispatchToolRaw(
       return runBash(input as any) as any;
     case 'grep':
       return grepSearch(input as any) as any;
+    case 'web_search':
+      return webSearch(input as any) as any;
     case 'glob':
       return globSearch(input as any) as any;
     case 'ls':
@@ -271,6 +340,7 @@ async function dispatchToolRaw(
     case 'inject_context':
       return injectContext(input as any) as any;
     default:
+      console.warn('[tools] Unknown tool dispatched:', name);
       return { success: false, message: `Unknown tool: ${name}` };
   }
 }
@@ -296,6 +366,11 @@ export async function dispatchTool(
   hooks?: ToolHooks,
   overlay?: FileOverlay,
 ): Promise<Record<string, unknown>> {
+  const validationError = validateToolInput(name, input);
+  if (validationError) {
+    return { success: false, message: validationError };
+  }
+
   const ctx = { tool_name: name, tool_input: input };
 
   // Snapshot file before mutation

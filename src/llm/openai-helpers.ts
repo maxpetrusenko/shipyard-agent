@@ -4,6 +4,7 @@
 import OpenAI from 'openai';
 import { abortError } from '../runtime/abort-sleep.js';
 import { getRunAbortSignal } from '../runtime/run-signal.js';
+import { withTransientRetry } from './retry.js';
 
 export { abortError };
 
@@ -68,25 +69,30 @@ export async function chatCompletionCreateWithRetry(
 ): Promise<OpenAI.Chat.ChatCompletion> {
   const normalized = normalizeOpenAiChatCompletionBody(body);
   const signal = getRunAbortSignal();
-  try {
-    return await client.chat.completions.create(
-      normalized,
-      {
-        signal: signal ?? undefined,
-        langsmithExtra:
-          opts?.traceName || opts?.traceMetadata || opts?.traceTags
-            ? {
-                ...(opts?.traceName ? { name: opts.traceName } : {}),
-                ...(opts?.traceMetadata ? { metadata: opts.traceMetadata } : {}),
-                ...(opts?.traceTags ? { tags: opts.traceTags } : {}),
-              }
-            : undefined,
-      } as OpenAI.RequestOptions,
-    );
-  } catch (e) {
-    if (signal?.aborted) throw abortError();
-    throw e;
-  }
+  return withTransientRetry(
+    async () => {
+      try {
+        return await client.chat.completions.create(
+          normalized,
+          {
+            signal: signal ?? undefined,
+            langsmithExtra:
+              opts?.traceName || opts?.traceMetadata || opts?.traceTags
+                ? {
+                    ...(opts?.traceName ? { name: opts.traceName } : {}),
+                    ...(opts?.traceMetadata ? { metadata: opts.traceMetadata } : {}),
+                    ...(opts?.traceTags ? { tags: opts.traceTags } : {}),
+                  }
+                : undefined,
+          } as OpenAI.RequestOptions,
+        );
+      } catch (e) {
+        if (signal?.aborted) throw abortError();
+        throw e;
+      }
+    },
+    { label: 'OpenAI chatCompletionCreate' },
+  );
 }
 
 /**

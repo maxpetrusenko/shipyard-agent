@@ -386,6 +386,7 @@ describe('default state values', () => {
       phase: 'idle',
       steps: [],
       currentStepIndex: 0,
+      currentStepEditBaseline: null,
       fileEdits: [],
       toolCallHistory: [],
       verificationResult: null,
