@@ -1,0 +1,57 @@
+{
+  "runId": "7e99afec-db7d-4b23-b5bd-910b83ee832a",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": {
+    "input": 119,
+    "output": 82,
+    "cacheRead": 0,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/7e99afec-db7d-4b23-b5bd-910b83ee832a",
+  "messages": [
+    {
+      "role": "user",
+      "content": "run load test task 90006"
+    },
+    {
+      "role": "assistant",
+      "content": "I can’t run tasks from here.\n\nIf you want, I can help you:\n- figure out how to trigger load test task **90006**\n- interpret its expected behavior/results\n- troubleshoot a failure if you paste the error/output\n\nIf you need me to make code or workflow changes, please submit again with a concrete coding request (or turn off Chat-only mode if that’s enabled)."
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 821,
+  "threadKind": "ask",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-26T14:28:29.320Z",
+  "startedAt": "2026-03-26T14:28:35.718Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.3-codex",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.3-codex",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-26T14:28:36.539Z"
+}

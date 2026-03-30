@@ -110,6 +110,12 @@ describe('dangerous command blocking', () => {
     expect(result.message).toContain('Blocked');
   });
 
+  it('blocks apply_patch shell usage', async () => {
+    const result = await runBash({ command: "apply_patch << 'PATCH'\n*** Begin Patch\n*** End Patch\nPATCH" });
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('Blocked');
+  });
+
   it('blocks in-place perl rewrites', async () => {
     const result = await runBash({
       command: "find src -name '*.ts' -print0 | xargs -0 perl -0pi -e 's/foo/bar/g'",

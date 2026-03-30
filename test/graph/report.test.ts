@@ -96,4 +96,22 @@ describe('reportNode PR fallback', () => {
     expect(last).toContain('Outcome: FAILED');
     expect(last).toContain('Fatal: max retries');
   });
+
+  it('labels passed verification with pre-existing errors clearly', async () => {
+    hasSuccessfulPrToolCallMock.mockReturnValue(false);
+
+    const out = await reportNode({
+      ...baseState(),
+      verificationResult: {
+        passed: true,
+        error_count: 1,
+        newErrorCount: 0,
+        preExistingErrorCount: 1,
+      },
+    } as any);
+
+    const last = out.messages?.at(-1)?.content ?? '';
+    expect(last).toContain('Verification: PASSED (0 new, 1 pre-existing)');
+    expect(last).toContain('Errors: 1');
+  });
 });

@@ -6,8 +6,7 @@ import type { PlanStep, ShipyardStateType } from '../state.js';
 import type { SubTask } from '../../multi-agent/supervisor.js';
 import type { WorkerResult } from '../../multi-agent/worker.js';
 import { deriveScopeConstraints } from '../guards.js';
-import { WORK_DIR } from '../../config/work-dir.js';
-import { basename, relative } from 'node:path';
+import { basename, isAbsolute, relative } from 'node:path';
 import { runCoordinatedWorkerPlan } from './coordinate-worker-plan.js';
 
 /** Extract file paths mentioned in a subtask description. */
@@ -22,9 +21,23 @@ export function extractSubtaskFiles(description: string): string[] {
   return [...seen];
 }
 
-function topLevelRootFor(filePath: string): string {
-  const rel = relative(WORK_DIR, filePath);
-  return rel.split('/').filter(Boolean)[0] ?? basename(rel);
+function topLevelRootFor(workDir: string, filePath: string): string {
+  const normalizedFilePath = filePath.trim();
+  if (!normalizedFilePath) return '';
+
+  let rel = normalizedFilePath;
+  if (workDir) {
+    rel = relative(workDir, normalizedFilePath);
+  } else if (isAbsolute(normalizedFilePath)) {
+    const cwdRelative = relative(process.cwd(), normalizedFilePath);
+    rel = cwdRelative && !cwdRelative.startsWith('..') ? cwdRelative : normalizedFilePath.replace(/^\/+/, '');
+  }
+
+  const root = rel
+    .split('/')
+    .filter((segment) => segment.length > 0 && segment !== '.')
+    .find((segment) => segment !== '..');
+  return root ?? basename(rel);
 }
 
 export function markCompletedStepsFromWorkers(
@@ -82,8 +95,9 @@ export function shouldCoordinate(state: ShipyardStateType): boolean {
   }
 
   const rootOwners = new Map<string, number>();
+  const workDir = state.workDir ?? '';
   for (const step of state.steps) {
-    const stepRoots = new Set(step.files.map(topLevelRootFor).filter(Boolean));
+    const stepRoots = new Set(step.files.map((filePath) => topLevelRootFor(workDir, filePath)).filter(Boolean));
     if (stepRoots.size === 0) continue;
     for (const root of stepRoots) {
       const owners = (rootOwners.get(root) ?? 0) + 1;

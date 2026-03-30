@@ -1,0 +1,343 @@
+{
+  "idem-run-replay-1": {
+    "bodyHash": "0cb88fbf7c3c579565a33b058073399bad1311c87caa9905e24d138e3fcfdbc9",
+    "status": 200,
+    "payload": {
+      "runId": "baa599db-9946-41fe-ae7c-a94a360f6173",
+      "confirmPlan": false,
+      "runMode": "auto",
+      "uiMode": null,
+      "model": null,
+      "modelFamily": null,
+      "models": null
+    },
+    "createdAt": 1774492423469
+  },
+  "idem-run-conflict-1": {
+    "bodyHash": "192b88faec2bab083f71aec8e6f639a83a89e26749c835750daf63ef4044e6fc",
+    "status": 200,
+    "payload": {
+      "runId": "61d860b1-95c3-4f57-97e0-adcdf07e0b50",
+      "confirmPlan": false,
+      "runMode": "auto",
+      "uiMode": null,
+      "model": null,
+      "modelFamily": null,
+      "models": null
+    },
+    "createdAt": 1774492423472
+  },
+  "idem-batch-conflict-1774492733976": {
+    "bodyHash": "425fed13a2e4c064b476a5f018768bf03ba025a615581a6e868dd377abc03c51",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 0,
+      "results": [
+        {
+          "id": "not-real-event-id-a",
+          "accepted": false,
+          "error": "Event not found",
+          "statusCode": 404
+        }
+      ]
+    },
+    "createdAt": 1774492733977
+  },
+  "idem-batch-1774492767118": {
+    "bodyHash": "aead085a3d87beb8c0a270bdec29683ba674201794850225a61a248176bb0c17",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 1,
+      "results": [
+        {
+          "id": "585f6233-c217-4b49-a4d5-0e6b6f5e63c4",
+          "accepted": true,
+          "runId": "5daba402-15e7-4e11-8ee9-028c7c34d217",
+          "retryOfEventId": "585f6233-c217-4b49-a4d5-0e6b6f5e63c4"
+        }
+      ]
+    },
+    "createdAt": 1774492767119
+  },
+  "idem-batch-conflict-1774492767120": {
+    "bodyHash": "425fed13a2e4c064b476a5f018768bf03ba025a615581a6e868dd377abc03c51",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 0,
+      "results": [
+        {
+          "id": "not-real-event-id-a",
+          "accepted": false,
+          "error": "Event not found",
+          "statusCode": 404
+        }
+      ]
+    },
+    "createdAt": 1774492767120
+  },
+  "idem-single-retry-1774492767122": {
+    "bodyHash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "ok": true,
+      "runId": "dec41aa3-e195-4cf8-8234-3ff2ee786bc9",
+      "retryOfEventId": "bb1c0e82-ba9f-4443-9fa0-b1d808ab7047"
+    },
+    "createdAt": 1774492767122
+  },
+  "idem-batch-1774492769602": {
+    "bodyHash": "98be6b108ffb10efa1d038edda73b3e536e8706b49233ab0c58f2bd71d2eb725",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 1,
+      "results": [
+        {
+          "id": "7cb3d2c2-5210-4088-a37a-51779a092b0e",
+          "accepted": true,
+          "runId": "20c9afdd-ebad-4745-b21e-38c50cac4389",
+          "retryOfEventId": "7cb3d2c2-5210-4088-a37a-51779a092b0e"
+        }
+      ]
+    },
+    "createdAt": 1774492769610
+  },
+  "idem-batch-conflict-1774492769618": {
+    "bodyHash": "425fed13a2e4c064b476a5f018768bf03ba025a615581a6e868dd377abc03c51",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 0,
+      "results": [
+        {
+          "id": "not-real-event-id-a",
+          "accepted": false,
+          "error": "Event not found",
+          "statusCode": 404
+        }
+      ]
+    },
+    "createdAt": 1774492769618
+  },
+  "idem-single-retry-1774492769625": {
+    "bodyHash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "ok": true,
+      "runId": "a935705c-cce9-41c2-8e0c-43b50498015e",
+      "retryOfEventId": "d8bb1b6a-29b2-4268-a2a9-795b4e5ff6bf"
+    },
+    "createdAt": 1774492769626
+  },
+  "idem-batch-1774492785956": {
+    "bodyHash": "ccedca43814d180c85d44125e303a9f2ba0a8ba7ff65d768c96ecd5268c101c2",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 1,
+      "results": [
+        {
+          "id": "f67ca517-8fbc-404d-bfab-cb2f1b9d67d1",
+          "accepted": true,
+          "runId": "2ea235e7-8762-4819-a2bc-8c1485c27e46",
+          "retryOfEventId": "f67ca517-8fbc-404d-bfab-cb2f1b9d67d1"
+        }
+      ]
+    },
+    "createdAt": 1774492785956
+  },
+  "idem-batch-conflict-1774492785959": {
+    "bodyHash": "425fed13a2e4c064b476a5f018768bf03ba025a615581a6e868dd377abc03c51",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 0,
+      "results": [
+        {
+          "id": "not-real-event-id-a",
+          "accepted": false,
+          "error": "Event not found",
+          "statusCode": 404
+        }
+      ]
+    },
+    "createdAt": 1774492785959
+  },
+  "idem-single-retry-1774492785962": {
+    "bodyHash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "ok": true,
+      "runId": "393b3c48-0a10-4228-b5ca-6e19b7455260",
+      "retryOfEventId": "3f999a36-9914-4971-8555-90b0d74a6cec"
+    },
+    "createdAt": 1774492785962
+  },
+  "idem-batch-1774492801408": {
+    "bodyHash": "c0f975d1e01a6fad22b9c57ab056daf664f261946821ec505d5fae9878b87612",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 1,
+      "results": [
+        {
+          "id": "571527fb-2b95-4871-a3a4-62574c23f843",
+          "accepted": true,
+          "runId": "540a1705-979b-4128-9973-7505334e15db",
+          "retryOfEventId": "571527fb-2b95-4871-a3a4-62574c23f843"
+        }
+      ]
+    },
+    "createdAt": 1774492801408
+  },
+  "idem-batch-conflict-1774492801410": {
+    "bodyHash": "425fed13a2e4c064b476a5f018768bf03ba025a615581a6e868dd377abc03c51",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 0,
+      "results": [
+        {
+          "id": "not-real-event-id-a",
+          "accepted": false,
+          "error": "Event not found",
+          "statusCode": 404
+        }
+      ]
+    },
+    "createdAt": 1774492801411
+  },
+  "idem-single-retry-1774492801413": {
+    "bodyHash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "ok": true,
+      "runId": "d8211cbb-76aa-474c-a86e-07ef239c5bd2",
+      "retryOfEventId": "646854ca-d5e3-4f4d-aec7-396648914733"
+    },
+    "createdAt": 1774492801414
+  },
+  "idem-batch-1774492813367": {
+    "bodyHash": "87b3924fe67dfa62ee42b612f96310435659c9b52c67cb096a8e281d80e4c3e5",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 1,
+      "results": [
+        {
+          "id": "529c6d88-fe5d-46b3-b90e-b75dee730bc3",
+          "accepted": true,
+          "runId": "f355ac48-47a3-4243-a9f5-714736fff9fb",
+          "retryOfEventId": "529c6d88-fe5d-46b3-b90e-b75dee730bc3"
+        }
+      ]
+    },
+    "createdAt": 1774492813368
+  },
+  "idem-batch-conflict-1774492813381": {
+    "bodyHash": "425fed13a2e4c064b476a5f018768bf03ba025a615581a6e868dd377abc03c51",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 0,
+      "results": [
+        {
+          "id": "not-real-event-id-a",
+          "accepted": false,
+          "error": "Event not found",
+          "statusCode": 404
+        }
+      ]
+    },
+    "createdAt": 1774492813383
+  },
+  "idem-single-retry-1774492813388": {
+    "bodyHash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "ok": true,
+      "runId": "6c7a696d-cda1-4efc-aecb-4cb840beae0c",
+      "retryOfEventId": "438fd098-3c13-40af-87ab-23a2303cf7fc"
+    },
+    "createdAt": 1774492813388
+  },
+  "idem-batch-1774492824267": {
+    "bodyHash": "56fdc8db56474f533ee818921e10ede34aa070e9267e98611ecb080b30f2f55a",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 1,
+      "results": [
+        {
+          "id": "420b4d9c-6856-47d8-b4d6-ea8242753bb9",
+          "accepted": true,
+          "runId": "a0c0a2b8-01e5-442e-99ae-16eb7e7cf6e6",
+          "retryOfEventId": "420b4d9c-6856-47d8-b4d6-ea8242753bb9"
+        }
+      ]
+    },
+    "createdAt": 1774492824269
+  },
+  "idem-batch-conflict-1774492824272": {
+    "bodyHash": "425fed13a2e4c064b476a5f018768bf03ba025a615581a6e868dd377abc03c51",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "dryRun": false,
+      "count": 1,
+      "acceptedCount": 0,
+      "results": [
+        {
+          "id": "not-real-event-id-a",
+          "accepted": false,
+          "error": "Event not found",
+          "statusCode": 404
+        }
+      ]
+    },
+    "createdAt": 1774492824272
+  },
+  "idem-single-retry-1774492824278": {
+    "bodyHash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "status": 200,
+    "payload": {
+      "accepted": true,
+      "ok": true,
+      "runId": "238f2d54-3ee4-4f75-a813-ac92578cf3fa",
+      "retryOfEventId": "8059897c-c533-4224-b58f-da9dfeb1bc9a"
+    },
+    "createdAt": 1774492824279
+  }
+}

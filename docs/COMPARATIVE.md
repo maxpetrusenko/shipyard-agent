@@ -266,7 +266,7 @@ Prefix caching matters even on Max plan: cached prefixes process faster (lower l
 
 ### 7.2 Implement context compaction earlier
 
-Context compaction is now implemented (`src/llm/message-compaction.ts`, `src/llm/openai-message-compaction.ts`) and wired into the runtime loop. For runs with 10+ execution cycles, the conversation history is compacted to prevent context window exhaustion. Both Anthropic and OpenAI message formats have dedicated compaction logic.
+Context compaction is now implemented (`src/llm/message-compaction.ts`, `src/llm/openai-message-compaction.ts`) and wired into the runtime loop plus the ask/chat gate. For runs with long execution or chat cycles, the conversation history is compacted before model calls to prevent context window exhaustion. Both Anthropic and OpenAI message formats have dedicated compaction logic.
 
 In hindsight, compaction should have been implemented alongside the verify-retry loop from the start, because retry loops are the primary source of context bloat: each retry adds the full plan, execute, verify, and review conversation to the history. The late addition required touching multiple call sites.
 

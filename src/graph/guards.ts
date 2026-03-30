@@ -2,6 +2,8 @@
  * Deterministic guardrails for scope/completeness checks.
  */
 
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import type { FileEdit, PlanStep, ShipyardStateType } from './state.js';
 
 export interface ScopeConstraints {
@@ -163,7 +165,7 @@ const INFORMATIONAL_PREFIXES = [
 ];
 
 const EDIT_INTENT_PATTERNS = [
-  /\b(make|apply|add|update|change|edit|modify|fix|refactor|implement|create|write|remove|delete|replace|rename|move|insert|patch|document)\b/,
+  /\b(make|apply|add|update|change|edit|modify|fix|refactor|implement|create|write|remove|delete|replace|rename|move|insert|patch|document|build|rebuild|bootstrap|scaffold|generate)\b/,
   /\bbugfix\b/,
   /\bplease\b.*\b(make|apply|add|update|change|edit|modify|fix|refactor|implement)\b/,
 ];
@@ -183,6 +185,145 @@ export function shouldRequireEdits(instruction: string): boolean {
     ]);
   }
   return true;
+}
+
+const APP_BOOTSTRAP_PATTERNS = [
+  /\b(?:build|rebuild|bootstrap|scaffold|create|generate|start)\b[\s\S]{0,80}\b(?:app|site|ui|frontend|dashboard|web app|landing page|project)\b/i,
+  /\bship app\b/i,
+];
+
+const COMMON_APP_MANIFESTS = [
+  'package.json',
+  'pyproject.toml',
+  'Cargo.toml',
+  'go.mod',
+  'Package.swift',
+];
+
+const COMMON_UI_SURFACES = [
+  'index.html',
+  'src/App.tsx',
+  'src/App.jsx',
+  'src/App.ts',
+  'src/App.js',
+  'src/main.tsx',
+  'src/main.jsx',
+  'src/main.ts',
+  'src/main.js',
+  'app/page.tsx',
+  'app/page.jsx',
+  'app/page.ts',
+  'app/page.js',
+  'pages/index.tsx',
+  'pages/index.jsx',
+  'pages/index.ts',
+  'pages/index.js',
+  'public/index.html',
+];
+
+export interface BootstrapWorkspaceStatus {
+  required: boolean;
+  ready: boolean;
+  manifestPath: string | null;
+  uiSurfacePath: string | null;
+  installEvidencePath: string | null;
+  missing: string[];
+}
+
+function fileExists(pathValue: string): boolean {
+  try {
+    return existsSync(pathValue) && statSync(pathValue).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function dirExists(pathValue: string): boolean {
+  try {
+    return existsSync(pathValue) && statSync(pathValue).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function firstExistingPath(workDir: string, relativePaths: string[], kind: 'file' | 'dir'): string | null {
+  for (const relativePath of relativePaths) {
+    const candidate = join(workDir, relativePath);
+    if (kind === 'file' ? fileExists(candidate) : dirExists(candidate)) return candidate;
+  }
+  return null;
+}
+
+function readPackageJson(workDir: string): {
+  scripts: string[];
+  hasDependencies: boolean;
+} | null {
+  const packageJsonPath = join(workDir, 'package.json');
+  if (!fileExists(packageJsonPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as {
+      scripts?: Record<string, unknown>;
+      dependencies?: Record<string, unknown>;
+      devDependencies?: Record<string, unknown>;
+    };
+    return {
+      scripts: Object.keys(parsed.scripts ?? {}),
+      hasDependencies:
+        Object.keys(parsed.dependencies ?? {}).length > 0
+        || Object.keys(parsed.devDependencies ?? {}).length > 0,
+    };
+  } catch {
+    return { scripts: [], hasDependencies: false };
+  }
+}
+
+export function requiresBootstrapWorkspace(instruction: string): boolean {
+  if (!shouldRequireEdits(instruction)) return false;
+  return APP_BOOTSTRAP_PATTERNS.some((pattern) => pattern.test(instruction));
+}
+
+export function inspectBootstrapWorkspace(
+  instruction: string,
+  workDir: string,
+): BootstrapWorkspaceStatus {
+  const required = requiresBootstrapWorkspace(instruction);
+  if (!required) {
+    return {
+      required: false,
+      ready: true,
+      manifestPath: null,
+      uiSurfacePath: null,
+      installEvidencePath: null,
+      missing: [],
+    };
+  }
+
+  const manifestPath = firstExistingPath(workDir, COMMON_APP_MANIFESTS, 'file');
+  const uiSurfacePath = firstExistingPath(workDir, COMMON_UI_SURFACES, 'file');
+  const missing: string[] = [];
+
+  if (!manifestPath) missing.push('package/app manifest');
+  if (!uiSurfacePath) missing.push('UI entry surface');
+
+  let installEvidencePath: string | null = null;
+  const packageJson = readPackageJson(workDir);
+  if (packageJson) {
+    const hasRuntimeScript = ['dev', 'start', 'build'].some((script) => packageJson.scripts.includes(script));
+    if (!hasRuntimeScript) missing.push('app run/build script');
+    if (packageJson.hasDependencies) {
+      installEvidencePath = firstExistingPath(workDir, ['node_modules'], 'dir');
+      if (!installEvidencePath) missing.push('installed dependencies');
+    }
+  }
+
+  return {
+    required,
+    ready: missing.length === 0,
+    manifestPath,
+    uiSurfacePath,
+    installEvidencePath,
+    missing,
+  };
 }
 
 export function constrainPlanStepsToScope(
@@ -275,34 +416,87 @@ function basenamePath(value: string): string {
   return (parts[parts.length - 1] ?? '').toLowerCase();
 }
 
-export function extractExplicitRepoTarget(instruction: string): string | null {
+function looksLikeRepoPathReference(value: string): boolean {
+  const normalized = normalizePath(value);
+  if (normalized.startsWith('/') || normalized.startsWith('~/')) return true;
+  if (/^[A-Za-z]:\//.test(normalized)) return true;
+  const slashCount = (normalized.match(/\//g) ?? []).length;
+  return slashCount >= 2;
+}
+
+interface ExplicitRepoTarget {
+  targetRepo: string;
+  weakBareToken: boolean;
+}
+
+function extractExplicitRepoTargetDetails(instruction: string): ExplicitRepoTarget | null {
   const patterns = [
-    /^\s*in\s+((?:~\/|\/|[A-Za-z]:[\\/]|[A-Za-z0-9._-]+\/)[^\s,;]+)\s*(?:,|\n|$)/im,
-    /^\s*in\s+([a-zA-Z0-9._-]+)\s*(?:,|\n|$)/im,
-    /\b(?:in|inside|within)\s+((?:~\/|\/|[A-Za-z]:[\\/]|[A-Za-z0-9._-]+\/)[^\s,;]+)\b/i,
-    /\b(?:in|inside|within)\s+([a-zA-Z0-9._-]+)\s+(?:repo|repository|project|codebase)\b/i,
+    {
+      pattern: /^\s*in\s+((?:~\/|\/|[A-Za-z]:[\\/]|[A-Za-z0-9._-]+\/)[^\s,;]+)\s*(?:,|\n|$)/im,
+      weakBareToken: false,
+    },
+    {
+      pattern: /^\s*in\s+([a-zA-Z0-9._-]+)\s*(?:,|\n|$)/im,
+      weakBareToken: true,
+    },
+    {
+      pattern: /\b(?:in|inside|within)\s+((?:~\/|\/|[A-Za-z]:[\\/]|[A-Za-z0-9._-]+\/)[^\s,;]+)\b/i,
+      weakBareToken: false,
+    },
+    {
+      pattern: /\b(?:in|inside|within)\s+([a-zA-Z0-9._-]+)\s+(?:repo|repository|project|codebase)\b/i,
+      weakBareToken: false,
+    },
   ];
-  for (const pattern of patterns) {
+  for (const { pattern, weakBareToken } of patterns) {
     const m = instruction.match(pattern);
     const rawCandidate = m?.[1]?.trim();
     const candidate = rawCandidate?.replace(/[.,;:]+$/, '');
     if (!candidate) continue;
+    if ((candidate.includes('/') || candidate.includes('\\')) && !looksLikeRepoPathReference(candidate)) {
+      continue;
+    }
     const normalizedCandidate = candidate.includes('/') || candidate.includes('\\')
       ? basenamePath(candidate)
       : candidate;
     const lowered = normalizedCandidate.toLowerCase();
     if (REPO_TARGET_STOPWORDS.has(lowered)) continue;
-    return normalizedCandidate;
+    return { targetRepo: normalizedCandidate, weakBareToken };
   }
   return null;
+}
+
+export function extractExplicitRepoTarget(instruction: string): string | null {
+  return extractExplicitRepoTargetDetails(instruction)?.targetRepo ?? null;
+}
+
+function isExistingDirectory(pathValue: string): boolean {
+  try {
+    return existsSync(pathValue) && statSync(pathValue).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isLikelyRepoReference(targetRepo: string, workDir: string): boolean {
+  if (/[\d-]/.test(targetRepo)) return true;
+  const normalizedWorkDir = resolve(workDir);
+  const candidates = [
+    resolve(normalizedWorkDir, targetRepo),
+    resolve(dirname(normalizedWorkDir), targetRepo),
+    resolve(dirname(dirname(normalizedWorkDir)), targetRepo),
+  ];
+  return candidates.some((candidate) => isExistingDirectory(candidate));
 }
 
 export function detectRepoTargetMismatch(
   instruction: string,
   workDir: string,
 ): { targetRepo: string; activeRepo: string } | null {
-  const targetRepo = extractExplicitRepoTarget(instruction);
-  if (!targetRepo) return null;
+  const target = extractExplicitRepoTargetDetails(instruction);
+  if (!target) return null;
+  const { targetRepo, weakBareToken } = target;
+  if (weakBareToken && !isLikelyRepoReference(targetRepo, workDir)) return null;
   const activeRepo = basenamePath(workDir);
   if (!activeRepo) return null;
   const normalizedTarget = targetRepo.toLowerCase();

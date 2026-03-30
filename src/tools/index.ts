@@ -6,6 +6,7 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
+import { relative, resolve } from 'node:path';
 import { editFile } from './edit-file.js';
 import { readFileWithLineNumbers } from './read-file.js';
 import { writeNewFile } from './write-file.js';
@@ -257,6 +258,75 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function normalizePathInput(value: unknown, workDir?: string): string | undefined {
+  if (!workDir || typeof value !== 'string' || value.trim().length === 0) return undefined;
+  return value.startsWith('/') ? value : resolve(workDir, value);
+}
+
+function isWithinWorkDir(candidatePath: string, workDir: string): boolean {
+  const rel = relative(resolve(workDir), resolve(candidatePath));
+  return rel === '' || (!rel.startsWith('..') && rel !== '..');
+}
+
+function validateToolScope(
+  name: string,
+  input: Record<string, unknown>,
+  workDir?: string,
+): string | null {
+  if (!workDir) return null;
+
+  const pathField =
+    name === 'read_file' || name === 'edit_file' || name === 'write_file'
+      ? 'file_path'
+      : name === 'grep' || name === 'ls'
+        ? 'path'
+        : name === 'glob' || name === 'bash' || name === 'commit_and_open_pr'
+          ? 'cwd'
+          : null;
+
+  if (!pathField) return null;
+  const rawValue = input[pathField];
+  if (typeof rawValue !== 'string' || rawValue.trim().length === 0) return null;
+  if (isWithinWorkDir(rawValue, workDir)) return null;
+  return `${name}: ${pathField} must stay within selected project root ${resolve(workDir)}.`;
+}
+
+function normalizeToolInputForWorkDir(
+  name: string,
+  input: Record<string, unknown>,
+  workDir?: string,
+): Record<string, unknown> {
+  if (!workDir) return input;
+
+  const next = { ...input };
+  if (name === 'read_file' || name === 'edit_file' || name === 'write_file') {
+    const resolved = normalizePathInput(next['file_path'], workDir);
+    if (resolved) next['file_path'] = resolved;
+  }
+
+  if (name === 'grep') {
+    next['path'] = normalizePathInput(next['path'], workDir) ?? workDir;
+  }
+
+  if (name === 'glob') {
+    next['cwd'] = normalizePathInput(next['cwd'], workDir) ?? workDir;
+  }
+
+  if (name === 'ls') {
+    next['path'] = normalizePathInput(next['path'], workDir) ?? workDir;
+  }
+
+  if (name === 'bash') {
+    next['cwd'] = normalizePathInput(next['cwd'], workDir) ?? workDir;
+  }
+
+  if (name === 'commit_and_open_pr') {
+    next['cwd'] = normalizePathInput(next['cwd'], workDir) ?? workDir;
+  }
+
+  return next;
+}
+
 function matchesSchemaType(value: unknown, expectedType: string): boolean {
   switch (expectedType) {
     case 'string':
@@ -365,24 +435,30 @@ export async function dispatchTool(
   input: Record<string, unknown>,
   hooks?: ToolHooks,
   overlay?: FileOverlay,
+  workDir?: string,
 ): Promise<Record<string, unknown>> {
-  const validationError = validateToolInput(name, input);
+  const normalizedInput = normalizeToolInputForWorkDir(name, input, workDir);
+  const validationError = validateToolInput(name, normalizedInput);
   if (validationError) {
     return { success: false, message: validationError };
   }
+  const scopeError = validateToolScope(name, normalizedInput, workDir);
+  if (scopeError) {
+    return { success: false, message: scopeError };
+  }
 
-  const ctx = { tool_name: name, tool_input: input };
+  const ctx = { tool_name: name, tool_input: normalizedInput };
 
   // Snapshot file before mutation
-  if (overlay && MUTATING_TOOLS.has(name) && input['file_path']) {
-    await overlay.snapshot(input['file_path'] as string);
+  if (overlay && MUTATING_TOOLS.has(name) && normalizedInput['file_path']) {
+    await overlay.snapshot(normalizedInput['file_path'] as string);
   }
 
   // Before hooks
   if (hooks) await runBeforeHooks(hooks, ctx);
 
   const startTime = Date.now();
-  const result = await traceToolCall(name, input, () => dispatchToolRaw(name, input));
+  const result = await traceToolCall(name, normalizedInput, () => dispatchToolRaw(name, normalizedInput));
   const duration = Date.now() - startTime;
 
   // After hooks

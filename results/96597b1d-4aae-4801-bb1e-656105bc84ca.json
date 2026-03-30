@@ -1,0 +1,57 @@
+{
+  "runId": "96597b1d-4aae-4801-bb1e-656105bc84ca",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": {
+    "input": 118,
+    "output": 64,
+    "cacheRead": 0,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/96597b1d-4aae-4801-bb1e-656105bc84ca",
+  "messages": [
+    {
+      "role": "user",
+      "content": "run load test task 13"
+    },
+    {
+      "role": "assistant",
+      "content": "I can’t run repository tasks from here in this chat.\n\nIf you want me to help with task 13, please resubmit with a concrete coding request or the exact load test command/output you want interpreted. If you’re using Chat-only mode, turn that off so I can act on the repo."
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 988,
+  "threadKind": "ask",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-26T14:27:48.223Z",
+  "startedAt": "2026-03-26T14:28:01.498Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.3-codex",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.3-codex",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-26T14:28:02.486Z"
+}

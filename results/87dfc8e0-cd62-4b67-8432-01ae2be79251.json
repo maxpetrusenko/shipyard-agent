@@ -1,0 +1,57 @@
+{
+  "runId": "87dfc8e0-cd62-4b67-8432-01ae2be79251",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": {
+    "input": 119,
+    "output": 53,
+    "cacheRead": 0,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/87dfc8e0-cd62-4b67-8432-01ae2be79251",
+  "messages": [
+    {
+      "role": "user",
+      "content": "run load test task 90009"
+    },
+    {
+      "role": "assistant",
+      "content": "I can’t run tasks from here.\n\nIf you want help with load test task **90009**, please submit a concrete request with what you want done, or if you’re using Chat-only mode, turn it off so a task can be executed."
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 956,
+  "threadKind": "ask",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-26T14:28:09.467Z",
+  "startedAt": "2026-03-26T14:28:19.342Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.3-codex",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.3-codex",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-26T14:28:20.299Z"
+}

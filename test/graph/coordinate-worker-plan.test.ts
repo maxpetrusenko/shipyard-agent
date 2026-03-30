@@ -70,6 +70,7 @@ function baseState(): ShipyardStateType {
     executeDiagnostics: null,
     modelHint: 'opus',
     runMode: 'code',
+    workDir: '/repo',
     gateRoute: 'plan',
     modelOverride: null,
     modelFamily: null,
@@ -124,7 +125,10 @@ describe('coordinateNode worker orchestration', () => {
     const out = await coordinateNode(baseState());
 
     expect(mocks.runWorker).toHaveBeenCalledTimes(3);
+    expect(mocks.runWorker.mock.calls[0]?.[3]).toMatchObject({ workDir: '/repo' });
     expect(mocks.runVerification).toHaveBeenCalledTimes(3);
+    expect(mocks.runVerification.mock.calls[0]?.[1]).toMatchObject({ mode: 'lightweight' });
+    expect(mocks.runVerification.mock.calls[2]?.[1]).toMatchObject({ mode: 'full' });
     expect(out.phase).toBe('verifying');
     expect(out.executionIssue).toBeNull();
     expect(out.steps?.every((step) => step.status === 'done')).toBe(true);
@@ -133,6 +137,56 @@ describe('coordinateNode worker orchestration', () => {
     expect(out.fileOverlaySnapshots).toContain('orig-api');
     expect(out.fileOverlaySnapshots).not.toContain('mid-api');
     expect(out.fileOverlaySnapshots).toContain('orig-web');
+  });
+
+  it('surfaces verification output when a coordinated step still fails after repairs', async () => {
+    mocks.runWorker
+      .mockResolvedValueOnce({
+        subtaskId: 'step-1-implement-1',
+        phase: 'done',
+        fileEdits: [edit('/repo/api.ts', 1)],
+        fileOverlaySnapshots: JSON.stringify({ '/repo/api.ts': 'orig-api' }),
+        toolCallHistory: [],
+        tokenUsage: { input: 2, output: 1 },
+        error: null,
+        durationMs: 5,
+      })
+      .mockResolvedValueOnce({
+        subtaskId: 'step-1-repair-2',
+        phase: 'done',
+        fileEdits: [edit('/repo/api.ts', 2)],
+        fileOverlaySnapshots: JSON.stringify({ '/repo/api.ts': 'mid-api' }),
+        toolCallHistory: [],
+        tokenUsage: { input: 2, output: 1 },
+        error: null,
+        durationMs: 5,
+      })
+      .mockResolvedValueOnce({
+        subtaskId: 'step-1-repair-3',
+        phase: 'done',
+        fileEdits: [edit('/repo/api.ts', 3)],
+        fileOverlaySnapshots: JSON.stringify({ '/repo/api.ts': 'mid-api-2' }),
+        toolCallHistory: [],
+        tokenUsage: { input: 2, output: 1 },
+        error: null,
+        durationMs: 5,
+      });
+
+    mocks.runVerification.mockResolvedValue({
+      verificationResult: {
+        passed: false,
+        error_count: 1,
+        newErrorCount: 1,
+        typecheck_output: 'Missing test script',
+        test_output: 'ERR_PNPM_NO_SCRIPT Missing script: test',
+      },
+    });
+
+    const out = await coordinateNode(baseState());
+
+    expect(out.executionIssue?.kind).toBe('coordination');
+    expect(out.executionIssue?.message).toContain('Missing test script');
+    expect(out.executionIssue?.message).toContain('Missing script: test');
   });
 
   it('returns recoverable coordination issue when a worker errors', async () => {

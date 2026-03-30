@@ -1,0 +1,57 @@
+{
+  "runId": "e4e740d8-2ae3-46d9-be43-60c88dd840e6",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": {
+    "input": 118,
+    "output": 109,
+    "cacheRead": 0,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/public/5d78248c-00c5-4fd5-b070-05312912fee7/r",
+  "messages": [
+    {
+      "role": "user",
+      "content": "run load test task 0"
+    },
+    {
+      "role": "assistant",
+      "content": "I can’t directly run tasks or execute the repository from here.\n\nIf “load test task 0” refers to a specific script, benchmark, or job in your project, share the exact command or the task definition and I can help you:\n- identify what it will do,\n- estimate expected output,\n- debug failures,\n- or write the command you should run locally.\n\nIf you want me to make changes for it, please submit again with a concrete coding request (or turn off Chat-only mode if you’re using it)."
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 3383,
+  "threadKind": "ask",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-26T14:27:00.594Z",
+  "startedAt": "2026-03-26T14:27:00.594Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.3-codex",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.3-codex",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-26T14:27:09.372Z"
+}

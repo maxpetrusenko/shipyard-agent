@@ -92,6 +92,7 @@ function ensureResultsDir(dir: string = getResultsDir()): void {
 function serializeRun(result: RunResult): Record<string, unknown> {
   return {
     runId: result.runId,
+    workDir: result.workDir ?? null,
     campaignId: result.campaignId ?? null,
     rootRunId: result.rootRunId ?? null,
     parentRunId: result.parentRunId ?? null,
@@ -220,6 +221,8 @@ function parseRunFile(filePath: string): RunResult | null {
 
     return {
       runId: data['runId'] as string,
+      workDir:
+        typeof data['workDir'] === 'string' ? data['workDir'] : null,
       campaignId:
         typeof data['campaignId'] === 'string' ? data['campaignId'] : null,
       rootRunId:

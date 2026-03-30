@@ -96,6 +96,7 @@ All env vars are documented in `.env.example`. Copy it and fill in your values.
 | `ANTHROPIC_BASE_URL` | No | Anthropic default | Custom API base URL (e.g., local proxy for Claude Max) |
 | `SHIPYARD_PORT` | No | `4200` | HTTP + WebSocket server port |
 | `SHIPYARD_WORK_DIR` | No | `cwd()` | Working directory the agent operates in (the target repo) |
+| `SHIPYARD_STALE_RUN_TIMEOUT_MS` | No | `120000` | Fails a run if no graph progress or live tool activity lands within this window. Set `0` to disable. |
 | `SHIPYARD_API_KEY` | No | -- | Bearer token for API authentication. When set, all endpoints except `/api/health` require `Authorization: Bearer <key>`. |
 | `SHIPYARD_ADMIN_TOKEN` | No | -- | Admin token for non-local settings, GitHub install selection, repo connect, and other sensitive write routes. |
 | `SHIPYARD_ENABLE_WEB_SEARCH` | No | `false` | Enables the guarded `web_search` tool for outbound exact-error lookup. |

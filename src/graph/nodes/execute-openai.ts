@@ -63,6 +63,7 @@ export async function runOpenAiExecuteLoop(params: {
   const { state, config, system, stepPrompt, hooks, overlay, updatedSteps } =
     params;
   const client = getOpenAIClient();
+  const workDir = state.workDir?.trim() || process.cwd();
   const openAiTools = anthropicToolSchemasToOpenAi(
     getExecutionToolSchemas(state.instruction),
   );
@@ -240,7 +241,7 @@ export async function runOpenAiExecuteLoop(params: {
               }
             }
           }
-          const result = await dispatchTool(name, input, hooks, overlay);
+          const result = await dispatchTool(name, input, hooks, overlay, workDir);
           const blockingReason = deriveBlockingReasonFromToolResult(name, result);
           if (blockingReason) {
             lastBlockingReason = blockingReason;

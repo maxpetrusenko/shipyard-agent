@@ -179,16 +179,19 @@ function currentProjectContext() {
     return {
       id: run.projectContext.projectId,
       label: run.projectContext.projectLabel || selected.label || 'Project',
+      workDir: run.workDir || selected.workDir || WORK_DIR,
     };
   }
   return {
     id: (selected && selected.id) || 'default',
     label: (selected && selected.label) || 'Default Project',
+    workDir: (selected && selected.workDir) || WORK_DIR,
   };
 }
 
 function syncProjectChrome() {
   var project = currentProjectContext();
+  WORK_DIR = project.workDir || WORK_DIR;
   var chipLabel = document.getElementById('composerProjectLabel');
   if (chipLabel) chipLabel.textContent = project.label;
   var heroTitle = document.getElementById('projectHeroTitle');

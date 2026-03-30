@@ -1,0 +1,1219 @@
+{
+  "runId": "19caf7a7-dd7c-4e9a-9946-6ab977c010b3",
+  "phase": "error",
+  "steps": [
+    {
+      "index": 0,
+      "description": "Audit the existing web shell entrypoint and keep the change surface minimal to avoid the previous 741-error cascade. Rework routing/provider composition in the existing entry file instead of introducing duplicate app bootstrapping, preserving currently used providers while aligning public /login, protected / shell routes, TanStack Query devtools, and the required child route structure.",
+      "files": [
+        "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx"
+      ],
+      "status": "done"
+    },
+    {
+      "index": 1,
+      "description": "Refine the shared API client in place, since it is already the central typed fetch wrapper and is imported widely. Preserve all existing exports while ensuring credentials are always included, CSRF token fetching from /api/csrf-token is used for mutations, and typed response helpers remain compatible with current consumers.",
+      "files": [
+        "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/lib/api.ts"
+      ],
+      "status": "pending"
+    },
+    {
+      "index": 2,
+      "description": "Adapt the existing auth hub without breaking downstream imports. Keep AuthProvider/useAuth export names stable while tightening the contract to match the requested shell behavior: fetch /api/auth/me on mount, store session/user state, expose login/logout/user/isSuperAdmin, and remain compatible with existing consumers that also rely on loading and impersonation fields.",
+      "files": [
+        "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useAuth.tsx"
+      ],
+      "status": "pending"
+    },
+    {
+      "index": 3,
+      "description": "Adjust the workspace context in place so the shell can drive current-workspace selection and switching from the rail dropdown, while preserving current exported symbols and compatibility with existing consumers.",
+      "files": [
+        "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/WorkspaceContext.tsx"
+      ],
+      "status": "pending"
+    },
+    {
+      "index": 4,
+      "description": "Confirm the existing data contexts continue to serve as the shell-facing TanStack Query wrappers requested by the spec. Only make focused compatibility edits if needed so each provider exposes list data plus create/update/delete or refresh methods without changing exported names used elsewhere.",
+      "files": [
+        "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/DocumentsContext.tsx",
+        "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/IssuesContext.tsx",
+        "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProgramsContext.tsx",
+        "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProjectsContext.tsx"
+      ],
+      "status": "pending"
+    },
+    {
+      "index": 5,
+      "description": "Update route guards and login flow to match the requested shell behavior while avoiding disruptive changes to unrelated pages. Protected routes should redirect unauthenticated users to /login, and the login page should use the auth/API infrastructure, handle CSRF-backed sign-in, and redirect successful logins to /docs unless a valid return target is present.",
+      "files": [
+        "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx",
+        "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/Login.tsx"
+      ],
+      "status": "pending"
+    },
+    {
+      "index": 6,
+      "description": "Reshape the existing AppLayout shell instead of replacing it wholesale. Preserve current integrations that other parts of the app depend on, but align the visible shell with the requested frontend: 48px icon rail, workspace switcher at top, user avatar/logout at bottom, collapsible 224px contextual sidebar that changes by mode, semantic nav/aside/main landmarks, Cmd+K command palette stub wiring, session timeout modal, ErrorBoundary around main content, and Outlet rendering.",
+      "files": [
+        "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/App.tsx"
+      ],
+      "status": "pending"
+    }
+  ],
+  "fileEdits": [
+    {
+      "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tailwind.config.js",
+      "tier": 4,
+      "old_string": "",
+      "new_string": "",
+      "timestamp": 1774587443180
+    },
+    {
+      "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tsconfig.json",
+      "tier": 4,
+      "old_string": "",
+      "new_string": "",
+      "timestamp": 1774587443180
+    },
+    {
+      "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/vite.config.ts",
+      "tier": 4,
+      "old_string": "",
+      "new_string": "",
+      "timestamp": 1774587443180
+    }
+  ],
+  "toolCallHistory": [
+    {
+      "tool_name": "ls",
+      "tool_input": {
+        "path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587397005,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "glob",
+      "tool_input": {
+        "summary": "**/*"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587397029,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "ls",
+      "tool_input": {
+        "path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587402293,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "glob",
+      "tool_input": {
+        "summary": "web/**/*"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587402295,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/package.json",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/package.json"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587402296,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587402296,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tsconfig.json",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tsconfig.json"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587402297,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587409316,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/App.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/App.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587409317,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useAuth.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useAuth.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587409317,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/WorkspaceContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/WorkspaceContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587409318,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/lib/api.ts",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/lib/api.ts"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587409318,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587409318,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/Login.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/Login.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587409319,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/DocumentsContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/DocumentsContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587409319,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/IssuesContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/IssuesContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587409319,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProgramsContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProgramsContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587409319,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProjectsContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProjectsContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587409319,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useSessionTimeout.ts",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useSessionTimeout.ts"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587409320,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/vite.config.ts",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/vite.config.ts"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587416376,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tailwind.config.js",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tailwind.config.js"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587416377,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/postcss.config.js",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/postcss.config.js"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587416377,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "grep",
+      "tool_input": {
+        "summary": "from '@/hooks/useAuth'|from '@/contexts/WorkspaceContext'|from '@/contexts/DocumentsContext'|from '@/contexts/IssuesContext'|from '@/contexts/ProgramsContext'|from '@/contexts/ProjectsContext'|from '@"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587416379,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && for f in web/src/hooks/useAuth.tsx web/src/contexts/WorkspaceContext.tsx web/src/contexts/DocumentsContext.tsx web/src/contexts/IssuesContext.tsx web/src/contexts/Prog"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587416444,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587433174,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tsconfig.json",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tsconfig.json"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587433175,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/vite.config.ts",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/vite.config.ts"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587433176,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tailwind.config.js",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tailwind.config.js"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587433176,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/postcss.config.js",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/postcss.config.js"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587433177,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && grep -R \"from '@/\" -n web/src | head -n 20"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587434133,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web && cat package.json | jq '.scripts, .dependencies[\"react\"], .dependencies[\"react-dom\"], .dependencies[\"@vitejs/plugin-react\"], .devDependencies.tailwindcss, .devDepen"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587435229,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web && test -f src/vite-env.d.ts && sed -n '1,120p' src/vite-env.d.ts"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587436249,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "edit_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/postcss.config.js",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/postcss.config.js"
+      },
+      "tool_result": "{\"success\":false}",
+      "timestamp": 1774587440543,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "edit_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json"
+      },
+      "tool_result": "{\"success\":false}",
+      "timestamp": 1774587441811,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "edit_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json"
+      },
+      "tool_result": "{\"success\":false}",
+      "timestamp": 1774587442694,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "ls",
+      "tool_input": {
+        "path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587455406,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "glob",
+      "tool_input": {
+        "summary": "**/*"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587455412,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "grep",
+      "tool_input": {
+        "summary": "package.json|vite.config|tailwind|postcss|src/main|react-router|tanstack|@tanstack|ProtectedRoute|useAuth|WorkspaceContext|App.tsx|Login.tsx @ /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587455415,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "ls",
+      "tool_input": {
+        "path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587457851,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "glob",
+      "tool_input": {
+        "summary": "web/**/*"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587457853,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/package.json",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/package.json"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587457853,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587457853,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587462195,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/App.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/App.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587462196,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/Login.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/Login.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587462197,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useAuth.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useAuth.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587462197,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/WorkspaceContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/WorkspaceContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587462197,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/lib/api.ts",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/lib/api.ts"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587462198,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587462198,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useSessionTimeout.ts",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useSessionTimeout.ts"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587462198,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ui/ErrorBoundary.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ui/ErrorBoundary.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587462198,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/DocumentsContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/DocumentsContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587467884,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/IssuesContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/IssuesContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587467885,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProgramsContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProgramsContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587467885,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProjectsContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProjectsContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587467885,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tsconfig.json",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tsconfig.json"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587467885,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/vite.config.ts",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/vite.config.ts"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587467885,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tailwind.config.js",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tailwind.config.js"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587467886,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/postcss.config.js",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/postcss.config.js"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587467886,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/index.css",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/index.css"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587467886,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && grep -rl \"from.*useAuth\" web/src --include='*.ts' --include='*.tsx' | wc -l"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587482250,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && grep -rl \"from.*WorkspaceContext\" web/src --include='*.ts' --include='*.tsx' | wc -l"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587482270,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && grep -rl \"from.*api\" web/src --include='*.ts' --include='*.tsx' | wc -l"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587482286,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && grep -rl \"from.*ProtectedRoute\" web/src --include='*.ts' --include='*.tsx' | wc -l"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587482306,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && grep -rl \"from.*App'\\|from.*App\\.js\\|from.*pages/App\" web/src --include='*.ts' --include='*.tsx' | wc -l"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587482354,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && grep -rl \"from.*Login\" web/src --include='*.ts' --include='*.tsx' | wc -l"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587482374,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && grep -rl \"from.*DocumentsContext\" web/src --include='*.ts' --include='*.tsx' | wc -l"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587482392,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && grep -rl \"from.*IssuesContext\" web/src --include='*.ts' --include='*.tsx' | wc -l"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587482409,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && grep -rl \"from.*ProgramsContext\" web/src --include='*.ts' --include='*.tsx' | wc -l"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587482426,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && grep -rl \"from.*ProjectsContext\" web/src --include='*.ts' --include='*.tsx' | wc -l"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587482444,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587501237,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tsconfig.json",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tsconfig.json"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587501238,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/vite.config.ts",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/vite.config.ts"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587501238,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tailwind.config.js",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tailwind.config.js"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587501238,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/postcss.config.js",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/postcss.config.js"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587501238,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/index.css",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/index.css"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587501239,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587501239,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && rg -n \"moduleResolution|tailwindcss|postcss|index.css|main.tsx|VITE_API_URL|proxy\" web -g '!web/dist'"
+      },
+      "tool_result": "{\"success\":false}",
+      "timestamp": 1774587502292,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587505977,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "ls",
+      "tool_input": {
+        "path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587523488,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "glob",
+      "tool_input": {
+        "summary": "**/*"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587523496,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "grep",
+      "tool_input": {
+        "summary": "vite|react-router|@tanstack/react-query|tailwind|postcss|workspace|auth|ProtectedRoute|AppLayout|Login @ /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587523498,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "ls",
+      "tool_input": {
+        "path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587527433,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "glob",
+      "tool_input": {
+        "summary": "web/**/*"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587527435,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "grep",
+      "tool_input": {
+        "summary": "from .*types|export .*type|interface |type  @ /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587527437,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "grep",
+      "tool_input": {
+        "summary": "useSessionTimeout|ErrorBoundary|CommandPalette|WorkspaceContext|DocumentsContext|IssuesContext|ProgramsContext|ProjectsContext @ /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587527439,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587532918,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/App.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/App.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587532919,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useAuth.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useAuth.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587532920,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/WorkspaceContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/WorkspaceContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587532920,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/lib/api.ts",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/lib/api.ts"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587532920,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587532920,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/Login.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/Login.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587532921,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/lib/queryClient.ts",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/lib/queryClient.ts"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587532921,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/DocumentsContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/DocumentsContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587536594,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/IssuesContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/IssuesContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587536594,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProgramsContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProgramsContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587536594,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProjectsContext.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProjectsContext.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587536594,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "bash",
+      "tool_input": {
+        "command": "cd /Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c && grep -rl \"from .*queryClient\\|from '@/lib/queryClient\\|from \\\"@/lib/queryClient\\\"\" web/src --include=\"*.ts\" --include=\"*.tsx\" | wc -l && grep -rl \"from .*api\\|from '@/"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587542552,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587558098,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587558814,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587564753,
+      "duration_ms": 0
+    },
+    {
+      "tool_name": "read_file",
+      "tool_input": {
+        "file_path": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx",
+        "summary": "/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx"
+      },
+      "tool_result": "{\"success\":true}",
+      "timestamp": 1774587570145,
+      "duration_ms": 0
+    }
+  ],
+  "tokenUsage": {
+    "input": 1106999,
+    "output": 14029,
+    "cacheRead": 821504,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/19caf7a7-dd7c-4e9a-9946-6ab977c010b3",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Build the React + Vite + TailwindCSS frontend shell for Ship. This is the application layout with navigation, routing, auth context, and data-fetching infrastructure. Do not implement individual page content yet; focus on the shell that all pages render inside.\n\nSet up the web package: Vite with React plugin, TailwindCSS with PostCSS, TypeScript, path alias `@/` pointing to `src/`. Create `src/main.tsx` with React Router, TanStack Query provider (with devtools), and the root route structure.\n\nCreate `src/hooks/useAuth.tsx`: auth context with login/logout/user state, fetches GET /api/auth/me on mount, stores session, provides `useAuth()` hook returning user/logout/isSuperAdmin. Create `src/contexts/WorkspaceContext.tsx` for current workspace and workspace switching. Create `src/lib/api.ts` as the shared fetch wrapper that auto-includes credentials, handles CSRF token (fetches from /api/csrf-token and attaches X-CSRF-Token header on mutations), and returns typed responses.\n\nCreate `src/pages/App.tsx` (the AppLayout component): icon rail on the left (48px wide) with mode icons for Dashboard/Docs/Programs/Projects/Teams/Settings, workspace switcher dropdown at top, user avatar with logout at bottom. Collapsible left sidebar (224px) showing context-specific lists (documents tree, issues list, projects list, programs list, team sidebar) based on active mode. Main content area renders `<Outlet />`. Wire up Cmd+K for command palette (stub). Add session timeout modal via `useSessionTimeout` hook. Include `<ErrorBoundary>` around the main content. Use semantic HTML landmarks: `<nav>` for rail, `<aside>` for sidebar, `<main>` for content.\n\nCreate `src/components/ProtectedRoute.tsx` that redirects to /login if not authenticated. Create `src/pages/Login.tsx` with email/password form, CSRF token handling, and redirect to /docs on success. Set up routes: /login (public), / (protected, renders AppLayout with children: /docs, /documents/:id, /issues, /projects, /programs, /team/*, /settings, /dashboard, /my-week).\n\nCreate data contexts: `src/contexts/DocumentsContext.tsx` (TanStack Query for documents list, createDocument/updateDocument/deleteDocument mutations), `src/contexts/IssuesContext.tsx`, `src/contexts/ProgramsContext.tsx`, `src/contexts/ProjectsContext.tsx` following the same pattern.\n\nVerify: run `pnpm dev`, navigate to localhost:5173, see login page, log in with seeded user, confirm icon rail + sidebar + main content area render, confirm switching modes updates the sidebar, confirm Cmd+K opens command palette stub, confirm logout redirects to login."
+    },
+    {
+      "role": "assistant",
+      "content": "<plan>\n[\n  {\n    \"index\": 0,\n    \"description\": \"Update the web package configuration only where needed for the requested frontend shell baseline. Confirm and, if necessary, adjust the existing Vite/React, Tailwind/PostCSS, and TypeScript path alias setup so the shell implementation aligns with the requested package structure without disturbing unrelated web features.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tsconfig.json\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/vite.config.ts\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tailwind.config.js\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/postcss.config.js\"\n    ]\n  },\n  {\n    \"index\": 1,\n    \"description\": \"Refactor the shared API client into the requested shell-oriented fetch infrastructure: typed responses, credentials included by default, CSRF token bootstrap from /api/csrf-token, X-CSRF-Token attachment for mutations, and auth/login helpers that match the new shell flow. Preserve any required existing API surface that other shell files depend on.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/lib/api.ts\"\n    ]\n  },\n  {\n    \"index\": 2,\n    \"description\": \"Reshape authentication and workspace state around the requested shell contract. Update the auth context to fetch GET /api/auth/me on mount, persist session/user state, expose login/logout/useAuth()/isSuperAdmin, and align workspace switching state in the workspace context with the shell layout requirements.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useAuth.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/WorkspaceContext.tsx\"\n    ]\n  },\n  {\n    \"index\": 3,\n    \"description\": \"Standardize the requested data contexts so Documents, Issues, Programs, and Projects each provide TanStack Query-backed list access plus create/update/delete mutation APIs for the shell and sidebar scaffolding.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/DocumentsContext.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/IssuesContext.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProgramsContext.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProjectsContext.tsx\"\n    ]\n  },\n  {\n    \"index\": 4,\n    \"description\": \"Rework route gating and login flow for the shell: make ProtectedRoute redirect unauthenticated users to /login, and update the login page to use the auth context plus CSRF-aware submission and redirect to /docs on successful login.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/Login.tsx\"\n    ]\n  },\n  {\n    \"index\": 5,\n    \"description\": \"Rebuild the application shell layout in AppLayout: left 48px icon rail with Dashboard/Docs/Programs/Projects/Teams/Settings modes, top workspace switcher, bottom user avatar/logout, collapsible 224px contextual sidebar that changes with active mode, semantic nav/aside/main landmarks, Cmd+K command palette stub wiring, session timeout modal hookup, ErrorBoundary wrapping the outlet region, and shell-only placeholder behavior instead of full page implementations.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/App.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useSessionTimeout.ts\"\n    ]\n  },\n  {\n    \"index\": 6,\n    \"description\": \"Rebuild the root entry and route tree in main.tsx so the app boots with React Router, TanStack Query provider plus devtools, auth/workspace/data providers, and the requested protected shell routes: /login public, / protected with children /docs, /documents/:id, /issues, /projects, /programs, /team/*, /settings, /dashboard, and /my-week.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx\"\n    ]\n  }\n]\n</plan>"
+    },
+    {
+      "role": "assistant",
+      "content": "[Watchdog] Recovery nudge 1/1: forcing one concrete edit attempt now."
+    },
+    {
+      "role": "assistant",
+      "content": "STEP_COMPLETE"
+    },
+    {
+      "role": "assistant",
+      "content": "[Review] retry: Execution issue (guardrail): Mid-step typecheck found 741 new errors (>10). Retry this step."
+    },
+    {
+      "role": "assistant",
+      "content": "<plan>\n[\n  {\n    \"index\": 0,\n    \"description\": \"Audit the existing web shell implementation against the requested frontend-shell scope and preserve hub-file safety by using adapter/re-export style changes for heavily imported auth/workspace/api modules instead of risky direct export reshaping. This step covers the configuration and shell entry files that already exist but likely need revision rather than greenfield creation.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/package.json\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tsconfig.json\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/vite.config.ts\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/tailwind.config.js\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/postcss.config.js\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/index.css\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx\"\n    ]\n  },\n  {\n    \"index\": 1,\n    \"description\": \"Refactor the shared API/auth/workspace infrastructure to match the requested shell contracts while minimizing cascade errors: add or adapt typed API helpers with CSRF/session behavior, align auth context behavior to fetch /api/auth/me on mount and expose user/logout/isSuperAdmin, and align workspace state/switching support without breaking current consumers.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/lib/api.ts\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useAuth.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/WorkspaceContext.tsx\"\n    ]\n  },\n  {\n    \"index\": 2,\n    \"description\": \"Bring the route guards and login flow into conformance with the requested shell behavior: protected routes should consistently redirect unauthenticated users to /login, and the login page should use the shared auth/api infrastructure with CSRF-aware submission and redirect to /docs on success.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/Login.tsx\"\n    ]\n  },\n  {\n    \"index\": 3,\n    \"description\": \"Rework the application shell layout in AppLayout so it exactly fits the requested frontend shell: 48px icon rail, workspace switcher at the top, user avatar/logout at the bottom, collapsible 224px contextual sidebar that changes by active mode, semantic nav/aside/main landmarks, Cmd+K command-palette stub wiring, session-timeout modal hookup, and ErrorBoundary-wrapped Outlet rendering.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/App.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useSessionTimeout.ts\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/CommandPalette.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/SessionTimeoutModal.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ui/ErrorBoundary.tsx\"\n    ]\n  },\n  {\n    \"index\": 4,\n    \"description\": \"Align the document/issues/programs/projects data contexts with the requested 'data-fetching infrastructure' pattern. These files already exist as compatibility wrappers over TanStack Query hooks, so update only as needed to ensure they expose the requested list and create/update/delete mutation surface without changing unrelated consumers.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/DocumentsContext.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/IssuesContext.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProgramsContext.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProjectsContext.tsx\"\n    ]\n  },\n  {\n    \"index\": 5,\n    \"description\": \"Revise the root routing tree in the app entry so the protected shell renders the requested child routes and redirects, while keeping public login access and preserving existing provider composition only where it does not conflict with the new shell requirements.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/App.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/Login.tsx\"\n    ]\n  }\n]\n</plan>"
+    },
+    {
+      "role": "assistant",
+      "content": "[Plan Warning] This plan has 6 steps targeting 21 files. Consider decomposing into smaller runs."
+    },
+    {
+      "role": "assistant",
+      "content": "STEP_COMPLETE"
+    },
+    {
+      "role": "assistant",
+      "content": "[Review] retry: Execution issue (guardrail): Mid-step typecheck found 741 new errors (>10). Retry this step."
+    },
+    {
+      "role": "assistant",
+      "content": "<plan>\n[\n  {\n    \"index\": 0,\n    \"description\": \"Audit the existing web shell entrypoint and keep the change surface minimal to avoid the previous 741-error cascade. Rework routing/provider composition in the existing entry file instead of introducing duplicate app bootstrapping, preserving currently used providers while aligning public /login, protected / shell routes, TanStack Query devtools, and the required child route structure.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/main.tsx\"\n    ]\n  },\n  {\n    \"index\": 1,\n    \"description\": \"Refine the shared API client in place, since it is already the central typed fetch wrapper and is imported widely. Preserve all existing exports while ensuring credentials are always included, CSRF token fetching from /api/csrf-token is used for mutations, and typed response helpers remain compatible with current consumers.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/lib/api.ts\"\n    ]\n  },\n  {\n    \"index\": 2,\n    \"description\": \"Adapt the existing auth hub without breaking downstream imports. Keep AuthProvider/useAuth export names stable while tightening the contract to match the requested shell behavior: fetch /api/auth/me on mount, store session/user state, expose login/logout/user/isSuperAdmin, and remain compatible with existing consumers that also rely on loading and impersonation fields.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/hooks/useAuth.tsx\"\n    ]\n  },\n  {\n    \"index\": 3,\n    \"description\": \"Adjust the workspace context in place so the shell can drive current-workspace selection and switching from the rail dropdown, while preserving current exported symbols and compatibility with existing consumers.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/WorkspaceContext.tsx\"\n    ]\n  },\n  {\n    \"index\": 4,\n    \"description\": \"Confirm the existing data contexts continue to serve as the shell-facing TanStack Query wrappers requested by the spec. Only make focused compatibility edits if needed so each provider exposes list data plus create/update/delete or refresh methods without changing exported names used elsewhere.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/DocumentsContext.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/IssuesContext.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProgramsContext.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/contexts/ProjectsContext.tsx\"\n    ]\n  },\n  {\n    \"index\": 5,\n    \"description\": \"Update route guards and login flow to match the requested shell behavior while avoiding disruptive changes to unrelated pages. Protected routes should redirect unauthenticated users to /login, and the login page should use the auth/API infrastructure, handle CSRF-backed sign-in, and redirect successful logins to /docs unless a valid return target is present.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/components/ProtectedRoute.tsx\",\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/Login.tsx\"\n    ]\n  },\n  {\n    \"index\": 6,\n    \"description\": \"Reshape the existing AppLayout shell instead of replacing it wholesale. Preserve current integrations that other parts of the app depend on, but align the visible shell with the requested frontend: 48px icon rail, workspace switcher at top, user avatar/logout at bottom, collapsible 224px contextual sidebar that changes by mode, semantic nav/aside/main landmarks, Cmd+K command palette stub wiring, session timeout modal, ErrorBoundary around main content, and Outlet rendering.\",\n    \"files\": [\n      \"/Users/maxpetrusenko/Desktop/Gauntlet/ship-rebuild-rerun-20260327c/web/src/pages/App.tsx\"\n    ]\n  }\n]\n</plan>"
+    },
+    {
+      "role": "assistant",
+      "content": "[Watchdog] Recovery nudge 1/1: forcing one concrete edit attempt now."
+    },
+    {
+      "role": "assistant",
+      "content": "STEP_COMPLETE"
+    },
+    {
+      "role": "assistant",
+      "content": "[Review] escalate: Max retries exceeded. Execution issue (guardrail): Mid-step typecheck found 741 new errors (>10). Retry this step."
+    },
+    {
+      "role": "assistant",
+      "content": "## Summary\nOutcome: FAILED\nInstruction: Build the React + Vite + TailwindCSS frontend shell for Ship. This is the application layout with navigation, routing, auth context, and data-fetching infrastructure. Do not implement individual page content yet; focus on the shell that all pages render inside.\n\nSet up the web package: Vite with React plugin, TailwindCSS with PostCSS, TypeScript, path alias `@/` pointing to `src/`. Create `src/main.tsx` with React Router, TanStack Query provider (with devtools), and the root route structure.\n\nCreate `src/hooks/useAuth.tsx`: auth context with login/logout/user state, fetches GET /api/auth/me on mount, stores session, provides `useAuth()` hook returning user/logout/isSuperAdmin. Create `src/contexts/WorkspaceContext.tsx` for current workspace and workspace switching. Create `src/lib/api.ts` as the shared fetch wrapper that auto-includes credentials, handles CSRF token (fetches from /api/csrf-token and attaches X-CSRF-Token header on mutations), and returns typed responses.\n\nCreate `src/pages/App.tsx` (the AppLayout component): icon rail on the left (48px wide) with mode icons for Dashboard/Docs/Programs/Projects/Teams/Settings, workspace switcher dropdown at top, user avatar with logout at bottom. Collapsible left sidebar (224px) showing context-specific lists (documents tree, issues list, projects list, programs list, team sidebar) based on active mode. Main content area renders `<Outlet />`. Wire up Cmd+K for command palette (stub). Add session timeout modal via `useSessionTimeout` hook. Include `<ErrorBoundary>` around the main content. Use semantic HTML landmarks: `<nav>` for rail, `<aside>` for sidebar, `<main>` for content.\n\nCreate `src/components/ProtectedRoute.tsx` that redirects to /login if not authenticated. Create `src/pages/Login.tsx` with email/password form, CSRF token handling, and redirect to /docs on success. Set up routes: /login (public), / (protected, renders AppLayout with children: /docs, /documents/:id, /issues, /projects, /programs, /team/*, /settings, /dashboard, /my-week).\n\nCreate data contexts: `src/contexts/DocumentsContext.tsx` (TanStack Query for documents list, createDocument/updateDocument/deleteDocument mutations), `src/contexts/IssuesContext.tsx`, `src/contexts/ProgramsContext.tsx`, `src/contexts/ProjectsContext.tsx` following the same pattern.\n\nVerify: run `pnpm dev`, navigate to localhost:5173, see login page, log in with seeded user, confirm icon rail + sidebar + main content area render, confirm switching modes updates the sidebar, confirm Cmd+K opens command palette stub, confirm logout redirects to login.\nSteps completed: 1/7\nFiles edited: 3\nVerification: FAILED\nErrors: 741\nError: Max retries (3) exceeded. Execution issue (guardrail): Mid-step typecheck found 741 new errors (>10). Retry this step.\nToken usage: 1106999 input / 14029 output\nDuration: 186377ms\n\n## Suggested Next Steps\n- Inspect failure [recommended]: Review the error and tool output before retrying.\n  Prompt: Summarize the failure root cause and propose a concrete fix plan.\n- Retry with fix: Retry run with explicit feedback constraints.\n  Prompt: Retry this task and fix the reported failure first."
+    }
+  ],
+  "error": "Max retries (3) exceeded. Execution issue (guardrail): Mid-step typecheck found 741 new errors (>10). Retry this step.",
+  "verificationResult": {
+    "passed": false,
+    "error_count": 741,
+    "baselineFingerprint": "e3b0c44298fc1c14",
+    "newErrorCount": 741,
+    "typecheck_output": "[Mid-step check] 741 new TS errors (threshold: 10):\napi/src/collaboration/__tests__/api-content-preservation.test.ts(116,14): error TS18046: 'convertedBack' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(117,14): error TS18046: 'convertedBack' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(118,14): error TS18046: 'convertedBack' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(119,14): error TS18046: 'convertedBack' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(319,16): error TS18046: 'convertedBack' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(386,14): error TS18046: 'convertedBack' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(387,14): error TS18046: 'convertedBack' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(441,14): error TS18046: 'convertedBack' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(507,14): error TS18046: 'convertedBack' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(508,14): error TS18046: 'convertedBack' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(621,14): error TS18046: 'result' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(622,14): error TS18046: 'result' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(623,14): error TS18046: 'result' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(624,14): error TS18046: 'result' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(700,14): error TS18046: 'convertedBack' is of type 'unknown'.\napi/src/collaboration/__tests__/api-content-preservation.test.ts(756,14): error TS18046: 'convertedBack' is of type 'unknown'.\napi/src/fleetgraph/chat/data.test.ts(311,12): error TS7053: Element implicitly has an 'any' type because expression of type '0' can't be used to index type '{}'.\napi/src/fleetgraph/chat/runtime.test.ts(54,3): error TS2322: Type '{ fetchIssueContext: ((context: FleetGraphChatToolContext, args: Record<string, unknown>) => Promise<Record<string, unknown>>) | ((_context: FleetGraphChatToolContext, args: Record<...>) => Promise<...>); ... 9 more ...; fetchWorkspaceMembers?: ((context: FleetGraphChatToolContext, args: Record<...>) => Promise<...>...' is not assignable to type 'FleetGraphChatDataAccess'.\napi/src/fleetgraph/chat/runtime.test.ts(905,5): error TS2322: Type 'Mock<() => Promise<unknown>>' is not assignable to type '(body: Record<string, unknown>) => Promise<FleetGraphResponsesResponseLike>'.\napi/src/fleetgraph/graph/nodes.test.ts(36,7): error TS2345: Argument of type 'FleetGraphRunState' is not assignable to parameter of type 'StateType<{ runId: { (annotation: SingleReducer<string, string>): BaseChannel<string, string | OverwriteValue<string>, unknown>; (): LastValue<string>; Root: <S extends StateDefinition>(sd: S) => AnnotationRoot<...>; }; ... 20 more ...; trigger: { ...; }; }>'.\napi/src/fleetgraph/graph/nodes.test.ts(58,7): error TS2345: Argument of type 'FleetGraphRunState' is not assignable to parameter of type 'StateType<{ runId: { (annotation: SingleReducer<string, string>): BaseChannel<string, string | OverwriteValue<string>, unknown>; (): LastValue<string>; Root: <S extends StateDefinition>(sd: S) => AnnotationRoot<...>; }; ... 20 more ...; trigger: { ...; }; }>'.\napi/src/fleetgraph/graph/nodes.test.ts(93,7): error TS2345: Argument of type 'FleetGraphRunState' is not assignable to parameter of type 'StateType<{ runId: { (annotation: SingleReducer<string, string>): BaseChannel<string, string | OverwriteValue<string>, unknown>; (): LastValue<string>; Root: <S extends StateDefinition>(sd: S) => AnnotationRoot<...>; }; ... 20 more ...; trigger: { ...; }; }>'.\napi/src/fleetgraph/graph/nodes.test.ts(122,7): error TS2345: Argument of type 'FleetGraphRunState' is not assignable to parameter of type 'StateType<{ runId: { (annotation: SingleReducer<string, string>): BaseChannel<string, string | OverwriteValue<string>, unknown>; (): LastValue<string>; Root: <S extends StateDefinition>(sd: S) => AnnotationRoot<...>; }; ... 20 more ...; trigger: { ...; }; }>'.\napi/src/fleetgraph/graph/nodes.test.ts(157,7): error TS2345: Argument of type 'FleetGraphRunState' is not assignable to parameter of type 'StateType<{ runId: { (annotation: SingleReducer<string, string>): BaseChannel<string, string | OverwriteValue<string>, unknown>; (): LastValue<string>; Root: <S extends StateDefinition>(sd: S) => AnnotationRoot<...>; }; ... 20 more ...; trigger: { ...; }; }>'.\napi/src/fleetgraph/graph/nodes.test.ts(210,7): error TS2345: Argument of type 'FleetGraphRunState' is not assignable to parameter of type 'StateType<{ runId: { (annotation: SingleReducer<string, string>): BaseChannel<string, string | OverwriteValue<string>, unknown>; (): LastValue<string>; Root: <S extends StateDefinition>(sd: S) => AnnotationRoot<...>; }; ... 20 more ...; trigger: { ...; }; }>'.\napi/src/fleetgraph/graph/nodes.test.ts(256,9): error TS2345: Argument of type 'FleetGraphRunState' is not assignable to parameter of type 'StateType<{ runId: { (annotation: SingleReducer<string, string>): BaseChannel<string, string | OverwriteValue<string>, unknown>; (): LastValue<string>; Root: <S extends StateDefinition>(sd: S) => AnnotationRoot<...>; }; ... 20 more ...; trigger: { ...; }; }>'.\napi/src/fleetgraph/graph/nodes.test.ts(279,9): error TS2345: Argument of type 'FleetGraphRunState' is not assignable to parameter of type 'StateType<{ runId: { (annotation: SingleReducer<string, string>): BaseChannel<string, string | OverwriteValue<string>, unknown>; (): LastValue<string>; Root: <S extends StateDefinition>(sd: S) => AnnotationRoot<...>; }; ... 20 more ...; trigger: { ...; }; }>'.\napi/src/fleetgraph/graph/nodes.test.ts(312,9): error TS2345: Argument of type 'FleetGraphRunState' is not assignable to parameter of type 'StateType<{ runId: { (annotation: SingleReducer<string, string>): BaseChannel<string, string | OverwriteValue<string>, unknown>; (): LastValue<string>; Root: <S extends StateDefinition>(sd: S) => AnnotationRoot<...>; }; ... 20 more ...; trigger: { ...; }; }>'.\napi/src/fleetgraph/graph/nodes.test.ts(344,14): error TS18048: 'candidate' is possibly 'undefined'.\napi/src/fleetgraph/graph/nodes.test.ts(345,14): error TS18048: 'candidate' is possibly 'undefined'."
+  },
+  "reviewFeedback": "Max retries (3) exceeded. Execution issue (guardrail): Mid-step typecheck found 741 new errors (>10). Retry this step.",
+  "durationMs": 186398,
+  "requestedUiMode": null,
+  "threadKind": "agent",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-27T04:56:35.244Z",
+  "startedAt": "2026-03-27T04:56:35.244Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.4",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.4",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "failed",
+  "cancellation": null,
+  "loopDiagnostics": {
+    "graphStepCount": 15,
+    "graphSoftBudget": 120,
+    "recursionLimit": 150,
+    "stopReason": null,
+    "noProgressReason": null,
+    "lastPhaseTransition": "error->error",
+    "repeatedTransitionCount": 2,
+    "noProgressStreak": 2,
+    "repeatedReviewVerifyCount": 0,
+    "successfulToolOutcomes": 0
+  },
+  "executeDiagnostics": {
+    "noEditToolRounds": 1,
+    "discoveryCallsBeforeFirstEdit": 0,
+    "lastBlockingReason": null,
+    "stopReason": "step_complete"
+  },
+  "errorClassification": null,
+  "nextActions": [
+    {
+      "id": "inspect_failure",
+      "label": "Inspect failure",
+      "description": "Review the error and tool output before retrying.",
+      "recommended": true,
+      "prompt": "Summarize the failure root cause and propose a concrete fix plan."
+    },
+    {
+      "id": "retry_with_feedback",
+      "label": "Retry with fix",
+      "description": "Retry run with explicit feedback constraints.",
+      "recommended": false,
+      "prompt": "Retry this task and fix the reported failure first."
+    }
+  ],
+  "savedAt": "2026-03-27T04:59:41.643Z"
+}

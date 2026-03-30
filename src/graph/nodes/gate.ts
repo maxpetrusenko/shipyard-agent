@@ -3,6 +3,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import type OpenAI from 'openai';
 import {
   getResolvedModelConfigFromState,
   isOpenAiModelId,
@@ -17,6 +18,8 @@ import {
   extractCacheMetrics,
 } from '../../config/messages-create.js';
 import { completeTextForRole } from '../../llm/complete-text.js';
+import { compactAnthropicMessages } from '../../llm/message-compaction.js';
+import { compactOpenAiMessages } from '../../llm/openai-message-compaction.js';
 import {
   buildContextBlock,
   type ShipyardStateType,
@@ -29,12 +32,14 @@ import {
 } from '../intent.js';
 import { tryCommandShortcut } from '../commands.js';
 import { detectRepoTargetMismatch } from '../guards.js';
-import { WORK_DIR } from '../../config/work-dir.js';
 
 const CHAT_SYSTEM = `You are Shipyard. The user is in Q&A mode: they are not asking you to modify the repository in this turn.
 
 Answer clearly. Give a brief line of reasoning when it helps (e.g. for math or logic), then the direct answer.
 Do not invent file paths or claim you edited files. If they clearly need code changes in the project, end with one short line: say they should submit again with a concrete coding request (or turn off Chat-only mode if they are using it).`;
+
+const CHAT_COMPACTION_MAX_CHARS = 100_000;
+const CHAT_COMPACTION_PRESERVE_RECENT_MESSAGES = 8;
 
 function buildUserContent(state: ShipyardStateType): string {
   const ctx = buildContextBlock(state.contexts);
@@ -55,6 +60,87 @@ function appendUserTurn(
     return [...messages];
   }
   return [...messages, { role: 'user', content: instruction }];
+}
+
+function anthropicContentToText(content: Anthropic.MessageParam['content']): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block) => {
+      if (block.type === 'text') return block.text;
+      return '';
+    })
+    .join('');
+}
+
+function openAiContentToText(
+  content: OpenAI.Chat.ChatCompletionMessageParam['content'],
+): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => {
+      if (part.type === 'text') return part.text;
+      return '';
+    })
+    .join('');
+}
+
+function anthropicHistoryToOpenAi(
+  messages: Anthropic.MessageParam[],
+): OpenAI.Chat.ChatCompletionMessageParam[] {
+  return messages.flatMap((message) => {
+    if (message.role !== 'user' && message.role !== 'assistant') return [];
+    return [{
+      role: message.role,
+      content: anthropicContentToText(message.content),
+    }];
+  });
+}
+
+function openAiHistoryToAnthropic(
+  messages: OpenAI.Chat.ChatCompletionMessageParam[],
+): Anthropic.MessageParam[] {
+  return messages.flatMap((message) => {
+    if (message.role !== 'user' && message.role !== 'assistant') return [];
+    return [{
+      role: message.role,
+      content: openAiContentToText(message.content),
+    }];
+  });
+}
+
+function chatCompactionNote(compacted: {
+  beforeChars: number;
+  afterChars: number;
+  droppedMessages: number;
+}): string {
+  return `[Compaction] chat history compacted (${compacted.beforeChars} -> ${compacted.afterChars} chars, dropped ${compacted.droppedMessages} messages).`;
+}
+
+function compactChatHistory(
+  history: Anthropic.MessageParam[],
+  provider: 'anthropic' | 'openai',
+): { history: Anthropic.MessageParam[]; note: string | null } {
+  if (provider === 'openai') {
+    const compacted = compactOpenAiMessages(anthropicHistoryToOpenAi(history), {
+      maxChars: CHAT_COMPACTION_MAX_CHARS,
+      preserveRecentMessages: CHAT_COMPACTION_PRESERVE_RECENT_MESSAGES,
+    });
+    return {
+      history: openAiHistoryToAnthropic(compacted.messages),
+      note: compacted.compacted ? chatCompactionNote(compacted) : null,
+    };
+  }
+
+  const compacted = compactAnthropicMessages(history, {
+    maxChars: CHAT_COMPACTION_MAX_CHARS,
+    preserveRecentMessages: CHAT_COMPACTION_PRESERVE_RECENT_MESSAGES,
+  });
+  return {
+    history: compacted.messages,
+    note: compacted.compacted ? chatCompactionNote(compacted) : null,
+  };
 }
 
 function validateSuppliedPlan(
@@ -127,10 +213,13 @@ async function directChatResponse(
   const prior = state.messages.filter(
     (m) => m.role === 'user' || m.role === 'assistant',
   );
-  const history: Anthropic.MessageParam[] = appendUserTurn(prior, userLine).map((m) => ({
+  const rawHistory: Anthropic.MessageParam[] = appendUserTurn(prior, userLine).map((m) => ({
     role: m.role === 'assistant' ? 'assistant' : 'user',
     content: m.content,
   }));
+  const provider = isOpenAiModelId(config.model) ? 'openai' : 'anthropic';
+  const { history, note } = compactChatHistory(rawHistory, provider);
+  const withUser = appendUserTurn(state.messages, state.instruction);
 
   if (isOpenAiModelId(config.model)) {
     const { text, inputTokens, outputTokens, cacheRead, cacheCreation } = await completeTextForRole(
@@ -140,9 +229,9 @@ async function directChatResponse(
       history,
       { liveNode: 'chat' },
     );
-    const withUser = appendUserTurn(state.messages, state.instruction);
     const newMessages: LLMMessage[] = [
       ...withUser,
+      ...(note ? [{ role: 'assistant' as const, content: note }] : []),
       { role: 'assistant', content: text },
     ];
     return {
@@ -196,7 +285,8 @@ async function directChatResponse(
     .join('');
 
   const newMessages: LLMMessage[] = [
-    ...appendUserTurn(state.messages, state.instruction),
+    ...withUser,
+    ...(note ? [{ role: 'assistant' as const, content: note }] : []),
     { role: 'assistant', content: text },
   ];
 
@@ -238,12 +328,13 @@ export async function gateNode(
     };
   }
 
-  const repoMismatch = detectRepoTargetMismatch(state.instruction, WORK_DIR);
+  const activeWorkDir = state.workDir?.trim() || process.cwd();
+  const repoMismatch = detectRepoTargetMismatch(state.instruction, activeWorkDir);
   if (repoMismatch) {
     const withUser = appendUserTurn(state.messages, state.instruction);
     const mismatchMsg =
       `Repo target mismatch: instruction targets "${repoMismatch.targetRepo}" but active workdir is "${repoMismatch.activeRepo}". ` +
-      `Switch SHIPYARD_WORK_DIR to the target repo, then retry.`;
+      `Switch Shipyard to the target project/workdir, then retry.`;
     return {
       gateRoute: 'end',
       phase: 'error',

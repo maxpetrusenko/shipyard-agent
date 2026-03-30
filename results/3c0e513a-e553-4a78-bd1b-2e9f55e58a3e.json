@@ -1,0 +1,57 @@
+{
+  "runId": "3c0e513a-e553-4a78-bd1b-2e9f55e58a3e",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": {
+    "input": 118,
+    "output": 105,
+    "cacheRead": 0,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/public/59245acd-3411-4fab-bea3-e948e0110ec7/r",
+  "messages": [
+    {
+      "role": "user",
+      "content": "run load test task 17"
+    },
+    {
+      "role": "assistant",
+      "content": "I can’t run the repository’s load test task from here, and I don’t have enough context to know what “task 17” maps to in your project.\n\nIf you want, send:\n- the task definition for 17, or\n- the command/config used to run load tests\n\nand I can help you figure out the exact command or interpret the results. If you’re expecting me to change or trigger project code, please submit again with a concrete coding request or turn off Chat-only mode."
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 1113,
+  "threadKind": "ask",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-26T14:25:11.686Z",
+  "startedAt": "2026-03-26T14:25:35.871Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.3-codex",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.3-codex",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-26T14:26:03.421Z"
+}

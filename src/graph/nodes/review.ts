@@ -18,6 +18,7 @@ import { completeTextForRole } from '../../llm/complete-text.js';
 import {
   deriveScopeConstraints,
   evaluateScopeGuard,
+  inspectBootstrapWorkspace,
   pathMatchesAny,
   shouldRequireEdits,
 } from '../guards.js';
@@ -434,11 +435,22 @@ export async function reviewNode(
     // This avoids the LLM getting confused by high pre-existing error counts.
     const allStepsDone = state.steps.length > 0 && state.steps.every((s) => s.status === 'done');
     const zeroNewErrors = typeof newErrCount === 'number' && newErrCount === 0;
-    if (!hasMoreSteps && verPassed && allStepsDone && zeroNewErrors && state.fileEdits.length > 0) {
-      return deterministicDone(
-        `All ${state.steps.length} steps completed. Verification passed with 0 new errors ` +
-        `(${state.verificationResult?.preExistingErrorCount ?? 0} pre-existing). Work complete.`,
+    if (!hasMoreSteps && verPassed && allStepsDone) {
+      const bootstrapStatus = inspectBootstrapWorkspace(
+        state.instruction,
+        state.workDir?.trim() || process.cwd(),
       );
+      if (!bootstrapStatus.ready) {
+        return deterministicRetry(
+          `App bootstrap is incomplete: missing ${bootstrapStatus.missing.join(', ')} in ${state.workDir?.trim() || process.cwd()}.`,
+        );
+      }
+      if (zeroNewErrors && state.fileEdits.length > 0) {
+        return deterministicDone(
+          `All ${state.steps.length} steps completed. Verification passed with 0 new errors ` +
+          `(${state.verificationResult?.preExistingErrorCount ?? 0} pre-existing). Work complete.`,
+        );
+      }
     }
 
     return null; // Fall through to LLM

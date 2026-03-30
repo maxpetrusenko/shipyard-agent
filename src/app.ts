@@ -106,6 +106,7 @@ export function createApp(loop: InstructionLoop): express.Application {
   app.post('/api/runs/:id/confirm', limiter(30, 'confirm'));
   app.post('/api/runs/:id/resume', limiter(30, 'resume'));
   app.post('/api/settings/model-keys', limiter(30, 'settings-model-keys'));
+  app.post('/api/projects', limiter(30, 'projects'));
   app.post('/api/github/installations', limiter(30, 'github-installations'));
   app.post('/api/github/install/select', limiter(30, 'github-install-select'));
   app.post('/api/github/repos', limiter(60, 'github-repos'));

@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const mocks = vi.hoisted(() => ({
   completeTextForRole: vi.fn(),
@@ -41,6 +44,7 @@ function baseState() {
     modelFamily: 'openai',
     modelOverrides: null,
     executionIssue: null,
+    workDir: '/repo',
   } as const;
 }
 
@@ -472,6 +476,64 @@ describe('reviewNode deterministic guards', () => {
     expect(out.reviewDecision).toBe('retry');
     expect(out.phase).toBe('executing');
     expect(out.executionIssue).toBeNull();
+    expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
+
+
+  it('retries app bootstrap tasks when the final workspace is still missing runnable UI artifacts', async () => {
+    const workDir = mkdtempSync(join(tmpdir(), 'shipyard-review-bootstrap-missing-'));
+    const state = {
+      ...baseState(),
+      instruction: 'Build a new app with UI in the selected project folder.',
+      steps: [{ index: 0, description: 'bootstrap app', files: [join(workDir, 'package.json')], status: 'done' as const }],
+      fileEdits: [{ file_path: join(workDir, 'README.md'), tier: 1, old_string: '', new_string: '# app', timestamp: 1 }],
+      verificationResult: {
+        passed: true,
+        error_count: 0,
+        newErrorCount: 0,
+        preExistingErrorCount: 0,
+      },
+      workDir,
+    };
+
+    const out = await reviewNode(state as any);
+    expect(out.reviewDecision).toBe('retry');
+    expect(out.phase).toBe('planning');
+    expect(out.reviewFeedback).toContain('App bootstrap is incomplete');
+    expect(out.reviewFeedback).toContain('package/app manifest');
+    expect(out.reviewFeedback).toContain('UI entry surface');
+    expect(mocks.completeTextForRole).not.toHaveBeenCalled();
+  });
+
+  it('completes app bootstrap tasks once manifest, scripts, deps, and UI are present', async () => {
+    const workDir = mkdtempSync(join(tmpdir(), 'shipyard-review-bootstrap-ready-'));
+    mkdirSync(join(workDir, 'src'), { recursive: true });
+    mkdirSync(join(workDir, 'node_modules'), { recursive: true });
+    writeFileSync(join(workDir, 'package.json'), JSON.stringify({
+      name: 'ship2',
+      private: true,
+      scripts: { dev: 'vite', build: 'vite build' },
+      dependencies: { react: '^19.0.0' },
+    }, null, 2));
+    writeFileSync(join(workDir, 'src', 'App.tsx'), 'export function App() { return <main>Ship</main>; }');
+
+    const state = {
+      ...baseState(),
+      instruction: 'Build a new app with UI in the selected project folder.',
+      steps: [{ index: 0, description: 'bootstrap app', files: [join(workDir, 'package.json')], status: 'done' as const }],
+      fileEdits: [{ file_path: join(workDir, 'package.json'), tier: 1, old_string: '', new_string: '{}', timestamp: 1 }],
+      verificationResult: {
+        passed: true,
+        error_count: 0,
+        newErrorCount: 0,
+        preExistingErrorCount: 0,
+      },
+      workDir,
+    };
+
+    const out = await reviewNode(state as any);
+    expect(out.reviewDecision).toBe('done');
+    expect(out.phase).toBe('done');
     expect(mocks.completeTextForRole).not.toHaveBeenCalled();
   });
 

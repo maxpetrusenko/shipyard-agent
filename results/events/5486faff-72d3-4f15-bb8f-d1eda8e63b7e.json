@@ -1,0 +1,37 @@
+{
+  "id": "5486faff-72d3-4f15-bb8f-d1eda8e63b7e",
+  "source": "github",
+  "eventType": "github.pull_request_review_comment",
+  "status": "accepted",
+  "instruction": "review thread second",
+  "runId": "1979a0e5-49d6-4dbf-88c4-61ec6d777187",
+  "metadata": {
+    "deliveryId": "review-live-2",
+    "action": "created",
+    "sender": "load-tester",
+    "conversationKey": "review:99999:load/test-repo:5:3001",
+    "conversationKind": "review",
+    "repository": "load/test-repo",
+    "installationId": 99999,
+    "pullRequestNumber": 5,
+    "commentId": 3002,
+    "rootCommentId": 3001,
+    "threadKindHint": "agent",
+    "reusedThread": true
+  },
+  "receivedAt": "2026-03-26T16:16:22.100Z",
+  "retryAttempts": 0,
+  "ingress": {
+    "eventId": "5486faff-72d3-4f15-bb8f-d1eda8e63b7e",
+    "source": "webhook",
+    "entrypoint": "/api/github/webhook",
+    "timestamp": "2026-03-26T16:16:22.100Z",
+    "instruction": "review thread second",
+    "runMode": "code",
+    "queueDepthAtIngress": 2,
+    "schemaVersion": 1,
+    "correlationId": "5486faff-72d3-4f15-bb8f-d1eda8e63b7e",
+    "webhookDeliveryId": "review-live-2",
+    "webhookEventType": "pull_request_review_comment"
+  }
+}

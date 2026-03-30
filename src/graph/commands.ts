@@ -8,6 +8,7 @@
 import { TOOL_SCHEMAS } from '../tools/index.js';
 import { hasSuccessfulPrToolCall } from '../tools/commit-and-open-pr.js';
 import { revertChanges, type RevertChangesParams } from '../tools/revert-changes.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   createWorkspaceCheckpoint,
   listWorkspaceCheckpoints,
@@ -27,11 +28,23 @@ export interface CommandRuntimeControls {
 }
 
 let runtimeControls: CommandRuntimeControls | null = null;
+const runtimeControlsStorage = new AsyncLocalStorage<CommandRuntimeControls>();
 
 export function setCommandRuntimeControls(
   controls: CommandRuntimeControls | null,
 ): void {
   runtimeControls = controls;
+}
+
+export async function withCommandRuntimeControls<T>(
+  controls: CommandRuntimeControls,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return runtimeControlsStorage.run(controls, fn);
+}
+
+function getRuntimeControls(): CommandRuntimeControls | null {
+  return runtimeControlsStorage.getStore() ?? runtimeControls;
 }
 
 function toolListText(): string {
@@ -159,10 +172,11 @@ function recentRunsText(limit = 8): string {
 }
 
 function statusText(): string {
-  if (!runtimeControls) {
+  const controls = getRuntimeControls();
+  if (!controls) {
     return ['Runtime status unavailable in this context.', recentRunsText(3)].join('\n\n');
   }
-  const s = runtimeControls.getStatus();
+  const s = controls.getStatus();
   return [
     'Runtime status:',
     `- processing=${String(s.processing)}`,
@@ -267,16 +281,18 @@ export async function tryCommandShortcut(
   }
 
   if (/^\/cancel\b/i.test(trimmed)) {
-    if (!runtimeControls) return 'Cancel unavailable in this context.';
-    const ok = runtimeControls.cancel();
+    const controls = getRuntimeControls();
+    if (!controls) return 'Cancel unavailable in this context.';
+    const ok = controls.cancel();
     return ok ? 'Cancel requested for active run.' : 'No active run to cancel.';
   }
 
   if (/^\/resume\b/i.test(trimmed)) {
-    if (!runtimeControls) return 'Resume unavailable in this context.';
+    const controls = getRuntimeControls();
+    if (!controls) return 'Resume unavailable in this context.';
     const runId = parseRunId(tokenize(trimmed));
     if (!runId) return 'Usage: /resume --run <runId>';
-    const resumed = runtimeControls.resume(runId);
+    const resumed = controls.resume(runId);
     return resumed ? `Resumed run ${resumed}.` : `Could not resume run ${runId}.`;
   }
 

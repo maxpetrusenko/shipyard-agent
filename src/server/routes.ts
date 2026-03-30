@@ -10,7 +10,8 @@ import { execSync } from 'node:child_process';
 import type { InstructionLoop } from '../runtime/loop.js';
 import type { ModelRole } from '../config/model-policy.js';
 import type { RunResult } from '../runtime/loop.js';
-import { WORK_DIR, setWorkDir } from '../config/work-dir.js';
+import { ProjectInstructionLoop } from '../runtime/project-loop.js';
+import { setWorkDir } from '../config/work-dir.js';
 import { resetClient } from '../config/client.js';
 import { resetOpenAIClient } from '../config/openai-client.js';
 import {
@@ -40,6 +41,7 @@ import {
   setSessionGithubInstallation,
 } from './github-oauth.js';
 import { buildRunDebugSnapshot } from './run-debug.js';
+import { pickDirectory } from './native-dialogs.js';
 import { extractToken, hasScope, requestLooksLocal } from './auth-scopes.js';
 import { registerInvokeRoutes } from './invoke-routes.js';
 import { saveRawBody } from './hmac-auth.js';
@@ -83,13 +85,18 @@ function deriveExecutionPlanFromPlanDoc(
       .map((step, index) => ({ ...step, index }));
   }
 
-  const structuredMatches = [...trimmed.matchAll(/^\s*(?:#+\s*)?(?:Phase|Task|Step)\s+(\d+)\s*:\s*(.+?)\s*$/gim)];
+  const structuredMatches = [...trimmed.matchAll(/^\s*(?:#+\s*)?(?:Phase|Task|Step)\s+(\d+)\s*[:\.\-–—]\s*(.+?)\s*$/gim)];
   if (structuredMatches.length > 0) {
     const seen = new Set<number>();
+    // Detect whether numbering is 0-based or 1-based
+    const firstParsed = Number.parseInt(structuredMatches[0]?.[1] ?? '1', 10);
+    const zeroIndexed = firstParsed === 0;
     return structuredMatches
       .map((match, index) => {
         const parsedIndex = Number.parseInt(match[1] ?? '', 10);
-        const normalizedIndex = Number.isFinite(parsedIndex) ? parsedIndex - 1 : index;
+        const normalizedIndex = Number.isFinite(parsedIndex)
+          ? (zeroIndexed ? parsedIndex : parsedIndex - 1)
+          : index;
         const description = (match[2] ?? '').trim();
         return {
           index: normalizedIndex,
@@ -201,10 +208,19 @@ export function createRoutes(loop: InstructionLoop): Router {
   const router = Router();
   router.use(json({ limit: '1mb', verify: saveRawBody }));
 
+  function isProjectLoop(value: InstructionLoop): value is ProjectInstructionLoop {
+    return value instanceof ProjectInstructionLoop;
+  }
+
+  function currentWorkDir(): string {
+    return loop.getWorkDir();
+  }
+
   function currentRepoStatus(): { branch: string | null; remote: string | null } {
+    const workDir = currentWorkDir();
     try {
-      const branch = execSync(`git -C "${WORK_DIR}" branch --show-current`, { encoding: 'utf-8' }).trim() || null;
-      const remote = execSync(`git -C "${WORK_DIR}" remote get-url origin`, { encoding: 'utf-8' }).trim() || null;
+      const branch = execSync(`git -C "${workDir}" branch --show-current`, { encoding: 'utf-8' }).trim() || null;
+      const remote = execSync(`git -C "${workDir}" remote get-url origin`, { encoding: 'utf-8' }).trim() || null;
       return { branch, remote };
     } catch {
       return { branch: null, remote: null };
@@ -241,6 +257,7 @@ export function createRoutes(loop: InstructionLoop): Router {
       rootRunId,
       parentRunId,
       projectContext,
+      workDir: workDirOverride,
     } = req.body as {
       instruction?: string;
       contexts?: Array<{ label: string; content: string; source?: string }>;
@@ -261,6 +278,8 @@ export function createRoutes(loop: InstructionLoop): Router {
       parentRunId?: string | null;
       /** Optional project scope metadata from the dashboard. */
       projectContext?: { projectId: string; projectLabel: string };
+      /** Override the working directory for this run (e.g. target a new project dir). */
+      workDir?: string;
     };
 
     if (!instruction) {
@@ -302,7 +321,10 @@ export function createRoutes(loop: InstructionLoop): Router {
     const planDocExecutionPlan = hasPlanDoc && !executionPlanForSubmit
       ? deriveExecutionPlanFromPlanDoc(trimmedPlanDoc) ?? undefined
       : undefined;
-    const effectiveExecutionPlan = executionPlanForSubmit ?? planDocExecutionPlan;
+    const instructionExecutionPlan = !executionPlanForSubmit && !planDocExecutionPlan && uiMode !== 'ask'
+      ? deriveExecutionPlanFromPlanDoc(instruction) ?? undefined
+      : undefined;
+    const effectiveExecutionPlan = executionPlanForSubmit ?? planDocExecutionPlan ?? instructionExecutionPlan;
 
     if (hasPlanDoc) {
       if (Buffer.byteLength(trimmedPlanDoc, 'utf-8') > MAX_CONTEXT_SIZE) {
@@ -361,6 +383,9 @@ export function createRoutes(loop: InstructionLoop): Router {
         : undefined;
     const modelOverrides =
       models && typeof models === 'object' ? models : undefined;
+    const sanitizedWorkDir = typeof workDirOverride === 'string' && workDirOverride.trim()
+      ? workDirOverride.trim()
+      : undefined;
     const id = loop.submit(instruction, allContexts, wantConfirm, mode, {
       executionPlan: effectiveExecutionPlan,
       modelOverride: model?.trim() || undefined,
@@ -380,6 +405,7 @@ export function createRoutes(loop: InstructionLoop): Router {
         typeof projectContext.projectLabel === 'string'
           ? projectContext
           : undefined,
+      workDir: sanitizedWorkDir,
     });
     const run = loop.getRun(id);
 
@@ -398,6 +424,7 @@ export function createRoutes(loop: InstructionLoop): Router {
 
     res.json({
       runId: id,
+      workDir: run?.workDir ?? null,
       confirmPlan: wantConfirm,
       runMode: mode,
       uiMode: uiMode ?? null,
@@ -444,6 +471,9 @@ export function createRoutes(loop: InstructionLoop): Router {
       res.status(400).json({ error: 'uiMode must be ask, plan, or agent' });
       return;
     }
+    const followupExecutionPlan = threadKindHint && threadKindHint !== 'ask'
+      ? deriveExecutionPlanFromPlanDoc(instruction) ?? undefined
+      : undefined;
     const replaceModelSelection =
       hasOwn(payload, 'model') ||
       hasOwn(payload, 'modelFamily') ||
@@ -455,6 +485,7 @@ export function createRoutes(loop: InstructionLoop): Router {
       modelOverrides,
       requestedUiMode: threadKindHint,
       threadKindHint,
+      executionPlan: followupExecutionPlan,
       replaceModelSelection,
     });
     if (!ok) {
@@ -541,6 +572,59 @@ export function createRoutes(loop: InstructionLoop): Router {
       res.json(runs);
     }),
   );
+
+  router.get('/projects', wrap((_req, res) => {
+    if (!isProjectLoop(loop)) {
+      res.json([{ id: 'default', label: 'Default Project', workDir: currentWorkDir() }]);
+      return;
+    }
+    res.json(loop.listProjects());
+  }));
+
+  router.post('/projects/pick-directory', wrap((req, res) => {
+    const { startDir } = (req.body ?? {}) as { startDir?: string };
+    try {
+      const result = pickDirectory(typeof startDir === 'string' ? startDir.trim() || undefined : undefined);
+      if (result.cancelled) {
+        res.json({ cancelled: true, workDir: null });
+        return;
+      }
+      res.json({ cancelled: false, workDir: result.workDir ?? null });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  }));
+
+  router.post('/projects', wrap((req, res) => {
+    if (!isProjectLoop(loop)) {
+      res.status(501).json({ error: 'Project creation requires project runtime support.' });
+      return;
+    }
+    const { label, slug, workDir } = (req.body ?? {}) as {
+      label?: string;
+      slug?: string;
+      workDir?: string;
+    };
+    const trimmedWorkDir = typeof workDir === 'string' ? workDir.trim() : '';
+    const inferredLabel = trimmedWorkDir ? path.basename(trimmedWorkDir) : '';
+    const effectiveLabel = typeof label === 'string' && label.trim()
+      ? label.trim()
+      : inferredLabel;
+    if (!effectiveLabel) {
+      res.status(400).json({ error: 'label or workDir is required' });
+      return;
+    }
+    try {
+      const project = loop.createProject({
+        label: effectiveLabel,
+        slug: typeof slug === 'string' ? slug.trim() || undefined : undefined,
+        workDir: trimmedWorkDir || undefined,
+      });
+      res.status(201).json(project);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  }));
 
   // GET /runs/:id - Get specific run
   router.get('/runs/:id', wrap((req, res) => {
@@ -762,14 +846,15 @@ export function createRoutes(loop: InstructionLoop): Router {
 
   // GET /settings/status - active repo + provider key availability
   router.get('/settings/status', wrap(async (req, res) => {
+    const workDir = currentWorkDir();
     const repo = currentRepoStatus();
     const session = getOrCreateOAuthSession(req, res);
     const installationId = getSessionGithubInstallationId(session);
     const githubInstallMissing = githubInstallMissingEnv();
     const githubAppMissing = githubAppMissingEnv();
     res.json({
-      workDir: WORK_DIR,
-      workDirExists: existsSync(WORK_DIR),
+      workDir,
+      workDirExists: existsSync(workDir),
       repoBranch: repo.branch,
       repoRemote: repo.remote,
       hasAnthropicApiKey: Boolean(process.env['ANTHROPIC_API_KEY'] || process.env['ANTHROPIC_AUTH_TOKEN']),
@@ -882,6 +967,8 @@ export function createRoutes(loop: InstructionLoop): Router {
     const reposRoot = path.resolve(process.cwd(), 'Sessions', 'connected-repos');
     const cloned = await cloneOrUpdateGithubRepo('', owner, repo, reposRoot, installationId);
     setWorkDir(cloned.workDir);
+    if (isProjectLoop(loop)) loop.setDefaultProjectWorkDir(cloned.workDir, repo);
+    else loop.setWorkDir(cloned.workDir);
 
     res.json({
       ok: true,

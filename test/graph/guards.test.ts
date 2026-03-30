@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   constrainPlanStepsToScope,
@@ -124,6 +127,11 @@ describe('shouldRequireEdits', () => {
     expect(shouldRequireEdits('Create a new test file for auth')).toBe(true);
     expect(shouldRequireEdits('Remove the deprecated function')).toBe(true);
     expect(shouldRequireEdits('Write a helper for date parsing')).toBe(true);
+  });
+
+  it('requires edits for build and scaffold app instructions', () => {
+    expect(shouldRequireEdits('Build a new app with UI in the selected project folder.')).toBe(true);
+    expect(shouldRequireEdits('Scaffold a dashboard app in /tmp/ship2')).toBe(true);
   });
 });
 
@@ -290,6 +298,41 @@ describe('repo target guards', () => {
       targetRepo: 'ship2',
       activeRepo: 'ship-agent',
     });
+  });
+
+  it('does not flag feature areas as repo targets', () => {
+    const root = mkdtempSync(join(tmpdir(), 'shipyard-guards-'));
+    const workDir = join(root, 'ship2');
+    mkdirSync(workDir, { recursive: true });
+    const mismatch = detectRepoTargetMismatch(
+      'In navigation, refine the back button behavior.',
+      workDir,
+    );
+    expect(mismatch).toBeNull();
+  });
+
+  it('does not treat slash-separated feature labels as repo paths', () => {
+    const target = extractExplicitRepoTarget(
+      'Journey B: document appears in list/navigation and then opens in editor.',
+    );
+    expect(target).toBeNull();
+  });
+
+  it('does not flag the Ship rebuild PRD as a repo mismatch when workdir is already selected', () => {
+    const instruction = [
+      'target dir fixed: /Users/maxpetrusenko/Desktop/Gauntlet/ship2',
+      '# Ship Rebuild Detailed PRD',
+      '',
+      '### Journey B: Create and edit a document',
+      '- user creates a document',
+      '- document appears in list/navigation',
+      '- user opens document',
+    ].join('\n');
+    const mismatch = detectRepoTargetMismatch(
+      instruction,
+      '/Users/maxpetrusenko/Desktop/Gauntlet/ship2',
+    );
+    expect(mismatch).toBeNull();
   });
 });
 

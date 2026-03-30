@@ -1,0 +1,66 @@
+{
+  "runId": "21eb6f2f-8c56-4a79-9c9b-77a09b4e7f52",
+  "phase": "error",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": null,
+  "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/21eb6f2f-8c56-4a79-9c9b-77a09b4e7f52",
+  "messages": [
+    {
+      "role": "user",
+      "content": "run load test task 44"
+    },
+    {
+      "role": "assistant",
+      "content": "I hit an error while handling this request: Run cancelled by user. I can retry with a focused fix plan.\n\n## Suggested Next Steps\n- Inspect failure [recommended]: Review the error and tool output before retrying.\n  Prompt: Summarize the failure root cause and propose a concrete fix plan.\n- Retry with fix: Retry run with explicit feedback constraints.\n  Prompt: Retry this task and fix the reported failure first."
+    }
+  ],
+  "error": "Run cancelled by user",
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 552,
+  "threadKind": "agent",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-26T14:25:11.702Z",
+  "startedAt": "2026-03-26T14:26:08.073Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.3-codex",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.3-codex",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "cancelled",
+  "cancellation": {
+    "reason": "Run cancelled by user",
+    "completed_actions": 0,
+    "tool_calls": 0,
+    "edited_files": 0,
+    "source": "shutdown_signal",
+    "requested_at": "2026-03-26T14:26:08.621Z"
+  },
+  "nextActions": [
+    {
+      "id": "inspect_failure",
+      "label": "Inspect failure",
+      "description": "Review the error and tool output before retrying.",
+      "recommended": true,
+      "prompt": "Summarize the failure root cause and propose a concrete fix plan."
+    },
+    {
+      "id": "retry_with_feedback",
+      "label": "Retry with fix",
+      "description": "Retry run with explicit feedback constraints.",
+      "recommended": false,
+      "prompt": "Retry this task and fix the reported failure first."
+    }
+  ],
+  "savedAt": "2026-03-26T14:26:08.625Z"
+}

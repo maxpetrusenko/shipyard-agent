@@ -22,7 +22,6 @@ import {
   withCachedTools,
 } from '../config/client.js';
 import { getOpenAIClient } from '../config/openai-client.js';
-import { WORK_DIR } from '../config/work-dir.js';
 import { messagesCreate } from '../config/messages-create.js';
 import {
   dispatchAnthropicToolBlocks,
@@ -88,6 +87,7 @@ export interface WorkerModelSelection {
   modelFamily?: ModelFamily | null;
   modelOverrides?: Partial<Record<ModelRole, string>> | null;
   isolateInWorktree?: boolean;
+  workDir?: string | null;
 }
 
 function buildWorkerSystem(workDir: string): string {
@@ -101,6 +101,10 @@ Rules:
 - Read files before editing (understand before modifying)
 - Use edit_file for surgical changes (preferred over write_file)
 - Use write_file only for new files
+- If the assigned workdir is empty or brand-new and the task is to build/rebuild/create an app there, bootstrap the project in that directory rather than treating emptiness as a blocker
+- Initializing a fresh git repo in the assigned workdir is allowed when it helps establish the project
+- For a brand-new app bootstrap, leave working local run/build/test scripts behind; if the app starts from zero tests, add a minimal smoke test instead of leaving the test command broken
+- Never use bash to run apply_patch, git apply, sed -i, perl -i, or other shell editing tricks; use edit_file/write_file instead
 - Make one logical change at a time
 - If converting an existing file into a wrapper, shim, or pure re-export, replace the entire file contents; do not prepend a new export onto the old implementation
 - If a file should only re-export another module, the final file must contain only the wrapper/re-export code plus any required header comments
@@ -216,7 +220,7 @@ export async function runWorker(
   modelSelection?: WorkerModelSelection,
 ): Promise<WorkerResult> {
   const startedAt = Date.now();
-  const logicalWorkDir = WORK_DIR;
+  const logicalWorkDir = modelSelection?.workDir?.trim() || process.env['SHIPYARD_WORK_DIR'] || process.cwd();
   const config = getResolvedModelConfig('coding', {
     modelFamily: modelSelection?.modelFamily ?? null,
     modelOverrides: modelSelection?.modelOverrides ?? null,
@@ -266,6 +270,7 @@ export async function runWorker(
       normalizeWorkerInput(name, input, activeWorkDir),
       hooks,
       overlay,
+      activeWorkDir,
     );
 
     try {

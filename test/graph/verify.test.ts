@@ -191,6 +191,57 @@ describe('verifyNode', () => {
     expect(mocks.runBash).not.toHaveBeenCalled();
   });
 
+
+  it('keeps opaque bootstrap failures as failed even when no typed error lines are parsed', async () => {
+    mocks.runBash.mockResolvedValue({
+      success: false,
+      exit_code: 1,
+      stdout: 'ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND No package.json was found in /repo.\n',
+      stderr: '',
+    });
+    mocks.getBaselineFingerprint.mockResolvedValue({ hash: 'abc', errorLines: [] });
+
+    const out = await verifyNode({
+      ...baseState(),
+      fileEdits: [{ file_path: '/repo/README.md', tier: 1 as const, old_string: '', new_string: 'x', timestamp: 1 }],
+    } as any);
+
+    expect(out.phase).toBe('reviewing');
+    expect(out.verificationResult?.passed).toBe(false);
+    expect(out.verificationResult?.newErrorCount).toBe(0);
+    expect(out.verificationResult?.typecheck_output).toContain('ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND');
+  });
+
+  it('can defer full verification for coordinated non-final steps', async () => {
+    const fewErrors = Array.from({ length: 3 }, (_, i) =>
+      `src/file${i}.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.`,
+    ).join('\n');
+    mocks.runBash.mockResolvedValueOnce({
+      success: false,
+      exit_code: 1,
+      stdout: fewErrors,
+      stderr: '',
+    });
+    mocks.getBaselineFingerprint.mockResolvedValue({ hash: 'abc', errorLines: [] });
+
+    const state = {
+      ...baseState(),
+      steps: [
+        { index: 0, description: 'step1', files: ['/repo/a.ts'], status: 'done' },
+        { index: 1, description: 'step2', files: ['/repo/b.ts'], status: 'pending' },
+      ],
+      currentStepIndex: 0,
+      fileEdits: [{ file_path: '/repo/a.ts', tier: 1 as const, old_string: 'a', new_string: 'b', timestamp: 1 }],
+    };
+
+    const out = await runVerification(state as any, { mode: 'lightweight' });
+
+    expect(out.verificationResult?.passed).toBe(true);
+    expect(out.verificationResult?.typecheck_output).toContain('deferred until the final coordinated step');
+    expect(mocks.runBash).toHaveBeenCalledTimes(1);
+    expect(mocks.runBash.mock.calls[0]?.[0]?.command).toContain('pnpm type-check');
+  });
+
   it('can force test execution on non-final steps', async () => {
     mocks.runBash.mockResolvedValue({
       success: true,

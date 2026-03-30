@@ -1,0 +1,65 @@
+{
+  "runId": "254c7ea3-f7b7-4a08-a601-8393b6ba4d8e",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": {
+    "input": 133,
+    "output": 789,
+    "cacheRead": 0,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/public/005fabe6-4333-4443-8e15-08aea841ecb6/r",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hi"
+    },
+    {
+      "role": "assistant",
+      "content": "Hi. How can I help?"
+    },
+    {
+      "role": "user",
+      "content": "weather now??"
+    },
+    {
+      "role": "assistant",
+      "content": "I can’t see your location or live web data from here, so I can’t tell the current weather unless you give me a place (city, ZIP, or lat/lon). Tell me where and I’ll look up or format a query.\n\nQuick options you can use right now:\n\n- Very quick (no API key): in a browser or terminal:\n  - curl wttr.in/<location>?format=3\n  - Example: curl wttr.in/London?format=3\n\n- Free JSON API (no key) using coordinates — example (San Francisco):\n  - curl \"https://api.open-meteo.com/v1/forecast?latitude=37.7749&longitude=-122.4194&current_weather=true\"\n\n- If you prefer a mainstream source, search in Google or a phone weather app for “weather [city]”.\n\nTell me a city/ZIP or coordinates and whether you want a short summary or full JSON, and I’ll provide the current conditions formatted for you."
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 17318,
+  "threadKind": "ask",
+  "runMode": "chat",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-26T03:01:49.770Z",
+  "startedAt": "2026-03-26T03:01:49.771Z",
+  "modelOverride": "gpt-5-mini",
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5-mini",
+    "coding": "gpt-5-mini",
+    "review": "gpt-5-mini",
+    "verification": "gpt-5-mini",
+    "summary": "gpt-5-mini",
+    "intent": "gpt-5-mini",
+    "chat": "gpt-5-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-26T03:02:09.904Z"
+}

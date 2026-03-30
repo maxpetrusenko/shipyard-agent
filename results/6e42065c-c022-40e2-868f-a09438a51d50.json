@@ -1,0 +1,52 @@
+{
+  "runId": "6e42065c-c022-40e2-868f-a09438a51d50",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": null,
+  "traceUrl": null,
+  "messages": [
+    {
+      "role": "user",
+      "content": "hi"
+    },
+    {
+      "role": "assistant",
+      "content": "Hi. How can I help?"
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 0,
+  "threadKind": "ask",
+  "runMode": "chat",
+  "executionPath": "local-shortcut",
+  "queuedAt": "2026-03-26T03:16:50.071Z",
+  "startedAt": "2026-03-26T03:16:50.071Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.3-codex",
+    "coding": "gpt-5-mini",
+    "review": "gpt-5.3-codex",
+    "verification": "gpt-5-mini",
+    "summary": "gpt-5-mini",
+    "intent": "gpt-5-mini",
+    "chat": "gpt-5-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-26T03:16:50.072Z"
+}

@@ -1,0 +1,55 @@
+{
+  "type": "load_test",
+  "version": 1,
+  "createdAt": "2026-03-26T14:27:53.249Z",
+  "baseUrl": "http://localhost:4200",
+  "target": "both",
+  "concurrency": 3,
+  "durationSeconds": 5,
+  "summaries": [
+    {
+      "target": "webhook",
+      "concurrency": 3,
+      "durationSeconds": 5,
+      "totalRequests": 823,
+      "successCount": 823,
+      "errorCount": 0,
+      "status503Count": 0,
+      "successRate": 1,
+      "errorRate": 0,
+      "saturation503Rate": 0,
+      "latencyP50Ms": 17,
+      "latencyP90Ms": 24,
+      "latencyP95Ms": 26,
+      "latencyP99Ms": 37,
+      "latencyMinMs": 6,
+      "latencyMaxMs": 68,
+      "latencyMeanMs": 18.218712029161605,
+      "throughputRps": 164.20590582601758,
+      "statusCounts": {
+        "200": 823
+      }
+    },
+    {
+      "target": "retry-batch",
+      "concurrency": 3,
+      "durationSeconds": 5,
+      "totalRequests": 0,
+      "successCount": 0,
+      "errorCount": 0,
+      "status503Count": 0,
+      "successRate": 0,
+      "errorRate": 0,
+      "saturation503Rate": 0,
+      "latencyP50Ms": 0,
+      "latencyP90Ms": 0,
+      "latencyP95Ms": 0,
+      "latencyP99Ms": 0,
+      "latencyMinMs": 0,
+      "latencyMaxMs": 0,
+      "latencyMeanMs": 0,
+      "throughputRps": 0,
+      "statusCounts": {}
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "runId": "e634fd14-461c-4c14-ab71-f082f75cbc79",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": {
+    "input": 118,
+    "output": 107,
+    "cacheRead": 0,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/e634fd14-461c-4c14-ab71-f082f75cbc79",
+  "messages": [
+    {
+      "role": "user",
+      "content": "run load test task 9"
+    },
+    {
+      "role": "assistant",
+      "content": "I can help with that, but I can’t actually run tasks from here.\n\nIf “task 9” is part of your project’s load test suite, please tell me:\n- the command to run it, or\n- the test file/name, or\n- paste the task instructions/output\n\nThen I can help you interpret results or troubleshoot failures.\n\nIf you want me to make code changes to support it, please submit again with a concrete coding request (or turn off Chat-only mode if you’re using it)."
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 1256,
+  "threadKind": "ask",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-26T14:27:48.214Z",
+  "startedAt": "2026-03-26T14:28:00.241Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.3-codex",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.3-codex",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-26T14:28:01.497Z"
+}

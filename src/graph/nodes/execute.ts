@@ -15,7 +15,6 @@ import {
   wrapSystemPrompt,
   withCachedTools,
 } from '../../config/client.js';
-import { WORK_DIR } from '../../config/work-dir.js';
 import { runOpenAiExecuteLoop } from './execute-openai.js';
 import { messagesCreate } from '../../config/messages-create.js';
 import {
@@ -66,44 +65,52 @@ import {
   type LLMMessage,
 } from '../state.js';
 
-const EXECUTE_SYSTEM = `You are Shipyard, an autonomous coding agent. You are in the EXECUTION phase.
-
-IMPORTANT: The target codebase is at: ${WORK_DIR}
-All file paths must be absolute, rooted at ${WORK_DIR}.
-When using tools, always use absolute paths (e.g. ${WORK_DIR}/src/index.ts).
-When using bash, always cd to ${WORK_DIR} first or use absolute paths.
-
-You are executing a specific step of a larger plan. Use the available tools to implement the change.
-
-Rules:
-- Read files before editing (understand before modifying)
-- Use edit_file for surgical changes (preferred over write_file)
-- Use write_file only for new files
-- Use bash for running commands (build, lint, format) — always cd to ${WORK_DIR} first
-- If repo reads + bash output are not enough to unblock an exact error, use web_search with the exact error text before guessing
-- Make one logical change at a time
-- If converting an existing file into a wrapper, shim, or pure re-export, replace the entire file contents; do not prepend a new export onto the old implementation
-- If a file should only re-export another module, the final file must contain only the wrapper/re-export code plus any required header comments
-- Process ALL files listed for this step, not just the first one
-- Do NOT run full repo verification commands (pnpm test, pnpm type-check); pipeline handles verification after execution
-- When done with this step, say "STEP_COMPLETE" in your response
-- Do NOT say STEP_COMPLETE until you have addressed every file in the step's file list
-- If the step mentions multiple files, you must edit/verify each one before completing
-- If the instruction names explicit target files, treat them as hard scope. Do not edit files outside that explicit target list.
-- If the explicit target already satisfies the request, report a no-op and complete without editing other files.
-- If repeated discovery proves a conditional target does not exist, respond with "NO_EDIT_JUSTIFIED: <reason>" and then "STEP_COMPLETE".
-- Never call commit_and_open_pr unless the user explicitly asked for commit, push, or PR behavior.
-
-Shared file safety (CRITICAL):
-- Before editing any .ts file, consider: is this file imported by many others?
-- NEVER remove or rename exported symbols from widely-imported files (auth.ts, visibility.ts, types.ts, index.ts, utils.ts, config.ts, middleware.ts).
-- For such "hub files", use the adapter/re-export pattern: create a new file, update the hub to re-export.
-- NEVER use write_file to completely rewrite a shared file. Use surgical edit_file with exact old_string/new_string.
-- If an edit_file is reverted by the system, it means the edit caused cascade type errors. Try a different approach.
-
-Codebase conventions:
-- This codebase uses TypeScript with moduleResolution "node16". ALL imports MUST include the .js extension (e.g. import { foo } from './bar.js'), even for .ts source files.
-- Use vitest for testing.`;
+function buildExecuteSystem(workDir: string): string {
+  return [
+    'You are Shipyard, an autonomous coding agent. You are in the EXECUTION phase.',
+    '',
+    `IMPORTANT: The target codebase is at: ${workDir}`,
+    `All file paths must be absolute, rooted at ${workDir}.`,
+    `When using tools, always use absolute paths (e.g. ${workDir}/src/index.ts).`,
+    `When using bash, always cd to ${workDir} first or use absolute paths.`,
+    '',
+    'You are executing a specific step of a larger plan. Use the available tools to implement the change.',
+    '',
+    'Rules:',
+    '- Read files before editing (understand before modifying)',
+    '- Use edit_file for surgical changes (preferred over write_file)',
+    '- Use write_file only for new files',
+    `- Use bash for running commands (build, lint, format) — always cd to ${workDir} first`,
+    `- If ${workDir} is a new or empty target and the user asked to build/rebuild/create an app there, bootstrap the project in ${workDir} instead of searching for another repo`,
+    `- It is acceptable to initialize a fresh git repo in ${workDir} when that helps establish the new project`,
+    '- For a brand-new app bootstrap, leave the target with working local run/build/test scripts; if no tests exist yet, add a tiny smoke test instead of leaving "pnpm test" broken',
+    '- Never use bash to run apply_patch, git apply, sed -i, perl -i, or other shell editing tricks; use edit_file/write_file instead',
+    '- If repo reads + bash output are not enough to unblock an exact error, use web_search with the exact error text before guessing',
+    '- Make one logical change at a time',
+    '- If converting an existing file into a wrapper, shim, or pure re-export, replace the entire file contents; do not prepend a new export onto the old implementation',
+    '- If a file should only re-export another module, the final file must contain only the wrapper/re-export code plus any required header comments',
+    '- Process ALL files listed for this step, not just the first one',
+    '- Do NOT run full repo verification commands (pnpm test, pnpm type-check); pipeline handles verification after execution',
+    '- When done with this step, say "STEP_COMPLETE" in your response',
+    '- Do NOT say STEP_COMPLETE until you have addressed every file in the step\'s file list',
+    '- If the step mentions multiple files, you must edit/verify each one before completing',
+    '- If the instruction names explicit target files, treat them as hard scope. Do not edit files outside that explicit target list.',
+    '- If the explicit target already satisfies the request, report a no-op and complete without editing other files.',
+    '- If repeated discovery proves a conditional target does not exist, respond with "NO_EDIT_JUSTIFIED: <reason>" and then "STEP_COMPLETE".',
+    '- Never call commit_and_open_pr unless the user explicitly asked for commit, push, or PR behavior.',
+    '',
+    'Shared file safety (CRITICAL):',
+    '- Before editing any .ts file, consider: is this file imported by many others?',
+    '- NEVER remove or rename exported symbols from widely-imported files (auth.ts, visibility.ts, types.ts, index.ts, utils.ts, config.ts, middleware.ts).',
+    '- For such "hub files", use the adapter/re-export pattern: create a new file, update the hub to re-export.',
+    '- NEVER use write_file to completely rewrite a shared file. Use surgical edit_file with exact old_string/new_string.',
+    '- If an edit_file is reverted by the system, it means the edit caused cascade type errors. Try a different approach.',
+    '',
+    'Codebase conventions:',
+    '- This codebase uses TypeScript with moduleResolution "node16". ALL imports MUST include the .js extension (e.g. import { foo } from \"./bar.js\"), even for .ts source files.',
+    '- Use vitest for testing.',
+  ].join('\n');
+}
 
 // Scale no-edit stall detection with plan complexity: complex multi-step plans
 // need more exploration time. Base=10, +2 per step (max 20).
@@ -229,6 +236,8 @@ export async function executeNode(
   state: ShipyardStateType,
 ): Promise<Partial<ShipyardStateType>> {
   const config = getResolvedModelConfigFromState('coding', state);
+  const workDir = state.workDir?.trim() || process.cwd();
+  const executeSystem = buildExecuteSystem(workDir);
 
   const currentStep = state.steps[state.currentStepIndex];
   if (!currentStep) {
@@ -387,7 +396,7 @@ export async function executeNode(
               filePath: candidatePath,
               oldString: oldStr,
               newString: newStr,
-              workDir: WORK_DIR,
+              workDir,
             });
             if (!blastCheck.allowed) {
               lastBlockingReason = blastCheck.message;
@@ -415,7 +424,7 @@ export async function executeNode(
       }
     }
 
-    const result = await dispatchTool(name, input, hooks, overlay);
+    const result = await dispatchTool(name, input, hooks, overlay, workDir);
 
     // Cache successful read_file results
     if (name === 'read_file' && result['success'] !== false) {
@@ -449,7 +458,7 @@ export async function executeNode(
         const quickTsc = await runBash({
           command: 'pnpm type-check 2>&1',
           timeout: 120_000,
-          cwd: WORK_DIR,
+          cwd: workDir,
         });
         if (!quickTsc.success) {
           const tscOutput = quickTsc.stdout + quickTsc.stderr;
@@ -504,8 +513,8 @@ export async function executeNode(
 
   if (isOpenAiModelId(config.model)) {
     const rawSystem = contextBlock
-      ? `${EXECUTE_SYSTEM}\n\n# Context\n\n${contextBlock}`
-      : EXECUTE_SYSTEM;
+      ? `${executeSystem}\n\n# Context\n\n${contextBlock}`
+      : executeSystem;
     const oa = await runOpenAiExecuteLoop({
       state,
       config,
@@ -522,7 +531,7 @@ export async function executeNode(
   }
 
   const anthropic = getClient();
-  const systemPrompt = wrapSystemPrompt(EXECUTE_SYSTEM, contextSection);
+  const systemPrompt = wrapSystemPrompt(executeSystem, contextSection);
 
   const cachedTools = withCachedTools(getExecutionToolSchemas(state.instruction));
 

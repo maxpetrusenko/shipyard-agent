@@ -1,0 +1,72 @@
+{
+  "runId": "73df5a8a-d9cd-46f4-8ef3-9dbcd341a7c0",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": {
+    "input": 117,
+    "output": 7,
+    "cacheRead": 0,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/73df5a8a-d9cd-46f4-8ef3-9dbcd341a7c0",
+  "messages": [
+    {
+      "role": "user",
+      "content": "echo hello from test run"
+    },
+    {
+      "role": "assistant",
+      "content": "hello from test run"
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 945,
+  "requestedUiMode": null,
+  "threadKind": "ask",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-27T04:25:27.787Z",
+  "startedAt": "2026-03-27T04:25:27.787Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.4",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.4",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "loopDiagnostics": {
+    "graphStepCount": 1,
+    "graphSoftBudget": 56,
+    "recursionLimit": 80,
+    "stopReason": null,
+    "noProgressReason": null,
+    "lastPhaseTransition": "routing->done",
+    "repeatedTransitionCount": 1,
+    "noProgressStreak": 1,
+    "repeatedReviewVerifyCount": 0,
+    "successfulToolOutcomes": 0
+  },
+  "executeDiagnostics": null,
+  "errorClassification": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-27T04:25:28.733Z"
+}

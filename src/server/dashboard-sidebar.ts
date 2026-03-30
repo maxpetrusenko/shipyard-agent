@@ -49,7 +49,20 @@ export function getSidebarStyles(): string {
 .sidebar-section-action:hover{color:var(--accent)}
 
 /* ── projects list ── */
-.sidebar-projects{display:flex;flex-direction:column;gap:1px;padding:2px 6px 8px;border-bottom:1px solid var(--border)}
+.sidebar-projects{display:flex;flex-direction:column;gap:1px;padding:2px 6px 4px}
+.sidebar-project-create{display:none;flex-direction:column;gap:8px;padding:0 10px 10px;border-bottom:1px solid var(--border)}
+.sidebar-project-create.open{display:flex}
+.sidebar-project-field{display:flex;flex-direction:column;gap:4px}
+.sidebar-project-label{font-size:11px;font-weight:600;color:var(--muted);font-family:var(--sans)}
+.sidebar-project-input{width:100%;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:8px 10px;font-size:13px;font-family:var(--mono);outline:none;transition:border-color var(--transition),box-shadow var(--transition)}
+.sidebar-project-input.project-name-input{font-family:var(--sans)}
+.sidebar-project-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.sidebar-project-actions{display:flex;gap:8px;flex-wrap:wrap}
+.sidebar-project-btn{display:inline-flex;align-items:center;justify-content:center;padding:8px 10px;border-radius:var(--radius);border:1px solid var(--border);background:transparent;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;transition:all var(--transition)}
+.sidebar-project-btn.browse{min-width:112px}
+.sidebar-project-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-glow)}
+.sidebar-project-btn.primary{background:var(--accent);border-color:var(--accent);color:var(--bg)}
+.sidebar-project-btn.primary:hover{filter:brightness(1.04)}
 .sidebar-project-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border:none;background:none;color:var(--dim);font-family:var(--sans);font-size:13px;cursor:pointer;border-radius:var(--radius);transition:all var(--transition);width:100%;text-align:left}
 .sidebar-project-item:hover{color:var(--text);background:var(--sidebar-hover)}
 .sidebar-project-item.selected{color:var(--text);font-weight:500}
@@ -168,10 +181,25 @@ export function getSidebarHtml(): string {
     <div class="sidebar-section">
       <span class="sidebar-section-label">
         Projects
-        <button type="button" class="sidebar-section-action" aria-label="Add project" disabled>+</button>
+        <button type="button" class="sidebar-section-action" data-action="toggleProjectCreate" aria-label="Add project">+</button>
       </span>
     </div>
     <div class="sidebar-projects" id="sidebarProjects"></div>
+    <div class="sidebar-project-create" id="projectCreatePanel">
+      <label class="sidebar-project-field" for="projectNameInput">
+        <span class="sidebar-project-label">Project name</span>
+        <input type="text" class="sidebar-project-input project-name-input" id="projectNameInput" placeholder="Ship 2" autocomplete="off">
+      </label>
+      <label class="sidebar-project-field" for="projectDirInput">
+        <span class="sidebar-project-label">Local directory</span>
+        <input type="text" class="sidebar-project-input" id="projectDirInput" placeholder="/Users/maxpetrusenko/Desktop/Gauntlet/ship2" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="sidebar-project-actions">
+        <button type="button" class="sidebar-project-btn browse" data-action="pickProjectDirectory">Choose folder</button>
+        <button type="button" class="sidebar-project-btn primary" data-action="submitProjectCreate">Open project</button>
+        <button type="button" class="sidebar-project-btn" data-action="cancelProjectCreate">Cancel</button>
+      </div>
+    </div>
 
     <!-- recents -->
     <div class="sidebar-recents">
@@ -370,18 +398,23 @@ function projectCatalog() {
   var selected = typeof getSelectedProject === 'function' ? getSelectedProject() : { id: 'default', label: 'Default Project' };
   var seen = {};
   var list = [];
-  function push(id, label, lastUsed) {
+  function push(id, label, lastUsed, workDir) {
     if (!id || seen[id]) return;
     seen[id] = true;
-    list.push({ id: id, label: label || 'Untitled Project', lastUsed: lastUsed || '' });
+    list.push({ id: id, label: label || 'Untitled Project', lastUsed: lastUsed || '', workDir: workDir || '' });
   }
-  push(selected && selected.id, selected && selected.label, '');
-  var all = typeof sortedRuns === 'function' ? sortedRuns() : [];
+  var registry = typeof getAvailableProjects === 'function' ? getAvailableProjects() : [];
+  for (var pi = 0; pi < registry.length; pi++) {
+    var project = registry[pi];
+    push(project.id, project.label, '', project.workDir);
+  }
+  push(selected && selected.id, selected && selected.label, '', selected && selected.workDir);
+  var all = typeof sortedRuns === 'function' ? sortedRuns({ selectedOnly: false }) : [];
   for (var i = 0; i < all.length; i++) {
     var ctx = all[i] && all[i].projectContext;
-    if (ctx && ctx.projectId) push(ctx.projectId, ctx.projectLabel, all[i].savedAt || '');
+    if (ctx && ctx.projectId) push(ctx.projectId, ctx.projectLabel, all[i].savedAt || '', all[i].workDir || '');
   }
-  if (!list.length) push('default', 'Default Project', '');
+  if (!list.length) push('default', 'Default Project', '', WORK_DIR);
   list.sort(function(a, b) {
     if (selected && a.id === selected.id) return -1;
     if (selected && b.id === selected.id) return 1;
@@ -399,7 +432,7 @@ function renderProjectList() {
   for (var i = 0; i < list.length; i++) {
     var item = list[i];
     var cls = 'sidebar-project-item' + (selected && item.id === selected.id ? ' selected' : '');
-    html += '<button type="button" class="' + cls + '" data-action="selectProject" data-project-id="' + esc(item.id) + '" data-project-label="' + esc(item.label) + '">' +
+    html += '<button type="button" class="' + cls + '" data-action="selectProject" data-project-id="' + esc(item.id) + '" data-project-label="' + esc(item.label) + '" data-project-workdir="' + esc(item.workDir || '') + '">' +
       '<span class="sidebar-project-dot"></span>' +
       '<span>' + esc(item.label) + '</span>' +
       '</button>';
@@ -407,12 +440,116 @@ function renderProjectList() {
   el.innerHTML = html;
 }
 
-function selectProjectById(projectId, projectLabel) {
+function selectProjectById(projectId, projectLabel, projectWorkDir) {
   if (!projectId || typeof setSelectedProject !== 'function') return;
-  setSelectedProject(projectId, projectLabel || 'Project');
+  setSelectedProject(projectId, projectLabel || 'Project', projectWorkDir || WORK_DIR);
+  WORK_DIR = projectWorkDir || WORK_DIR;
+  if (selectedRunId && runsMap[selectedRunId] && runProjectId(runsMap[selectedRunId]) !== projectId) {
+    selectedRunId = null;
+    saveSelectedRunId();
+  }
+  ensureSelectedRun();
   renderProjectList();
+  renderChatList();
+  if (selectedRunId && runsMap[selectedRunId]) renderChatThread();
   if (typeof syncProjectChrome === 'function') syncProjectChrome();
+  if (typeof syncDashboardState === 'function') syncDashboardState();
   if (typeof updateRightRail === 'function') updateRightRail();
+}
+
+function suggestProjectSlug(label) {
+  return String(label || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
+}
+
+function defaultProjectRoot() {
+  var slashIndex = WORK_DIR ? WORK_DIR.lastIndexOf('/') : -1;
+  return slashIndex > 0 ? WORK_DIR.slice(0, slashIndex) : '';
+}
+
+function setProjectCreateOpen(open) {
+  var panel = document.getElementById('projectCreatePanel');
+  if (!panel) return;
+  panel.classList.toggle('open', !!open);
+  var nameInput = document.getElementById('projectNameInput');
+  var dirInput = document.getElementById('projectDirInput');
+  if (!open) {
+    if (dirInput) dirInput.dataset.autoDir = '';
+    return;
+  }
+  if (nameInput && !nameInput.value.trim()) nameInput.value = '';
+  if (dirInput && !dirInput.value.trim()) {
+    dirInput.value = defaultProjectRoot();
+    dirInput.dataset.autoDir = 'auto';
+  }
+  if (nameInput) nameInput.focus();
+}
+
+function syncProjectCreateDirFromName() {
+  var nameInput = document.getElementById('projectNameInput');
+  var dirInput = document.getElementById('projectDirInput');
+  if (!nameInput || !dirInput) return;
+  var root = defaultProjectRoot();
+  if (!root) return;
+  var slug = suggestProjectSlug(nameInput.value || '');
+  var trimmedDir = String(dirInput.value || '').trim();
+  if (!trimmedDir || dirInput.dataset.autoDir === 'auto') {
+    dirInput.value = root + '/' + slug;
+    dirInput.dataset.autoDir = 'auto';
+  }
+}
+
+function inferProjectLabelFromDir(workDir) {
+  var parts = String(workDir || '').split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : '';
+}
+
+function pickProjectDirectory() {
+  var dirInput = document.getElementById('projectDirInput');
+  var startDir = dirInput ? String(dirInput.value || '').trim() : '';
+  return fetch('/api/projects/pick-directory', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDir: startDir || defaultProjectRoot() || WORK_DIR || undefined }),
+  })
+    .then(function(res){ return res.json().then(function(body){ return { ok: res.ok, body: body }; }); })
+    .then(function(result){
+      if (!result.ok) throw new Error(result.body && result.body.error ? result.body.error : 'Folder picker failed');
+      if (!result.body || result.body.cancelled || !result.body.workDir) return;
+      if (dirInput) {
+        dirInput.value = result.body.workDir;
+        dirInput.dataset.autoDir = 'manual';
+      }
+    })
+    .catch(function(error){ window.alert(error && error.message ? error.message : String(error)); });
+}
+
+function createProjectFromForm() {
+  var nameInput = document.getElementById('projectNameInput');
+  var dirInput = document.getElementById('projectDirInput');
+  var rawLabel = nameInput ? nameInput.value.trim() : '';
+  var workDir = dirInput ? dirInput.value.trim() : '';
+  var label = rawLabel || inferProjectLabelFromDir(workDir);
+  if (!label) {
+    if (dirInput) dirInput.focus();
+    else if (nameInput) nameInput.focus();
+    return;
+  }
+  var slug = suggestProjectSlug(label);
+  fetch('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label: label, slug: slug, workDir: workDir || undefined }),
+  })
+    .then(function(res){ return res.json().then(function(body){ return { ok: res.ok, body: body }; }); })
+    .then(function(result){
+      if (!result.ok) throw new Error(result.body && result.body.error ? result.body.error : 'Project creation failed');
+      if (typeof upsertProject === 'function') upsertProject(result.body);
+      if (nameInput) nameInput.value = '';
+      if (dirInput) dirInput.value = '';
+      setProjectCreateOpen(false);
+      selectProjectById(result.body.id, result.body.label, result.body.workDir || '');
+    })
+    .catch(function(error){ window.alert(error && error.message ? error.message : String(error)); });
 }
 
 /* ---------- sidebar: render chat list ---------- */
@@ -542,7 +679,64 @@ function initSidebarKeyboard() {
       var btn = e.target.closest('[data-action="selectProject"]');
       if (!btn) return;
       e.preventDefault();
-      selectProjectById(btn.dataset.projectId || '', btn.dataset.projectLabel || '');
+      selectProjectById(btn.dataset.projectId || '', btn.dataset.projectLabel || '', btn.dataset.projectWorkdir || '');
+    });
+  }
+
+  var createProjectBtn = document.querySelector('[data-action="toggleProjectCreate"]');
+  if (createProjectBtn) {
+    createProjectBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      var panel = document.getElementById('projectCreatePanel');
+      setProjectCreateOpen(!(panel && panel.classList.contains('open')));
+    });
+  }
+
+  var pickProjectDirBtn = document.querySelector('[data-action="pickProjectDirectory"]');
+  if (pickProjectDirBtn) {
+    pickProjectDirBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      void pickProjectDirectory();
+    });
+  }
+
+  var submitProjectBtn = document.querySelector('[data-action="submitProjectCreate"]');
+  if (submitProjectBtn) {
+    submitProjectBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      createProjectFromForm();
+    });
+  }
+
+  var cancelProjectBtn = document.querySelector('[data-action="cancelProjectCreate"]');
+  if (cancelProjectBtn) {
+    cancelProjectBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      setProjectCreateOpen(false);
+    });
+  }
+
+  var projectNameInput = document.getElementById('projectNameInput');
+  if (projectNameInput) {
+    projectNameInput.addEventListener('input', syncProjectCreateDirFromName);
+    projectNameInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        createProjectFromForm();
+      }
+    });
+  }
+
+  var projectDirInput = document.getElementById('projectDirInput');
+  if (projectDirInput) {
+    projectDirInput.addEventListener('input', function() {
+      projectDirInput.dataset.autoDir = 'manual';
+    });
+    projectDirInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        createProjectFromForm();
+      }
     });
   }
 

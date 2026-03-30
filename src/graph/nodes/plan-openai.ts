@@ -91,6 +91,7 @@ export async function runOpenAiPlanLoop(params: {
 }> {
   const { state, config, system, initialUserText, runId } = params;
   const client = getOpenAIClient();
+  const workDir = state.workDir?.trim() || process.cwd();
 
   const conversation: OpenAI.Chat.ChatCompletionMessageParam[] = [
     { role: 'user', content: initialUserText },
@@ -184,7 +185,7 @@ export async function runOpenAiPlanLoop(params: {
         conversation,
         msg,
         toolCalls,
-        (name, input) => dispatchTool(name, input, createPlanLiveHooks()),
+        (name, input) => dispatchTool(name, input, createPlanLiveHooks(), undefined, workDir),
         { unsupportedToolMessage: 'Unsupported tool type' },
       );
       continue;

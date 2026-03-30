@@ -82,6 +82,27 @@ describe('GET /dashboard', () => {
     expect(html).toContain('>Agent<');
   });
 
+  it('renders a native folder picker action for project creation', async () => {
+    const res = await fetch(`${baseUrl}/dashboard`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('data-action="pickProjectDirectory"');
+    expect(html).toContain('Choose folder');
+    expect(html).toContain("/api/projects/pick-directory");
+  });
+
+  it('renders inline project create fields instead of prompt dialogs', async () => {
+    const res = await fetch(`${baseUrl}/dashboard`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('id="projectCreatePanel"');
+    expect(html).toContain('id="projectNameInput"');
+    expect(html).toContain('id="projectDirInput"');
+    expect(html).toContain('Open project');
+    expect(html).not.toContain("window.prompt('Project name')");
+    expect(html).not.toContain("window.prompt('Project directory'");
+  });
+
   it('keeps the plan doc toggle icon-only', async () => {
     const res = await fetch(`${baseUrl}/dashboard`);
     expect(res.status).toBe(200);

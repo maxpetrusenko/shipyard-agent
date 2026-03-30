@@ -10,6 +10,7 @@
  *   - On init: loads existing runs from results/ so history survives restarts
  */
 
+import { resolve as resolvePath } from 'node:path';
 import { v4 as uuid } from 'uuid';
 import { MemorySaver } from '@langchain/langgraph';
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
@@ -59,9 +60,12 @@ import {
   type NextAction,
   appendNextActionsToAssistantMessage,
 } from './next-actions.js';
-import { setCommandRuntimeControls } from '../graph/commands.js';
+import {
+  setCommandRuntimeControls,
+  withCommandRuntimeControls,
+} from '../graph/commands.js';
 import { captureRunBaseline, clearRunBaseline } from './run-baselines.js';
-import { WORK_DIR } from '../config/work-dir.js';
+import { WORK_DIR as DEFAULT_WORK_DIR } from '../config/work-dir.js';
 import { clearLiveFollowups, enqueueLiveFollowup } from './live-followups.js';
 import {
   createLoopGuard,
@@ -80,6 +84,7 @@ import { parseExecuteDiagnosticsFromError } from '../graph/nodes/execute-progres
 export interface QueuedInstruction {
   id: string;
   instruction: string;
+  workDir?: string;
   contexts: ContextEntry[];
   executionPlan?: PlanStep[];
   createdAt: number;
@@ -122,12 +127,22 @@ export interface SubmitModelOptions {
    * instead of silently inheriting it.
    */
   replaceModelSelection?: boolean;
+  /** Override the working directory for this run (e.g. target a new project dir). */
+  workDir?: string;
 }
 
 export type SubmitModelArg = string | SubmitModelOptions | undefined;
 
+export interface LoopStatus {
+  processing: boolean;
+  currentRunId: string | null;
+  queueLength: number;
+  pauseRequested: boolean;
+}
+
 export interface RunResult {
   runId: string;
+  workDir?: string | null;
   campaignId?: string | null;
   rootRunId?: string | null;
   parentRunId?: string | null;
@@ -189,6 +204,66 @@ function resolveRssSampleIntervalMs(): number {
   return Number.isFinite(raw) && raw >= 5000 ? raw : 30000;
 }
 
+function resolveStaleRunTimeoutMs(): number | null {
+  const raw = process.env['SHIPYARD_STALE_RUN_TIMEOUT_MS'];
+  if (raw == null || raw.trim() === '') return 120_000;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return 120_000;
+  if (parsed <= 0) return null;
+  return Math.max(10, Math.floor(parsed));
+}
+
+function buildStaleRunTimeoutError(
+  timeoutMs: number,
+  lastActivityAt: number,
+  lastActivityLabel: string,
+): Error {
+  const elapsed = Math.max(0, Date.now() - lastActivityAt);
+  return new Error(
+    `Watchdog: stale run timeout exceeded (${elapsed}ms > ${timeoutMs}ms) while waiting for graph progress. Last activity: ${lastActivityLabel}.`,
+  );
+}
+
+async function withStaleRunMonitor<T>(
+  operation: Promise<T>,
+  opts: {
+    timeoutMs: number | null;
+    abortController: AbortController | null;
+    getLastActivity: () => { at: number; label: string };
+  },
+): Promise<T> {
+  if (!opts.timeoutMs) return operation;
+  const timeoutMs = opts.timeoutMs;
+
+  let done = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const probeMs = Math.max(10, Math.min(1000, Math.floor(timeoutMs / 4) || 10));
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    const check = () => {
+      if (done) return;
+      const { at, label } = opts.getLastActivity();
+      const elapsed = Date.now() - at;
+      if (elapsed > timeoutMs) {
+        opts.abortController?.abort();
+        reject(buildStaleRunTimeoutError(timeoutMs, at, label));
+        return;
+      }
+      timer = setTimeout(check, Math.max(10, Math.min(probeMs, timeoutMs - elapsed)));
+      timer.unref?.();
+    };
+
+    timer = setTimeout(check, timeoutMs);
+    timer.unref?.();
+  });
+
+  try {
+    return await Promise.race([operation, timeoutPromise]);
+  } finally {
+    done = true;
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export type StateListener = (state: Partial<ShipyardStateType>) => void;
 export type LiveFeedListener = (event: LiveFeedEvent) => void;
 
@@ -203,6 +278,54 @@ function cancellationMessageForSource(
     default:
       return 'Run cancelled by user';
   }
+}
+
+
+const TERSE_RETRY_FOLLOWUP_RE = /^(?:try\s+again|retry|again|re-run|rerun|retry\s+it|do\s+it\s+again)$/i;
+
+function summarizeRetryVerification(run: Pick<RunResult, 'verificationResult'>): string | null {
+  const verification = run.verificationResult;
+  if (!verification) return null;
+  const parts = [`passed=${verification.passed}`, `errors=${verification.error_count}`];
+  if (typeof verification.newErrorCount === 'number') {
+    parts.push(`new=${verification.newErrorCount}`);
+  }
+  if (typeof verification.preExistingErrorCount === 'number') {
+    parts.push(`preExisting=${verification.preExistingErrorCount}`);
+  }
+  return parts.join(', ');
+}
+
+export function expandRetryFollowupInstruction(
+  run: Pick<RunResult, 'instruction' | 'messages' | 'error' | 'reviewFeedback' | 'verificationResult'>,
+  instruction: string,
+  threadKind: 'ask' | 'plan' | 'agent',
+): string {
+  const trimmed = instruction.trim();
+  if (threadKind === 'ask' || !TERSE_RETRY_FOLLOWUP_RE.test(trimmed)) return trimmed;
+
+  const original = run.instruction?.trim() || latestUserInstruction(run.messages) || '';
+  if (!original || original.toLowerCase() === trimmed.toLowerCase()) return trimmed;
+
+  const verificationSummary = summarizeRetryVerification(run);
+  const retryNotes = [
+    run.error?.trim() ? `Previous error: ${run.error.trim()}` : '',
+    run.reviewFeedback?.trim() ? `Previous review feedback: ${run.reviewFeedback.trim()}` : '',
+    verificationSummary ? `Previous verification: ${verificationSummary}` : '',
+  ].filter(Boolean);
+
+  return [
+    'Retry the previous task. Keep the original scope and objective.',
+    '',
+    'Original task:',
+    original,
+    ...(retryNotes.length > 0
+      ? ['', 'Previous attempt context:', ...retryNotes]
+      : []),
+    '',
+    'User follow-up:',
+    trimmed,
+  ].join('\n');
 }
 
 function ensureRunMessages(
@@ -447,6 +570,8 @@ function buildContinuationContext(run: RunResult): ContextEntry | null {
 // ---------------------------------------------------------------------------
 
 export class InstructionLoop {
+  protected workDir: string;
+  protected loadPersistedRuns: boolean;
   private queue: QueuedInstruction[] = [];
   private processing = false;
   private currentRunId: string | null = null;
@@ -468,12 +593,24 @@ export class InstructionLoop {
     resolve: (steps: PlanStep[] | null) => void;
   }> = new Map();
 
-  constructor() {
-    setCommandRuntimeControls({
-      getStatus: () => this.getStatus(),
-      cancel: () => this.cancel('command'),
-      resume: (runId: string) => this.resume(runId),
-    });
+  constructor(options?: { workDir?: string; loadPersistedRuns?: boolean; registerRuntimeControls?: boolean }) {
+    this.workDir = options?.workDir ?? DEFAULT_WORK_DIR;
+    this.loadPersistedRuns = options?.loadPersistedRuns ?? true;
+    if (options?.registerRuntimeControls ?? true) {
+      setCommandRuntimeControls({
+        getStatus: () => this.getStatus(),
+        cancel: () => this.cancel('command'),
+        resume: (runId: string) => this.resume(runId),
+      });
+    }
+  }
+
+  getWorkDir(): string {
+    return this.workDir;
+  }
+
+  setWorkDir(nextWorkDir: string): void {
+    this.workDir = nextWorkDir;
   }
 
   /** User requested pause between graph steps (Agent / Plan runs). */
@@ -508,6 +645,8 @@ export class InstructionLoop {
   init(): void {
     if (this.initialized) return;
     this.initialized = true;
+
+    if (!this.loadPersistedRuns) return;
 
     try {
       const loaded = loadRunsFromFiles();
@@ -584,6 +723,8 @@ export class InstructionLoop {
   ): string {
     this.init();
     const id = uuid();
+    const workDirOverride = typeof modelArg === 'object' && modelArg?.workDir ? resolvePath(modelArg.workDir) : undefined;
+    const effectiveWorkDir = workDirOverride ?? this.workDir;
     let campaignId: string | undefined;
     let rootRunId: string | undefined;
     let parentRunId: string | undefined;
@@ -603,6 +744,7 @@ export class InstructionLoop {
       modelOverrides = canonicalizeModelOverrides(modelArg.modelOverrides) ?? undefined;
       executionPlan = modelArg.executionPlan;
       replaceModelSelection = modelArg.replaceModelSelection === true;
+      executionPlan = modelArg.executionPlan;
       requestedUiMode = modelArg.requestedUiMode;
       threadKindHint = modelArg.threadKindHint;
       campaignId = cleanLineageValue(modelArg.campaignId) ?? undefined;
@@ -631,6 +773,7 @@ export class InstructionLoop {
         modelOverrides,
         requestedUiMode,
         projectContext: projectContext ?? null,
+        workDir: effectiveWorkDir,
       })
     ) {
       return id;
@@ -642,6 +785,7 @@ export class InstructionLoop {
       this.queue.push({
         id,
         instruction,
+        workDir: effectiveWorkDir,
         contexts: contexts ?? [],
         executionPlan,
         createdAt: Date.now(),
@@ -661,6 +805,7 @@ export class InstructionLoop {
     if (!this.runs.has(id)) {
       this.runs.set(id, {
         runId: id,
+        workDir: effectiveWorkDir,
         campaignId: lineage.campaignId,
         rootRunId: lineage.rootRunId,
         parentRunId: lineage.parentRunId,
@@ -739,6 +884,7 @@ export class InstructionLoop {
     this.queue.push({
       id: runId,
       instruction,
+      workDir: existing.workDir ?? this.workDir,
       contexts: [],
       executionPlan: existing.steps?.length
         ? existing.steps.map((step, index) => ({
@@ -831,6 +977,7 @@ export class InstructionLoop {
     let modelFamily: 'anthropic' | 'openai' | undefined;
     let modelOverrides: Partial<Record<ModelRole, string>> | undefined;
     let replaceModelSelection = false;
+    let executionPlan: PlanStep[] | undefined;
     let requestedUiMode: 'ask' | 'plan' | 'agent' | undefined;
     let threadKindHint: 'ask' | 'plan' | 'agent' | undefined;
     if (typeof modelArg === 'string') {
@@ -840,6 +987,7 @@ export class InstructionLoop {
       modelFamily = modelArg.modelFamily;
       modelOverrides = canonicalizeModelOverrides(modelArg.modelOverrides) ?? undefined;
       replaceModelSelection = modelArg.replaceModelSelection === true;
+      executionPlan = modelArg.executionPlan;
       requestedUiMode = modelArg.requestedUiMode;
       threadKindHint = modelArg.threadKindHint;
     }
@@ -855,6 +1003,7 @@ export class InstructionLoop {
           ? 'agent'
           : 'ask');
     const threadKind = threadKindHint ?? existingThreadKind;
+    const followupInstruction = expandRetryFollowupInstruction(existing, trimmed, threadKind);
     const effectiveRequestedUiMode =
       requestedUiMode ?? existing.requestedUiMode ?? null;
     if (
@@ -891,7 +1040,7 @@ export class InstructionLoop {
       this.currentRunId === runId &&
       threadKind !== 'ask'
     ) {
-      enqueueLiveFollowup(runId, trimmed);
+      enqueueLiveFollowup(runId, followupInstruction);
       return true;
     }
 
@@ -899,7 +1048,7 @@ export class InstructionLoop {
       threadKind === 'ask' &&
       existing.phase === 'done' &&
       !hasPendingForRun &&
-      this.completeLocalAsk(runId, trimmed, existing, {
+      this.completeLocalAsk(runId, followupInstruction, existing, {
         createdAt: Date.now(),
         runMode: 'chat',
         modelOverride: effectiveModelOverride,
@@ -907,20 +1056,23 @@ export class InstructionLoop {
         modelOverrides: effectiveModelOverrides,
         requestedUiMode: effectiveRequestedUiMode ?? undefined,
         projectContext: existing.projectContext ?? null,
+        workDir: existing.workDir ?? this.workDir,
       })
     ) return true;
 
     this.queue.push({
       id: runId,
-      instruction: trimmed,
+      instruction: followupInstruction,
+      workDir: existing.workDir ?? this.workDir,
       contexts: [],
       createdAt: Date.now(),
       campaignId: deriveExistingRunLineage(existing).campaignId,
       rootRunId: deriveExistingRunLineage(existing).rootRunId,
       parentRunId: deriveExistingRunLineage(existing).parentRunId,
       kind: 'followup',
+      executionPlan,
       runMode: threadKind === 'ask' ? 'chat' : 'code',
-      confirmPlan: threadKind === 'plan',
+      confirmPlan: threadKind === 'plan' && !(executionPlan && executionPlan.length > 0),
       priorDurationMs: existing.durationMs,
       requestedUiMode: effectiveRequestedUiMode ?? undefined,
       modelOverride: effectiveModelOverride,
@@ -1048,12 +1200,7 @@ export class InstructionLoop {
   }
 
   /** Get current queue status. */
-  getStatus(): {
-    processing: boolean;
-    currentRunId: string | null;
-    queueLength: number;
-    pauseRequested: boolean;
-  } {
+  getStatus(): LoopStatus {
     return {
       processing: this.processing,
       currentRunId: this.currentRunId,
@@ -1155,6 +1302,7 @@ export class InstructionLoop {
     existing?: RunResult | null,
     meta?: {
       createdAt?: number;
+      workDir?: string;
       runMode?: 'auto' | 'chat' | 'code';
       modelOverride?: string;
       modelFamily?: 'anthropic' | 'openai';
@@ -1182,6 +1330,7 @@ export class InstructionLoop {
 
     const runResult: RunResult = {
       runId,
+      workDir: meta?.workDir ?? existing?.workDir ?? this.workDir,
       campaignId: lineage.campaignId,
       rootRunId: lineage.rootRunId,
       parentRunId: lineage.parentRunId,
@@ -1272,6 +1421,13 @@ export class InstructionLoop {
 
     const startedAt = Date.now();
     const startedAtIso = new Date(startedAt).toISOString();
+    const staleRunTimeoutMs = resolveStaleRunTimeoutMs();
+    let lastActivityAt = startedAt;
+    let lastActivityLabel = 'run start';
+    const markActivity = (label: string) => {
+      lastActivityAt = Date.now();
+      lastActivityLabel = label;
+    };
     let peakRssKb = currentRssKb();
     const resolvedModels = resolveModelsForRun({
       modelOverride: item.modelOverride ?? null,
@@ -1293,10 +1449,12 @@ export class InstructionLoop {
     const seedMsgs = isFollowup
       ? (item.seedMessages ?? priorSnap?.messages ?? [])
       : [];
+    const itemWorkDir = item.workDir ?? priorSnap?.workDir ?? this.workDir;
     const startPhase = getRunStartPhase(item.runMode, followupThreadKind);
     const inProgressRun: RunResult = isFollowup
       ? {
           runId: item.id,
+          workDir: itemWorkDir,
           campaignId: deriveExistingRunLineage(priorSnap ?? { runId: item.id }).campaignId,
           rootRunId: deriveExistingRunLineage(priorSnap ?? { runId: item.id }).rootRunId,
           parentRunId: deriveExistingRunLineage(priorSnap ?? { runId: item.id }).parentRunId,
@@ -1331,6 +1489,7 @@ export class InstructionLoop {
         }
       : {
           runId: item.id,
+          workDir: itemWorkDir,
           campaignId: deriveNewRunLineage(item.id, item).campaignId,
           rootRunId: deriveNewRunLineage(item.id, item).rootRunId,
           parentRunId: deriveNewRunLineage(item.id, item).parentRunId,
@@ -1378,6 +1537,7 @@ export class InstructionLoop {
 
     // Update the in-progress run whenever state changes are broadcast
     const unsubProgress = this.onStateChange((state) => {
+      markActivity(`state:${state.phase ?? this.runs.get(item.id)?.phase ?? 'unknown'}`);
       const current = this.runs.get(item.id);
       if (!current) return;
       this.runs.set(item.id, {
@@ -1420,7 +1580,7 @@ export class InstructionLoop {
 
     let finalState: ShipyardStateType | undefined;
     let latestLoopDiagnostics: LoopDiagnostics | null = null;
-    let clearLiveFeedListener: (() => void) | void = undefined;
+    let clearLiveFeedListener: (() => void) | null = null;
     const recursionLimit = resolveGraphRecursionLimit();
     const softBudget = resolveGraphSoftBudget(recursionLimit);
 
@@ -1428,7 +1588,7 @@ export class InstructionLoop {
       // Fire baseline capture in parallel with graph setup — git ops are fast (~1s).
       // The slow verification fingerprint runs in the background and is awaited
       // by the execute node before any file modifications (see execute.ts).
-      void captureRunBaseline(item.id, WORK_DIR).catch(() => {});
+      void captureRunBaseline(item.id, itemWorkDir).catch(() => {});
       const checkpointer = await this.ensureCheckpointerReady();
       const graph = createShipyardGraph({ checkpointer });
 
@@ -1437,6 +1597,7 @@ export class InstructionLoop {
         runId: item.id,
         traceId: uuid(),
         instruction: item.instruction,
+        workDir: itemWorkDir,
         phase: initialPhase as ShipyardStateType['phase'],
         steps: item.executionPlan ? item.executionPlan.map((step, index) => ({
           index,
@@ -1489,104 +1650,139 @@ export class InstructionLoop {
       latestLoopDiagnostics = initialState.loopDiagnostics;
 
       this.broadcast(initialState);
+      markActivity(`state:${initialState.phase}`);
 
-      // Stream file edits + tool calls to dashboard while the graph runs
-      clearLiveFeedListener = setLiveFeedListener((event) => this.broadcastLiveFeed(event));
-
-      // Use stream() instead of invoke() so we get phase updates mid-execution.
-      // Each yielded chunk is { [nodeName]: partialState }.
-      finalState = initialState;
-      const stream = await graph.stream(initialState, {
-        recursionLimit,
-        configurable: { thread_id: item.id },
-        streamMode: 'updates',
-        runId: item.id,
-        runName: `shipyard-${item.id.slice(0, 8)}`,
-        tags: ['shipyard'],
-      });
-
-      let waitingForConfirm = false;
-      const allowStepPause =
-        !isFollowup &&
-        item.runMode !== 'chat' &&
-        (item.runMode === 'code' || item.runMode === 'auto');
-
-      for await (const chunk of stream) {
-        if (this.cancelRequested) break;
-        const nodeUpdates = Object.values(
-          chunk as Record<string, Partial<ShipyardStateType>>,
-        );
-        for (const update of nodeUpdates) {
-          const priorState = finalState;
-          const mergedState = {
-            ...finalState,
-            ...update,
-          } as ShipyardStateType;
-          const diagnostics = loopGuard.observe(priorState, mergedState);
-          latestLoopDiagnostics = diagnostics;
-          finalState = {
-            ...mergedState,
-            loopDiagnostics: diagnostics,
-          };
-          this.broadcast({
-            ...update,
-            loopDiagnostics: diagnostics,
+      await withCommandRuntimeControls(
+        {
+          getStatus: () => this.getStatus(),
+          cancel: () => this.cancel('command'),
+          resume: (runId: string) => this.resume(runId),
+        },
+        async () => {
+          // Stream file edits + tool calls to dashboard while the graph runs
+          const clearListener = setLiveFeedListener((event) => {
+            markActivity(
+              event.type === 'tool'
+                ? `live:tool:${event.tool_name}`
+                : `live:${event.type}`,
+            );
+            this.broadcastLiveFeed(event);
           });
-          if (diagnostics.stopReason) {
-            throw new Error(formatLoopStopError(diagnostics));
-          }
-        }
+          clearLiveFeedListener = typeof clearListener === 'function' ? clearListener : null;
 
-        // Plan-then-confirm: after the plan node emits steps, pause
-        // for user approval before the execute node runs.
-        if (
-          item.confirmPlan &&
-          !waitingForConfirm &&
-          finalState.phase === 'executing' &&
-          finalState.steps?.length > 0
-        ) {
-          waitingForConfirm = true;
-          this.broadcast({
-            ...finalState,
-            phase: 'awaiting_confirmation' as ShipyardStateType['phase'],
-            runId: item.id,
-          });
-
-          const confirmedSteps = await new Promise<PlanStep[] | null>(
-            (resolve) => {
-              const timeout = setTimeout(() => {
-                this.pendingConfirm.delete(item.id);
-                resolve(null);
-              }, 30 * 60 * 1000); // 30 minutes
-              this.pendingConfirm.set(item.id, {
-                resolve: (v: PlanStep[] | null) => {
-                  clearTimeout(timeout);
-                  resolve(v);
-                },
-              });
+          // Use stream() instead of invoke() so we get phase updates mid-execution.
+          // Each yielded chunk is { [nodeName]: partialState }.
+          finalState = initialState;
+          const stream = await withStaleRunMonitor(
+            graph.stream(initialState, {
+              recursionLimit,
+              configurable: { thread_id: item.id },
+              streamMode: 'updates',
+              runId: item.id,
+              runName: `shipyard-${item.id.slice(0, 8)}`,
+              tags: ['shipyard'],
+            }),
+            {
+              timeoutMs: staleRunTimeoutMs,
+              abortController: this.abortController,
+              getLastActivity: () => ({ at: lastActivityAt, label: lastActivityLabel }),
             },
           );
+          markActivity('graph:stream_open');
 
-          if (confirmedSteps) {
-            finalState = {
-              ...finalState,
-              steps: confirmedSteps,
-              currentStepIndex: 0,
-            };
+          let waitingForConfirm = false;
+          const allowStepPause =
+            !isFollowup &&
+            item.runMode !== 'chat' &&
+            (item.runMode === 'code' || item.runMode === 'auto');
+          const iterator = stream[Symbol.asyncIterator]();
+
+          while (true) {
+            const nextChunk = await withStaleRunMonitor(iterator.next(), {
+              timeoutMs: staleRunTimeoutMs,
+              abortController: this.abortController,
+              getLastActivity: () => ({ at: lastActivityAt, label: lastActivityLabel }),
+            });
+            if (nextChunk.done) break;
+            const chunk = nextChunk.value;
+            markActivity('graph:chunk');
+            if (this.cancelRequested) break;
+            const nodeUpdates = Object.values(
+              chunk as Record<string, Partial<ShipyardStateType>>,
+            );
+            for (const update of nodeUpdates) {
+              const priorState = finalState;
+              const mergedState = {
+                ...finalState,
+                ...update,
+              } as ShipyardStateType;
+              const diagnostics = loopGuard.observe(priorState, mergedState);
+              latestLoopDiagnostics = diagnostics;
+              finalState = {
+                ...mergedState,
+                loopDiagnostics: diagnostics,
+              };
+              markActivity(`state:${finalState.phase}`);
+              this.broadcast({
+                ...update,
+                loopDiagnostics: diagnostics,
+              });
+              if (diagnostics.stopReason) {
+                throw new Error(formatLoopStopError(diagnostics));
+              }
+            }
+
+            if (
+              item.confirmPlan &&
+              !waitingForConfirm &&
+              finalState.phase === 'executing' &&
+              finalState.steps?.length > 0
+            ) {
+              waitingForConfirm = true;
+              this.broadcast({
+                ...finalState,
+                phase: 'awaiting_confirmation' as ShipyardStateType['phase'],
+                runId: item.id,
+              });
+
+              const confirmedSteps = await new Promise<PlanStep[] | null>(
+                (resolve) => {
+                  const timeout = setTimeout(() => {
+                    this.pendingConfirm.delete(item.id);
+                    resolve(null);
+                  }, 30 * 60 * 1000);
+                  this.pendingConfirm.set(item.id, {
+                    resolve: (v: PlanStep[] | null) => {
+                      clearTimeout(timeout);
+                      resolve(v);
+                    },
+                  });
+                },
+              );
+
+              if (confirmedSteps) {
+                finalState = {
+                  ...finalState,
+                  steps: confirmedSteps,
+                  currentStepIndex: 0,
+                };
+              }
+              this.broadcast({
+                ...finalState,
+                phase: 'executing',
+                runId: item.id,
+              });
+            }
+
+            if (allowStepPause) {
+              await this.waitPauseBetweenSteps(item.id);
+            }
           }
-          this.broadcast({
-            ...finalState,
-            phase: 'executing',
-            runId: item.id,
-          });
-        }
+        },
+      );
 
-        if (allowStepPause) {
-          await this.waitPauseBetweenSteps(item.id);
-        }
-      }
-
-      const threadKind = this.resolveThreadKind(item, finalState!);
+      const settledState = finalState ?? initialState;
+      const threadKind = this.resolveThreadKind(item, settledState);
       samplePeakRss();
       const totalDuration = priorDuration + (Date.now() - startedAt);
       const current = this.runs.get(item.id);
@@ -1597,37 +1793,38 @@ export class InstructionLoop {
         const cancelRequestedAtIso = this.cancelRequestedAt
           ? new Date(this.cancelRequestedAt).toISOString()
           : null;
-        const traceUrl = buildTraceUrl(item.id) ?? finalState.traceUrl ?? null;
-        const stepsDone = preferNonEmptyArray(finalState.steps, current?.steps).filter(
+        const traceUrl = buildTraceUrl(item.id) ?? settledState.traceUrl ?? null;
+        const stepsDone = preferNonEmptyArray(settledState.steps, current?.steps).filter(
           (s) => s.status === 'done',
         ).length;
-        const fileEdits = preferNonEmptyArray(finalState.fileEdits, current?.fileEdits);
+        const fileEdits = preferNonEmptyArray(settledState.fileEdits, current?.fileEdits);
         const toolCalls = preferNonEmptyArray(
-          finalState.toolCallHistory,
+          settledState.toolCallHistory,
           current?.toolCallHistory,
         );
         const completedActions = stepsDone + fileEdits.length + toolCalls.length;
         const hasCompletedActions = completedActions > 0;
         const runResult: RunResult = {
           runId: item.id,
+          workDir: itemWorkDir,
           campaignId: current?.campaignId ?? inProgressRun.campaignId ?? null,
           rootRunId: current?.rootRunId ?? inProgressRun.rootRunId ?? null,
           parentRunId: current?.parentRunId ?? inProgressRun.parentRunId ?? null,
           phase: 'error',
-          steps: preferNonEmptyArray(finalState.steps, current?.steps),
+          steps: preferNonEmptyArray(settledState.steps, current?.steps),
           fileEdits,
           toolCallHistory: toolCalls,
-          tokenUsage: finalState.tokenUsage ?? current?.tokenUsage ?? null,
+          tokenUsage: settledState.tokenUsage ?? current?.tokenUsage ?? null,
           traceUrl,
           messages: ensureRunMessages(
             item.instruction,
-            finalState.messages ?? current?.messages,
+            settledState.messages ?? current?.messages,
           ),
           error: cancelReason,
           verificationResult:
-            finalState.verificationResult ?? current?.verificationResult ?? null,
+            settledState.verificationResult ?? current?.verificationResult ?? null,
           reviewFeedback:
-            finalState.reviewFeedback ?? current?.reviewFeedback ?? null,
+            settledState.reviewFeedback ?? current?.reviewFeedback ?? null,
           durationMs: totalDuration,
           peakRssKb,
           requestedUiMode: current?.requestedUiMode ?? item.requestedUiMode ?? null,
@@ -1646,12 +1843,12 @@ export class InstructionLoop {
             item.projectContext ??
             null,
           loopDiagnostics:
-            finalState.loopDiagnostics ??
+            settledState.loopDiagnostics ??
             latestLoopDiagnostics ??
             current?.loopDiagnostics ??
             null,
           executeDiagnostics:
-            finalState.executeDiagnostics ??
+            settledState.executeDiagnostics ??
             current?.executeDiagnostics ??
             null,
           completionStatus: hasCompletedActions
@@ -1680,7 +1877,7 @@ export class InstructionLoop {
         this.runs.set(item.id, runResult);
         this.persistRun(runResult);
         this.broadcast({
-          ...finalState,
+          ...settledState,
           runId: item.id,
           phase: 'error',
           error: cancelReason,
@@ -1689,30 +1886,31 @@ export class InstructionLoop {
         } as Partial<ShipyardStateType> & { threadKind?: string; completionStatus?: string });
         this.resolveTraceUrlInBackground(item.id);
       } else {
-        const traceUrl = buildTraceUrl(item.id) ?? finalState.traceUrl ?? null;
+        const traceUrl = buildTraceUrl(item.id) ?? settledState.traceUrl ?? null;
         const runResult: RunResult = {
           runId: item.id,
+          workDir: itemWorkDir,
           campaignId: current?.campaignId ?? inProgressRun.campaignId ?? null,
           rootRunId: current?.rootRunId ?? inProgressRun.rootRunId ?? null,
           parentRunId: current?.parentRunId ?? inProgressRun.parentRunId ?? null,
-          phase: finalState.phase,
-          steps: preferNonEmptyArray(finalState.steps, current?.steps),
-          fileEdits: preferNonEmptyArray(finalState.fileEdits, current?.fileEdits),
+          phase: settledState.phase,
+          steps: preferNonEmptyArray(settledState.steps, current?.steps),
+          fileEdits: preferNonEmptyArray(settledState.fileEdits, current?.fileEdits),
           toolCallHistory: preferNonEmptyArray(
-            finalState.toolCallHistory,
+            settledState.toolCallHistory,
             current?.toolCallHistory,
           ),
-          tokenUsage: finalState.tokenUsage ?? current?.tokenUsage ?? null,
-          traceUrl: traceUrl ?? finalState.traceUrl,
+          tokenUsage: settledState.tokenUsage ?? current?.tokenUsage ?? null,
+          traceUrl: traceUrl ?? settledState.traceUrl,
           messages: ensureRunMessages(
             item.instruction,
-            finalState.messages ?? current?.messages,
+            settledState.messages ?? current?.messages,
           ),
-          error: finalState.error,
+          error: settledState.error,
           verificationResult:
-            finalState.verificationResult ?? current?.verificationResult ?? null,
+            settledState.verificationResult ?? current?.verificationResult ?? null,
           reviewFeedback:
-            finalState.reviewFeedback ?? current?.reviewFeedback ?? null,
+            settledState.reviewFeedback ?? current?.reviewFeedback ?? null,
           durationMs: totalDuration,
           peakRssKb,
           requestedUiMode: current?.requestedUiMode ?? item.requestedUiMode ?? null,
@@ -1731,15 +1929,15 @@ export class InstructionLoop {
             item.projectContext ??
             null,
           loopDiagnostics:
-            finalState.loopDiagnostics ??
+            settledState.loopDiagnostics ??
             latestLoopDiagnostics ??
             current?.loopDiagnostics ??
             null,
           executeDiagnostics:
-            finalState.executeDiagnostics ??
+            settledState.executeDiagnostics ??
             current?.executeDiagnostics ??
             null,
-          completionStatus: finalState.phase === 'done' ? 'completed' : 'failed',
+          completionStatus: settledState.phase === 'done' ? 'completed' : 'failed',
           cancellation: null,
           savedAt: new Date().toISOString(),
         };
@@ -1757,7 +1955,7 @@ export class InstructionLoop {
         this.runs.set(item.id, runResult);
         this.persistRun(runResult);
         this.broadcast({
-          ...finalState,
+          ...settledState,
           messages: runResult.messages,
           nextActions: runResult.nextActions,
           threadKind,
@@ -1830,6 +2028,7 @@ export class InstructionLoop {
 
       const runResult: RunResult = {
         runId: item.id,
+        workDir: itemWorkDir,
         campaignId: prev?.campaignId ?? inProgressRun.campaignId ?? null,
         rootRunId: prev?.rootRunId ?? inProgressRun.rootRunId ?? null,
         parentRunId: prev?.parentRunId ?? inProgressRun.parentRunId ?? null,
@@ -1911,7 +2110,8 @@ export class InstructionLoop {
       clearInterval(rssSampler);
       clearRunBaseline(item.id);
       clearLiveFollowups(item.id);
-      clearLiveFeedListener?.();
+      const liveFeedCleanup = clearLiveFeedListener as (() => void) | null;
+      if (liveFeedCleanup) liveFeedCleanup();
       unsubProgress();
       setRunAbortSignal(null);
       this.pendingConfirm.delete(item.id);

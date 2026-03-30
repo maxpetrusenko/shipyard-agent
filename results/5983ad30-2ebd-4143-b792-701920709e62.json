@@ -1,0 +1,57 @@
+{
+  "runId": "5983ad30-2ebd-4143-b792-701920709e62",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": {
+    "input": 118,
+    "output": 53,
+    "cacheRead": 0,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/public/09245866-4546-47c9-b0a8-413c32ae6a29/r",
+  "messages": [
+    {
+      "role": "user",
+      "content": "run load test task 32"
+    },
+    {
+      "role": "assistant",
+      "content": "I can’t run the load test from here in Q&A mode.\n\nIf you want task 32 executed or the code/config adjusted for it, please submit again with a concrete coding request (or turn off Chat-only mode if you’re using it)."
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 903,
+  "threadKind": "ask",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-26T14:25:11.696Z",
+  "startedAt": "2026-03-26T14:25:55.692Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.3-codex",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.3-codex",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-26T14:26:05.467Z"
+}

@@ -305,6 +305,44 @@ describe('POST /run validation', () => {
     expect(body.runId).toBeTruthy();
   });
 
+  it('derives an execution plan from structured agent instructions', async () => {
+    const res = await fetch(`${baseUrl}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: `Execution plan
+1. Build API routes
+2. Add dashboard tests`,
+        uiMode: 'agent',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      runId: string;
+      confirmPlan: boolean;
+      runMode: string;
+      requestedUiMode: string | null;
+    };
+    expect(body.runId).toBeTruthy();
+    expect(body.confirmPlan).toBe(false);
+    expect(body.runMode).toBe('code');
+    expect(body.requestedUiMode).toBe('agent');
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const runRes = await fetch(`${baseUrl}/runs/${body.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as {
+      steps: Array<{ description: string }>;
+      phase: string;
+    };
+    expect(runBody.steps.map((step) => step.description)).toEqual([
+      'Build API routes',
+      'Add dashboard tests',
+    ]);
+    expect(runBody.phase).not.toBe('awaiting_confirmation');
+  });
+
   it('uses attached plan docs as execution guidance instead of awaiting plan confirmation', async () => {
     const res = await fetch(`${baseUrl}/run`, {
       method: 'POST',
@@ -388,6 +426,64 @@ describe('POST /run validation', () => {
     expect(res.status).toBe(400);
     const body = await res.json() as { error: string };
     expect(body.error).toContain('planDoc exceeds max size');
+  });
+
+  it('parses Phase headings with period separator and 0-based numbering', async () => {
+    const prdDoc = [
+      '## Phase 0. Baseline and foundations',
+      '## Phase 1. Database schema',
+      '## Phase 2. Auth and sessions',
+      '## Phase 3. Document CRUD',
+    ].join('\n\n### Goal\n\nDo the thing.\n\n');
+    const res = await fetch(`${baseUrl}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'rebuild from PRD',
+        planDoc: prdDoc,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { runId: string };
+    expect(body.runId).toBeTruthy();
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const runRes = await fetch(`${baseUrl}/runs/${body.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as {
+      steps: Array<{ index: number; description: string }>;
+    };
+    expect(runBody.steps).toHaveLength(4);
+    expect(runBody.steps.map((s) => s.description)).toEqual([
+      'Baseline and foundations',
+      'Database schema',
+      'Auth and sessions',
+      'Document CRUD',
+    ]);
+    // Indexes should be 0-based and sequential
+    expect(runBody.steps.map((s) => s.index)).toEqual([0, 1, 2, 3]);
+  });
+
+  it('accepts workDir override to target a different directory', async () => {
+    const res = await fetch(`${baseUrl}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: 'build the app',
+        workDir: '/tmp/test-target-dir',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { runId: string };
+    expect(body.runId).toBeTruthy();
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const runRes = await fetch(`${baseUrl}/runs/${body.runId}`);
+    expect(runRes.status).toBe(200);
+    const runBody = await runRes.json() as { workDir: string };
+    expect(runBody.workDir).toBe('/tmp/test-target-dir');
   });
 
   it('returns immediate ask result for trivial hi', async () => {
@@ -684,6 +780,48 @@ describe('POST /runs/:id/followup', () => {
     expect(run?.rootRunId).toBe(created.runId);
     expect(run?.campaignId).toBe(created.runId);
     expect(run?.parentRunId).toBeNull();
+
+    await new Promise<void>((resolve) => server2.close(() => resolve()));
+  });
+
+  it('derives a supplied plan for agent follow-ups and skips confirm waits', async () => {
+    const loop2 = new InstructionLoop();
+    const app2 = createApp(loop2);
+    const server2 = createServer(app2);
+    const baseUrl2 = await new Promise<string>((resolve) => {
+      server2.listen(0, () => {
+        const addr = server2.address();
+        const port2 = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve(`http://localhost:${port2}/api`);
+      });
+    });
+
+    const createRes = await fetch(`${baseUrl2}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: 'hi', uiMode: 'ask' }),
+    });
+    expect(createRes.status).toBe(200);
+    const created = await createRes.json() as { runId: string };
+
+    const res = await fetch(`${baseUrl2}/runs/${created.runId}/followup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: `Execution plan
+1. Update routes
+2. Add tests`,
+        uiMode: 'agent',
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    await new Promise((r) => setTimeout(r, 50));
+    const run = loop2.getRun(created.runId);
+    expect(run?.threadKind).toBe('agent');
+    expect(run?.runMode).toBe('code');
+    expect(run?.steps.map((step) => step.description)).toEqual(['Update routes', 'Add tests']);
+    expect(run?.phase).not.toBe('awaiting_confirmation');
 
     await new Promise<void>((resolve) => server2.close(() => resolve()));
   });

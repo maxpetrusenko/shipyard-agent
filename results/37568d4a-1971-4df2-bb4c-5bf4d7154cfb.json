@@ -1,0 +1,57 @@
+{
+  "runId": "37568d4a-1971-4df2-bb4c-5bf4d7154cfb",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": {
+    "input": 118,
+    "output": 103,
+    "cacheRead": 0,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/public/55750a66-401d-4e94-b1a2-9c3b6add7a2e/r",
+  "messages": [
+    {
+      "role": "user",
+      "content": "run load test task 2"
+    },
+    {
+      "role": "assistant",
+      "content": "I can help interpret or plan it, but I can’t actually execute the load test from here.\n\nIf you want, send the details for “task 2” or the command/config you expect to run, and I can help you:\n- identify the exact command,\n- explain the expected results,\n- troubleshoot failures,\n- or review the load test setup.\n\nIf you need me to change or add code to support it, submit again with a concrete coding request, or turn off Chat-only mode."
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 1082,
+  "threadKind": "ask",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-26T14:29:14.287Z",
+  "startedAt": "2026-03-26T14:29:15.430Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.3-codex",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.3-codex",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-26T14:29:22.485Z"
+}

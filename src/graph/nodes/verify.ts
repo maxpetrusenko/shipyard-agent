@@ -4,7 +4,6 @@
 
 import { runBash } from '../../tools/bash.js';
 import { getRunAbortSignal } from '../../runtime/run-signal.js';
-import { WORK_DIR } from '../../config/work-dir.js';
 import { detectObservedChangedFiles, getBaselineFingerprint } from '../../runtime/run-baselines.js';
 import { traceToolCall } from '../../runtime/trace-helpers.js';
 import type {
@@ -15,16 +14,18 @@ import type {
 
 export interface VerifyNodeOptions {
   runTests?: 'final_only' | 'always';
+  mode?: 'full' | 'lightweight';
 }
 
 async function runVerifyStep(
   name: string,
   command: string,
   timeout: number,
+  workDir: string,
   signal?: AbortSignal,
 ) {
   return traceToolCall(`verify:${name}`, { command }, () =>
-    runBash({ command, timeout, cwd: WORK_DIR, signal }),
+    runBash({ command, timeout, cwd: workDir, signal }),
   );
 }
 
@@ -55,6 +56,7 @@ export async function runVerification(
   state: ShipyardStateType,
   opts: VerifyNodeOptions = {},
 ): Promise<Partial<ShipyardStateType>> {
+  const workDir = state.workDir?.trim() || process.cwd();
   // Short-circuit: if execute set a recoverable executionIssue, carry it forward
   // with a synthetic verification note (no point running verification if execute failed)
   if (state.executionIssue?.recoverable) {
@@ -71,11 +73,12 @@ export async function runVerification(
   }
 
   const hasMoreSteps = state.currentStepIndex < state.steps.length - 1;
+  const hasPlanDoc = (state.contexts ?? []).some((c) => c.label === 'Plan Document');
   const runTestsEachStep =
-    opts.runTests === 'always' || process.env['SHIPYARD_TEST_EACH_STEP'] === 'true';
+    opts.runTests === 'always' || process.env['SHIPYARD_TEST_EACH_STEP'] === 'true' || hasPlanDoc;
   const midStepErrorThreshold = 10;
   const observedFiles = state.fileEdits.length === 0
-    ? await detectObservedChangedFiles(state.runId, WORK_DIR)
+    ? await detectObservedChangedFiles(state.runId, state.workDir)
     : [];
   const effectiveEdits = state.fileEdits.length > 0
     ? state.fileEdits
@@ -115,6 +118,7 @@ export async function runVerification(
       'lightweight-typecheck',
       'pnpm type-check 2>&1',
       120_000,
+      workDir,
       signal,
     );
     if (lightTsc.message === 'Run cancelled by user') {
@@ -147,11 +151,29 @@ export async function runVerification(
     }
   }
 
+  if (hasMoreSteps && opts.mode === 'lightweight') {
+    return {
+      phase: 'reviewing',
+      verificationResult: {
+        ...results,
+        passed: true,
+        error_count: 0,
+        newErrorCount: 0,
+        preExistingErrorCount: 0,
+        typecheck_output: baseline
+          ? 'Mid-step lightweight verification passed; full verification deferred until the final coordinated step.'
+          : 'Deferred full verification until the final coordinated step (no baseline available for mid-step diff).',
+      },
+      fileEdits: effectiveEdits,
+      modelHint: 'opus',
+    };
+  }
+
   // Run ALL stages unconditionally so baseline diffing can compare the full picture.
   // A pre-existing lint failure must not mask a new typecheck or test regression.
 
   // Lint (optional; skip cleanly if no lint script in package)
-  const lint = await runVerifyStep('lint', 'pnpm run lint --if-present 2>&1', 120_000, signal);
+  const lint = await runVerifyStep('lint', 'pnpm run lint --if-present 2>&1', 120_000, workDir, signal);
   if (lint.message === 'Run cancelled by user') {
     return { phase: 'error', error: lint.message, verificationResult: results, modelHint: 'opus' };
   }
@@ -162,7 +184,7 @@ export async function runVerification(
   }
 
   // Typecheck — always run regardless of lint result
-  const tsc = await runVerifyStep('typecheck', 'pnpm type-check 2>&1', 120_000, signal);
+  const tsc = await runVerifyStep('typecheck', 'pnpm type-check 2>&1', 120_000, workDir, signal);
   if (tsc.message === 'Run cancelled by user') {
     return { phase: 'error', error: tsc.message, verificationResult: results, modelHint: 'opus' };
   }
@@ -181,7 +203,7 @@ export async function runVerification(
 
   // Tests — always run on final step (or each step if opted in), regardless of lint/typecheck
   if (!hasMoreSteps || runTestsEachStep) {
-    const test = await runVerifyStep('test', 'pnpm test 2>&1', 300_000, signal);
+    const test = await runVerifyStep('test', 'pnpm test 2>&1', 300_000, workDir, signal);
     if (test.message === 'Run cancelled by user') {
       return { phase: 'error', error: test.message, verificationResult: results, modelHint: 'opus' };
     }
@@ -206,8 +228,10 @@ export async function runVerification(
     const newErrors = currentErrors.filter((e) => !baselineSet.has(e));
     results.preExistingErrorCount = Math.max(0, currentErrors.length - newErrors.length);
     results.newErrorCount = newErrors.length;
-    // If all errors were pre-existing, the run didn't introduce regressions
-    if (newErrors.length === 0) {
+    // If all parsed errors were pre-existing, the run didn't introduce regressions.
+    // Keep opaque command failures (for example missing package.json / failed bootstrap)
+    // as failures even when we cannot classify them into typed error lines.
+    if (newErrors.length === 0 && (currentErrors.length > 0 || results.error_count === 0)) {
       results.passed = true;
     }
   } else if (results.passed) {

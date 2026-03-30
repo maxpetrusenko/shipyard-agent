@@ -123,6 +123,16 @@ function buildRepairInstruction(
   ].join('\n');
 }
 
+function verificationFailureSnippet(verification: VerificationResult): string {
+  return [
+    verification.typecheck_output ?? '',
+    verification.test_output ?? '',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, VERIFY_OUTPUT_LIMIT);
+}
+
 function summarizeVerification(verification: VerificationResult): string {
   const parts = [
     `passed=${verification.passed}`,
@@ -149,7 +159,7 @@ async function verifyCurrentWorkspace(
     fileOverlaySnapshots,
     executionIssue: null,
   }, {
-    runTests: 'always',
+    mode: currentStepIndex < state.steps.length - 1 ? 'lightweight' : 'full',
   });
 }
 
@@ -230,6 +240,7 @@ export async function runCoordinatedWorkerPlan(
           modelOverride: state.modelOverride ?? null,
           modelFamily: state.modelFamily ?? null,
           modelOverrides: state.modelOverrides ?? null,
+          workDir: state.workDir ?? null,
         },
       );
 
@@ -318,6 +329,7 @@ export async function runCoordinatedWorkerPlan(
       }
 
       if (attempt === MAX_STEP_REPAIR_ATTEMPTS) {
+        const failureSnippet = verificationFailureSnippet(verification);
         steps = steps.map((entry, idx) =>
           idx === stepIndex ? { ...entry, status: 'failed' as const } : entry,
         );
@@ -331,7 +343,7 @@ export async function runCoordinatedWorkerPlan(
             ...newMessages,
             {
               role: 'assistant',
-              content: `[Coordinator] Step ${stepIndex + 1} still failing verification after repairs. ${summarizeVerification(verification)}`,
+              content: `[Coordinator] Step ${stepIndex + 1} still failing verification after repairs. ${summarizeVerification(verification)}${failureSnippet ? `\n\n${failureSnippet}` : ''}`,
             },
           ],
           tokenUsage,
@@ -341,8 +353,8 @@ export async function runCoordinatedWorkerPlan(
           executionIssue: {
             kind: 'coordination',
             recoverable: true,
-            message: `Step ${stepIndex + 1} failed verification after ${MAX_STEP_REPAIR_ATTEMPTS + 1} worker attempts.`,
-            nextAction: 'Replan this step or spawn a narrower repair worker with the verification output.',
+            message: `Step ${stepIndex + 1} failed verification after ${MAX_STEP_REPAIR_ATTEMPTS + 1} worker attempts.${failureSnippet ? `\n\n${failureSnippet}` : ''}`,
+            nextAction: 'Replan this step or spawn a narrower repair worker with the exact verification output above.',
             stopReason: null,
           },
         };

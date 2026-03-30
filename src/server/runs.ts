@@ -1,6 +1,5 @@
 import { execSync } from 'node:child_process';
 import type { Request, Response } from 'express';
-import { WORK_DIR } from '../config/work-dir.js';
 import type { InstructionLoop, RunResult } from '../runtime/loop.js';
 import {
   NAV_STYLES,
@@ -17,10 +16,10 @@ function esc(value: unknown): string {
     .replace(/"/g, '&quot;');
 }
 
-function shortPath(filePath: string): string {
+function shortPath(filePath: string, workDir?: string | null): string {
   if (!filePath) return '';
-  if (filePath.startsWith(WORK_DIR)) {
-    return filePath.slice(WORK_DIR.length).replace(/^\/+/, '') || '.';
+  if (workDir && filePath.startsWith(workDir)) {
+    return filePath.slice(workDir.length).replace(/^\/+/, '') || '.';
   }
   return filePath;
 }
@@ -70,11 +69,11 @@ function firstStepDescription(run: RunResult): string {
 
 function firstTouchedPath(run: RunResult): string {
   const fileEdit = run.fileEdits.find((edit) => edit.file_path?.trim())?.file_path?.trim();
-  if (fileEdit) return shortPath(fileEdit);
+  if (fileEdit) return shortPath(fileEdit, run.workDir);
   const toolFile = run.toolCallHistory
     .map((item) => item.tool_input?.file_path)
     .find((filePath): filePath is string => typeof filePath === 'string' && filePath.trim().length > 0);
-  return toolFile ? shortPath(toolFile) : '';
+  return toolFile ? shortPath(toolFile, run.workDir) : '';
 }
 
 function displayTitle(run: RunResult): string {
@@ -130,11 +129,11 @@ function isRefactoringRun(run: RunResult): boolean {
   return false;
 }
 
-function repoMeta(): { branch: string; lastCommit: string } {
+function repoMeta(workDir: string): { branch: string; lastCommit: string } {
   try {
     return {
-      branch: execSync(`git -C "${WORK_DIR}" branch --show-current`, { encoding: 'utf-8' }).trim() || 'unknown',
-      lastCommit: execSync(`git -C "${WORK_DIR}" log -1 --format="%h %s" --no-walk`, { encoding: 'utf-8' }).trim() || 'unknown',
+      branch: execSync(`git -C "${workDir}" branch --show-current`, { encoding: 'utf-8' }).trim() || 'unknown',
+      lastCommit: execSync(`git -C "${workDir}" log -1 --format="%h %s" --no-walk`, { encoding: 'utf-8' }).trim() || 'unknown',
     };
   } catch {
     return { branch: 'unknown', lastCommit: 'unknown' };
@@ -171,7 +170,7 @@ function renderRunCard(run: RunResult): string {
         <div class="mini-label">Files Changed</div>
         ${
           files.length
-            ? `<ul>${files.slice(0, 6).map((filePath) => `<li><code>${esc(shortPath(filePath))}</code></li>`).join('')}</ul>`
+            ? `<ul>${files.slice(0, 6).map((filePath) => `<li><code>${esc(shortPath(filePath, run.workDir))}</code></li>`).join('')}</ul>`
             : '<div class="empty">No file edits captured</div>'
         }
       </section>
@@ -193,6 +192,7 @@ function renderRunCard(run: RunResult): string {
 
 export function runsHandler(loop: InstructionLoop) {
   return async (req: Request, res: Response) => {
+    const workDir = loop.getWorkDir();
     let allRuns: RunResult[];
     try {
       allRuns = await loop.getRunsForListingAsync(500, 0);
@@ -206,7 +206,7 @@ export function runsHandler(loop: InstructionLoop) {
     const showAll = req.query['all'] === '1' || req.query['all'] === 'true';
     const runs = showAll ? visibleRuns : refactoringRuns;
     const hiddenCount = Math.max(0, allRuns.length - refactoringRuns.length);
-    const meta = repoMeta();
+    const meta = repoMeta(workDir);
     const totalFiles = runs.reduce((sum, run) => sum + touchedFiles(run).length, 0);
     const totalToolCalls = runs.reduce((sum, run) => sum + (run.toolCallHistory?.length ?? 0), 0);
 
@@ -282,7 +282,7 @@ ${NAV_STYLES}
   <section class="lead">
     <div class="hero">
       <h1>Refactoring Runs</h1>
-      <p>Repo-touching run history for <code>${esc(WORK_DIR)}</code>. Pure ask-only chats are hidden by default so this view stays focused on the calls and edits used to modify the repo.</p>
+      <p>Repo-touching run history for <code>${esc(workDir)}</code>. Pure ask-only chats are hidden by default so this view stays focused on the calls and edits used to modify the repo.</p>
       <div class="hero-actions">
         <a class="btn ${showAll ? '' : 'active'}" href="/runs">Refactoring Only</a>
         <a class="btn ${showAll ? 'active' : ''}" href="/runs?all=1">Show All Runs</a>

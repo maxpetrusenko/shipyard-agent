@@ -77,23 +77,77 @@ function persistDashboardInput(inputId, storageKey) {
 export function getProjectPreferencesScript(): string {
   return `
 var DASH_PROJECT_KEY = ${JSON.stringify(DASHBOARD_PROJECT_STORAGE_KEY)};
+var projectRegistry = Array.isArray(PROJECTS_SEED) ? PROJECTS_SEED.slice() : [];
+
+function normalizeProjectRecord(project) {
+  if (!project || !project.id) return null;
+  return {
+    id: String(project.id),
+    label: project.label ? String(project.label) : 'Project',
+    workDir: project.workDir ? String(project.workDir) : WORK_DIR,
+  };
+}
+
+function defaultProjectRecord() {
+  if (projectRegistry.length > 0) return normalizeProjectRecord(projectRegistry[0]);
+  return { id: 'default', label: 'Default Project', workDir: WORK_DIR };
+}
+
+function setAvailableProjects(projects) {
+  var next = Array.isArray(projects)
+    ? projects.map(normalizeProjectRecord).filter(Boolean)
+    : [];
+  if (!next.length) next = [defaultProjectRecord()];
+  projectRegistry = next;
+  return projectRegistry;
+}
+
+function getAvailableProjects() {
+  if (!projectRegistry.length) setAvailableProjects(PROJECTS_SEED);
+  return projectRegistry.slice();
+}
+
+function upsertProject(project) {
+  var next = normalizeProjectRecord(project);
+  if (!next) return null;
+  var found = false;
+  projectRegistry = getAvailableProjects().map(function(entry) {
+    if (entry.id !== next.id) return entry;
+    found = true;
+    return {
+      id: next.id,
+      label: next.label || entry.label,
+      workDir: next.workDir || entry.workDir,
+    };
+  });
+  if (!found) projectRegistry.push(next);
+  return next;
+}
 
 function getSelectedProject() {
   try {
     var raw = localStorage.getItem(DASH_PROJECT_KEY);
-    if (!raw) return { id: 'default', label: 'Default Project' };
+    if (!raw) return defaultProjectRecord();
     var parsed = JSON.parse(raw);
-    if (parsed && parsed.id && parsed.label) return parsed;
-    return { id: 'default', label: 'Default Project' };
+    if (parsed && parsed.id) {
+      var existing = getAvailableProjects().find(function(project){ return project.id === parsed.id; });
+      if (existing) return existing;
+      if (parsed.label || parsed.workDir) return normalizeProjectRecord(parsed);
+    }
+    return defaultProjectRecord();
   } catch (e) {
-    return { id: 'default', label: 'Default Project' };
+    return defaultProjectRecord();
   }
 }
 
-function setSelectedProject(id, label) {
+function setSelectedProject(id, label, workDir) {
+  var selected = normalizeProjectRecord({ id: id, label: label, workDir: workDir }) || defaultProjectRecord();
+  upsertProject(selected);
   try {
-    localStorage.setItem(DASH_PROJECT_KEY, JSON.stringify({ id: id, label: label }));
+    localStorage.setItem(DASH_PROJECT_KEY, JSON.stringify(selected));
   } catch (e) {}
 }
+
+setAvailableProjects(PROJECTS_SEED);
 `;
 }

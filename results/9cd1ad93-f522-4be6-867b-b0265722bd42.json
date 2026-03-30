@@ -1,0 +1,57 @@
+{
+  "runId": "9cd1ad93-f522-4be6-867b-b0265722bd42",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": {
+    "input": 118,
+    "output": 81,
+    "cacheRead": 0,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/o/default/projects/p/ship-agent/r/9cd1ad93-f522-4be6-867b-b0265722bd42",
+  "messages": [
+    {
+      "role": "user",
+      "content": "run load test task 7"
+    },
+    {
+      "role": "assistant",
+      "content": "I can’t run tasks or execute the repository from here.\n\nIf you want task 7 load-tested, please submit again with a concrete coding or test request, including:\n- what “task 7” refers to\n- the command or script to run\n- any target environment or parameters\n\nIf you’re in Chat-only mode, turn that off so I can help with implementation details."
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 1021,
+  "threadKind": "ask",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-26T14:29:14.325Z",
+  "startedAt": "2026-03-26T14:29:20.615Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.3-codex",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.3-codex",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-26T14:29:21.637Z"
+}

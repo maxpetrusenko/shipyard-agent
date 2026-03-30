@@ -1,0 +1,27 @@
+{
+  "id": "e2d4358a-6b3d-4a3b-89f4-3a547a225f86",
+  "source": "github",
+  "eventType": "github.issue_comment",
+  "status": "accepted",
+  "instruction": "run load test task 5",
+  "runId": "2f8b12fc-5618-4c56-9f02-aa566fc1fe91",
+  "metadata": {
+    "deliveryId": "load-test-1774493746235-5-c0ee1e00",
+    "action": "created",
+    "sender": "load-tester"
+  },
+  "receivedAt": "2026-03-26T02:55:46.263Z",
+  "retryAttempts": 0,
+  "ingress": {
+    "eventId": "e2d4358a-6b3d-4a3b-89f4-3a547a225f86",
+    "source": "webhook",
+    "entrypoint": "/api/github/webhook",
+    "timestamp": "2026-03-26T02:55:46.263Z",
+    "instruction": "run load test task 5",
+    "runMode": "auto",
+    "queueDepthAtIngress": 4,
+    "schemaVersion": 1,
+    "webhookDeliveryId": "load-test-1774493746235-5-c0ee1e00",
+    "webhookEventType": "issue_comment"
+  }
+}

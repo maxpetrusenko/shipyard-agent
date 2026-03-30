@@ -8,13 +8,13 @@
 import 'dotenv/config';
 import { createServer } from 'node:http';
 import { createApp } from './app.js';
-import { InstructionLoop } from './runtime/loop.js';
+import { ProjectInstructionLoop } from './runtime/project-loop.js';
 import { drainLoopOnShutdown } from './runtime/shutdown.js';
 import { attachWebSocket } from './server/ws.js';
 import { loadEnv } from './config/env.js';
 
 const env = loadEnv();
-const loop = new InstructionLoop();
+const loop = new ProjectInstructionLoop();
 let shuttingDown = false;
 
 // Optional: wire pg Pool for persistence if DB URL is configured

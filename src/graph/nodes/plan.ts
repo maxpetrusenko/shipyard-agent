@@ -15,7 +15,6 @@ import {
   wrapSystemPrompt,
   withCachedTools,
 } from '../../config/client.js';
-import { WORK_DIR } from '../../config/work-dir.js';
 import { messagesCreate } from '../../config/messages-create.js';
 import {
   dispatchAnthropicToolBlocks,
@@ -51,12 +50,13 @@ function buildCompletedStepsSummary(steps: PlanStep[]): string {
   return `Previously completed steps (${completed.length}/${steps.length}):\n${lines.join('\n')}`;
 }
 
-const PLAN_SYSTEM = `You are Shipyard, an autonomous coding agent. You are in the PLANNING phase.
+function buildPlanSystem(workDir: string): string {
+  return `You are Shipyard, an autonomous coding agent. You are in the PLANNING phase.
 
-IMPORTANT: The target codebase is at: ${WORK_DIR}
-All file paths must be absolute, rooted at ${WORK_DIR}.
-When using tools, always use absolute paths (e.g. ${WORK_DIR}/src/index.ts).
-When using bash, always cd to ${WORK_DIR} first or use absolute paths.
+IMPORTANT: The target codebase is at: ${workDir}
+All file paths must be absolute, rooted at ${workDir}.
+When using tools, always use absolute paths (e.g. ${workDir}/src/index.ts).
+When using bash, always cd to ${workDir} first or use absolute paths.
 
 Your job: decompose the user's instruction into concrete, executable steps.
 
@@ -75,6 +75,12 @@ You MUST identify ALL files that need changes, not just a sample or subset.
 2. Use tools to explore: glob for file patterns, grep for code patterns, read key files.
 3. Build a comprehensive file list. Verify you haven't missed anything.
 4. Create steps that cover ALL identified files.
+
+Bootstrap rule:
+- If the selected workdir is empty, mostly empty, or not yet a git repo, but the user asked to build, rebuild, scaffold, or create an app there, treat that directory as the intended target and plan the bootstrap work in place.
+- Do NOT redirect to a sibling repo just because the current directory starts empty.
+- You may plan creating the initial app structure and running git init if that helps establish the new project.
+- When bootstrapping a new app, include whatever minimal verification surface is needed for the final repo gate to pass (for JS/TS apps: installable deps plus working dev/build/test scripts, and add a tiny smoke test if the app starts from zero tests).
 
 Hard scope rules:
 - If the instruction names explicit target files, plan ONLY those files.
@@ -110,8 +116,8 @@ Use them to understand the codebase before making your plan.
 After exploration, output your plan as a JSON array wrapped in <plan> tags:
 <plan>
 [
-  {"index": 0, "description": "...", "files": ["${WORK_DIR}/path/to/file.ts"]},
-  {"index": 1, "description": "...", "files": ["${WORK_DIR}/path/to/other.ts"]}
+  {"index": 0, "description": "...", "files": ["${workDir}/path/to/file.ts"]},
+  {"index": 1, "description": "...", "files": ["${workDir}/path/to/other.ts"]}
 ]
 </plan>
 
@@ -125,6 +131,7 @@ Verification policy:
 ## Codebase conventions
 - This codebase uses TypeScript with \`moduleResolution: "node16"\`. ALL imports MUST include the \`.js\` extension (e.g. \`import { foo } from './bar.js'\`), even for \`.ts\` source files.
 - Use vitest for testing. Import from 'vitest' not '@jest/globals'.`;
+}
 
 const PLAN_COMPACTION_MAX_CHARS = 100_000;
 
@@ -228,6 +235,8 @@ export async function planNode(
   state: ShipyardStateType,
 ): Promise<Partial<ShipyardStateType>> {
   const config = getResolvedModelConfigFromState('planning', state);
+  const workDir = state.workDir?.trim() || process.cwd();
+  const planSystem = buildPlanSystem(workDir);
 
   // Build context from injected contexts (separate cache breakpoint)
   const contextBlock = buildContextBlock(state.contexts);
@@ -240,8 +249,8 @@ export async function planNode(
 
   if (isOpenAiModelId(config.model)) {
     const rawSystem = contextBlock
-      ? `${PLAN_SYSTEM}\n\n# Injected Context\n\n${contextBlock}`
-      : PLAN_SYSTEM;
+      ? `${planSystem}\n\n# Injected Context\n\n${contextBlock}`
+      : planSystem;
     let initialUserText = state.instruction;
     if (state.reviewFeedback) {
       initialUserText = `${state.instruction}\n\nPrevious attempt feedback: ${state.reviewFeedback}\n\n${completedStepsSummary}\n\nPlease revise your plan based on the feedback above. Steps already completed do not need to be re-done unless the feedback specifically requires reworking them.`;
@@ -298,7 +307,7 @@ export async function planNode(
   const anthropic = getClient();
 
   const systemPrompt = wrapSystemPrompt(
-    PLAN_SYSTEM,
+    planSystem,
     contextBlock ? `# Injected Context\n\n${contextBlock}` : undefined,
   );
 
@@ -411,7 +420,7 @@ export async function planNode(
 
       const toolResults = await dispatchAnthropicToolBlocks(
         toolBlocks,
-        (name, input) => dispatchTool(name, input, createPlanLiveHooks()),
+        (name, input) => dispatchTool(name, input, createPlanLiveHooks(), undefined, workDir),
       );
       messages.push({ role: 'user', content: toolResults });
     } else {

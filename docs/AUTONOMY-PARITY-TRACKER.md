@@ -23,7 +23,7 @@ Goal: close parity gaps vs Open SWE / Codex / Cursor patterns and keep score vis
 | H6 | Invoke + webhook reliability (dedupe, DLQ, audit) | Done | 8 | `invoke-routes.ts`, `dedupe-store.ts`, `dead-letter.ts`, tests | Add replay simulation test matrix |
 | H7 | Retry controls + idempotency | Done | 9 | `invoke-routes.ts`, `routes.test.ts` | Add idempotency TTL stats in ops metrics |
 | H8 | Prompt cache wiring (system/tools/tool_result) | Done | 9 | `src/config/client.ts`, `anthropic-tool-dispatch.ts`, `prompt-cache.test.ts` | Add per-run cache ratio on UI |
-| H9 | Context compaction in Anthropic + OpenAI loops | Done (new) | 9 | `src/llm/message-compaction.ts`, `src/llm/openai-message-compaction.ts`, wired in plan/execute for both providers, compaction tests | Add ops counters and dashboard visibility |
+| H9 | Context compaction in Anthropic + OpenAI loops | Done (new) | 9 | `src/llm/message-compaction.ts`, `src/llm/openai-message-compaction.ts`, wired in plan/execute/chat for both providers, compaction tests | Add ops counters and dashboard visibility |
 | H10 | Done gate automation | Done | 10 | `scripts/done-gate.sh`, `scripts/flake-check.sh`, `done:check` | Keep flake target list updated |
 
 ## Medium Signal (Top 10)

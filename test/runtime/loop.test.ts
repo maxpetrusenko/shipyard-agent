@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { InstructionLoop } from '../../src/runtime/loop.js';
+import { InstructionLoop, expandRetryFollowupInstruction } from '../../src/runtime/loop.js';
 
 let liveFeedListener:
   | ((event: Record<string, unknown>) => void)
@@ -19,6 +19,7 @@ let streamScenario:
   | 'recursion_error'
   | 'soft_budget_loop'
   | 'review_verify_loop'
+  | 'stale_hang'
   | 'watchdog_execute_diag' = 'done';
 
 async function waitFor(
@@ -66,6 +67,10 @@ vi.mock('../../src/graph/builder.js', () => ({
             throw new Error(
               'Watchdog: execution stalled after 8 consecutive no-edit tool rounds. Next action: run one edit_file call. Execute diagnostics: {"noEditToolRounds":8,"discoveryCallsBeforeFirstEdit":13,"lastBlockingReason":"edit_file: Refusing edit outside explicit targets: /tmp/a.ts","stopReason":"stalled_no_edit_rounds"}',
             );
+          }
+
+          if (streamScenario === 'stale_hang') {
+            await new Promise(() => {});
           }
 
           if (liveToolDetail) {
@@ -175,6 +180,7 @@ describe('InstructionLoop', () => {
     streamScenario = 'done';
     delete process.env['SHIPYARD_GRAPH_SOFT_BUDGET'];
     delete process.env['SHIPYARD_GRAPH_RECURSION_LIMIT'];
+    delete process.env['SHIPYARD_STALE_RUN_TIMEOUT_MS'];
   });
 
   // -------------------------------------------------------------------------
@@ -354,6 +360,30 @@ describe('InstructionLoop', () => {
       expect(run?.runId).toBe(id);
       expect(run?.threadKind).toBe('plan');
       expect(run?.runMode).toBe('code');
+    });
+
+    it('expands terse retry follow-ups with the original code task context', () => {
+      const expanded = expandRetryFollowupInstruction({
+        instruction: 'Rebuild Ship from the attached phased PRD.',
+        messages: [
+          { role: 'user', content: 'Rebuild Ship from the attached phased PRD.' },
+          { role: 'assistant', content: 'repo mismatch' },
+        ],
+        error: 'Repo target mismatch',
+        reviewFeedback: 'Retry this task and fix the reported failure first.',
+        verificationResult: {
+          passed: false,
+          error_count: 1,
+          newErrorCount: 1,
+          preExistingErrorCount: 0,
+        },
+      }, 'try again', 'agent');
+
+      expect(expanded).toContain('Retry the previous task');
+      expect(expanded).toContain('Original task:');
+      expect(expanded).toContain('Rebuild Ship from the attached phased PRD.');
+      expect(expanded).toContain('Repo target mismatch');
+      expect(expanded).toContain('User follow-up:');
     });
   });
 
@@ -614,6 +644,21 @@ describe('InstructionLoop', () => {
       );
       expect(run?.executeDiagnostics?.stopReason).toBe('stalled_no_edit_rounds');
       expect(run?.errorClassification).toBe('watchdog');
+    });
+
+    it('fails stale runs and frees the queue', async () => {
+      streamScenario = 'stale_hang';
+      process.env['SHIPYARD_STALE_RUN_TIMEOUT_MS'] = '40';
+
+      const id = loop.submit('implement auth', undefined, false, 'code');
+      await waitFor(() => loop.getRun(id)?.phase === 'error', 2_000);
+
+      const run = loop.getRun(id) as any;
+      expect(run?.error).toContain('stale run timeout exceeded');
+      expect(run?.errorClassification).toBe('watchdog');
+      await waitFor(() => !loop.getStatus().processing, 1_000);
+      expect(loop.getStatus().currentRunId).toBeNull();
+      expect(loop.getStatus().queueLength).toBe(0);
     });
 
     it('classifies recursion limit errors', async () => {

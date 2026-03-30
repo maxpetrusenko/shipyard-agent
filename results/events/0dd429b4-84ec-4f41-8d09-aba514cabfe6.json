@@ -1,0 +1,30 @@
+{
+  "id": "0dd429b4-84ec-4f41-8d09-aba514cabfe6",
+  "source": "github",
+  "eventType": "github.issue_comment",
+  "status": "accepted",
+  "instruction": "run load test task 90003",
+  "runId": "d934e9d6-97e2-4ce9-a45c-c8527c188675",
+  "metadata": {
+    "deliveryId": "load-test-1774535309291-90003-b4aeb0ec",
+    "action": "created",
+    "sender": "load-tester",
+    "retryOf": "df5e52ff-8828-4c89-8656-8a0cf3d22fac"
+  },
+  "receivedAt": "2026-03-26T14:28:29.365Z",
+  "retryAttempts": 1,
+  "retryOfEventId": "df5e52ff-8828-4c89-8656-8a0cf3d22fac",
+  "ingress": {
+    "eventId": "0dd429b4-84ec-4f41-8d09-aba514cabfe6",
+    "source": "retry-batch",
+    "entrypoint": "/api/invoke/events/retry-batch",
+    "timestamp": "2026-03-26T14:28:29.365Z",
+    "instruction": "run load test task 90003",
+    "runMode": "auto",
+    "queueDepthAtIngress": 16,
+    "schemaVersion": 1,
+    "correlationId": "0dd429b4-84ec-4f41-8d09-aba514cabfe6",
+    "retryOfEventId": "df5e52ff-8828-4c89-8656-8a0cf3d22fac",
+    "retryAttempt": 1
+  }
+}

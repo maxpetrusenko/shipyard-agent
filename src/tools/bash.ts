@@ -37,6 +37,7 @@ const BLOCKED_PATTERNS = [
   /\bgit\s+add\s+-A\b/,  // broad staging
   /\bgit\s+add\s+\.\b/,  // broad staging
   /\bgit\s+stash\b/,     // hidden workspace mutation
+  /\bapply_patch\b/,     // codex-style patch helper; use structured file tools instead
   /\bgit\s+apply\b/,     // prefer structured file tools
   /\bgit\s+reset\s+--hard\b/, // destructive
   /\bgit\s+clean\s+-[^\n]*f/, // destructive

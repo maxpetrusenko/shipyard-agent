@@ -162,6 +162,7 @@ export const ShipyardState = Annotation.Root({
   runId: Annotation<string>,
   traceId: Annotation<string>,
   instruction: Annotation<string>,
+  workDir: Annotation<string>,
 
   // Phase tracking
   phase: Annotation<ShipyardPhase>,

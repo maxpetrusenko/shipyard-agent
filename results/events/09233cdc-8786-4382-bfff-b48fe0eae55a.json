@@ -1,0 +1,36 @@
+{
+  "id": "09233cdc-8786-4382-bfff-b48fe0eae55a",
+  "source": "github",
+  "eventType": "github.issue_comment",
+  "status": "accepted",
+  "instruction": "load test task 0",
+  "runId": "1fd3bbf8-57db-4d10-be27-356c5e105bcb",
+  "metadata": {
+    "deliveryId": "load-test-1774584325185-0-70fbee80",
+    "action": "created",
+    "sender": "load-tester",
+    "conversationKey": "issue:99999:load/test-repo:1",
+    "conversationKind": "issue",
+    "repository": "load/test-repo",
+    "installationId": 99999,
+    "issueNumber": 1,
+    "commentId": 10000,
+    "threadKindHint": "agent",
+    "reusedThread": false
+  },
+  "receivedAt": "2026-03-27T04:05:25.767Z",
+  "retryAttempts": 0,
+  "ingress": {
+    "eventId": "09233cdc-8786-4382-bfff-b48fe0eae55a",
+    "source": "webhook",
+    "entrypoint": "/api/github/webhook",
+    "timestamp": "2026-03-27T04:05:25.767Z",
+    "instruction": "load test task 0",
+    "runMode": "code",
+    "queueDepthAtIngress": 0,
+    "schemaVersion": 1,
+    "correlationId": "09233cdc-8786-4382-bfff-b48fe0eae55a",
+    "webhookDeliveryId": "load-test-1774584325185-0-70fbee80",
+    "webhookEventType": "issue_comment"
+  }
+}

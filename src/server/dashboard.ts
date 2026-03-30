@@ -4,6 +4,7 @@
 
 import type { Request, Response } from 'express';
 import type { InstructionLoop } from '../runtime/loop.js';
+import { ProjectInstructionLoop } from '../runtime/project-loop.js';
 import { execSync } from 'node:child_process';
 import {
   NAV_STYLES,
@@ -12,7 +13,6 @@ import {
   SHIPYARD_THEME_VARS,
   getSharedHelperScript,
 } from './html-shared.js';
-import { WORK_DIR } from '../config/work-dir.js';
 import { getTimelineScript } from './dashboard-timeline.js';
 import {
   getSettingsModalHtml,
@@ -57,6 +57,7 @@ const DASHBOARD_RUN_HISTORY_LIMIT = 200;
 
 export function dashboardHandler(loop: InstructionLoop) {
   return async (_req: Request, res: Response) => {
+    const workDir = loop.getWorkDir();
     const status = loop.getStatus();
     let runs: Awaited<ReturnType<InstructionLoop['getRunsForListingAsync']>>;
     try {
@@ -71,13 +72,20 @@ export function dashboardHandler(loop: InstructionLoop) {
     let repoBranch = 'unknown';
     let repoLastCommit = 'unknown';
     try {
-      repoBranch = execSync(`git -C "${WORK_DIR}" branch --show-current`, { encoding: 'utf-8' }).trim();
-      repoLastCommit = execSync(`git -C "${WORK_DIR}" log -1 --format="%h %s" --no-walk`, { encoding: 'utf-8' }).trim();
+      repoBranch = execSync(`git -C "${workDir}" branch --show-current`, { encoding: 'utf-8' }).trim();
+      repoLastCommit = execSync(`git -C "${workDir}" log -1 --format="%h %s" --no-walk`, { encoding: 'utf-8' }).trim();
     } catch { /* not a git repo */ }
+
+    const projectsJson = JSON.stringify(
+      loop instanceof ProjectInstructionLoop
+        ? loop.listProjects()
+        : [{ id: 'default', label: 'Default Project', workDir }],
+    ).replace(/</g, '\\u003c');
 
     const runsJson = JSON.stringify(
       runs.map((r) => ({
         runId: r.runId,
+        workDir: r.workDir ?? null,
         phase: r.phase,
         steps: r.steps ?? [],
         fileEdits: r.fileEdits ?? [],
@@ -279,7 +287,8 @@ ${getSettingsModalHtml()}
 ${getShortcutsHtml()}
 ${getRunDebugModalHtml()}
 <script>
-var WORK_DIR = ${JSON.stringify(WORK_DIR)};
+var WORK_DIR = ${JSON.stringify(workDir)};
+var PROJECTS_SEED = ${projectsJson};
 var SEED = ${runsJson};
 var ANTHROPIC_KEY_STORAGE = ${JSON.stringify(DASHBOARD_ANTHROPIC_KEY_STORAGE_KEY)};
 var OPENAI_KEY_STORAGE = ${JSON.stringify(DASHBOARD_OPENAI_KEY_STORAGE_KEY)};
@@ -539,6 +548,7 @@ function mergeRunRecord(prev, next) {
     resolvedModels: preferDefined(nextRun.resolvedModels, prevRun.resolvedModels),
     completionStatus: preferDefined(nextRun.completionStatus, prevRun.completionStatus),
     projectContext: preferDefined(nextRun.projectContext, prevRun.projectContext),
+    workDir: preferDefined(nextRun.workDir, prevRun.workDir),
     instruction: runInstruction({
       instruction: preferDefined(nextRun.instruction, prevRun.instruction),
       messages: preferRicherArray(nextRun.messages, prevRun.messages),
@@ -562,8 +572,17 @@ function saveSelectedRunId() {
   } catch(e) {}
 }
 
-function sortedRuns() {
-  return Object.values(runsMap).sort(function(a,b){ return (b.savedAt||'').localeCompare(a.savedAt||''); });
+function runProjectId(run) {
+  if (run && run.projectContext && run.projectContext.projectId) return run.projectContext.projectId;
+  return 'default';
+}
+
+function sortedRuns(options) {
+  var all = Object.values(runsMap).sort(function(a,b){ return (b.savedAt||'').localeCompare(a.savedAt||''); });
+  if (options && options.selectedOnly === false) return all;
+  var selected = typeof getSelectedProject === 'function' ? getSelectedProject() : null;
+  var selectedId = selected && selected.id ? selected.id : 'default';
+  return all.filter(function(run){ return runProjectId(run) === selectedId; });
 }
 
 function ensureSelectedRun() {

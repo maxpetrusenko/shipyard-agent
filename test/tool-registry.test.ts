@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { existsSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { TOOL_SCHEMAS, dispatchTool, getExecutionToolSchemas } from '../src/tools/index.js';
 
 describe('tool registry', () => {
@@ -68,5 +71,66 @@ describe('tool registry', () => {
       success: false,
       message: 'Invalid field type for command: expected string.',
     });
+  });
+
+  it('anchors relative file tools to the supplied workdir', async () => {
+    const workDir = mkdtempSync(join(tmpdir(), 'shipyard-tool-workdir-'));
+    const relativePath = 'app/src/index.ts';
+    const outsidePath = resolve(process.cwd(), relativePath);
+
+    const writeResult = await dispatchTool(
+      'write_file',
+      { file_path: relativePath, content: 'export const ok = true;\n' },
+      undefined,
+      undefined,
+      workDir,
+    );
+    expect(writeResult.success).toBe(true);
+    expect(existsSync(join(workDir, relativePath))).toBe(true);
+    expect(existsSync(outsidePath)).toBe(false);
+
+    const readResult = await dispatchTool(
+      'read_file',
+      { file_path: relativePath },
+      undefined,
+      undefined,
+      workDir,
+    );
+    expect(readResult.success).toBe(true);
+    expect(readResult.content).toContain('export const ok = true;');
+  });
+
+  it('rejects absolute file writes outside the supplied workdir', async () => {
+    const workDir = mkdtempSync(join(tmpdir(), 'shipyard-tool-scope-'));
+    const outsideDir = mkdtempSync(join(tmpdir(), 'shipyard-tool-outside-'));
+    const outsidePath = join(outsideDir, 'src/index.ts');
+
+    const result = await dispatchTool(
+      'write_file',
+      { file_path: outsidePath, content: 'export const nope = true;\n' },
+      undefined,
+      undefined,
+      workDir,
+    );
+
+    expect(result.success).toBe(false);
+    expect(String(result.message)).toContain('selected project root');
+    expect(existsSync(outsidePath)).toBe(false);
+  });
+
+  it('rejects bash cwd outside the supplied workdir', async () => {
+    const workDir = mkdtempSync(join(tmpdir(), 'shipyard-tool-bash-root-'));
+    const outsideDir = mkdtempSync(join(tmpdir(), 'shipyard-tool-bash-outside-'));
+
+    const result = await dispatchTool(
+      'bash',
+      { command: 'pwd', cwd: outsideDir },
+      undefined,
+      undefined,
+      workDir,
+    );
+
+    expect(result.success).toBe(false);
+    expect(String(result.message)).toContain('selected project root');
   });
 });

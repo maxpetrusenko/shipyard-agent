@@ -25,6 +25,14 @@ export async function reportNode(
       prLine = 'PR: created during execute step';
     }
 
+    const verificationLine = !verification
+      ? 'Verification: Not run'
+      : verification.passed && !failed
+        ? verification.error_count
+          ? `Verification: PASSED (${verification.newErrorCount ?? 0} new, ${verification.preExistingErrorCount ?? verification.error_count} pre-existing)`
+          : 'Verification: PASSED'
+        : 'Verification: FAILED';
+
     const text = [
       '## Summary',
       '',
@@ -32,9 +40,7 @@ export async function reportNode(
       `Instruction: ${state.instruction}`,
       `Steps completed: ${completed}/${state.steps.length}`,
       `Files edited: ${uniqueEdited.length}`,
-      verification
-        ? `Verification: ${verification.passed && !failed ? 'PASSED' : 'FAILED'}`
-        : 'Verification: Not run',
+      verificationLine,
       verification?.error_count
         ? `Errors: ${verification.error_count}`
         : '',

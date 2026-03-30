@@ -1,0 +1,57 @@
+{
+  "runId": "dcf0eabe-d5f1-4984-92db-ceca6218a641",
+  "phase": "done",
+  "steps": [],
+  "fileEdits": [],
+  "toolCallHistory": [],
+  "tokenUsage": {
+    "input": 119,
+    "output": 72,
+    "cacheRead": 0,
+    "cacheCreation": 0
+  },
+  "traceUrl": "https://smith.langchain.com/public/fc59cd76-aefb-496b-ad2a-8b54eace06c0/r",
+  "messages": [
+    {
+      "role": "user",
+      "content": "run load test task 90005"
+    },
+    {
+      "role": "assistant",
+      "content": "I can’t run repository tasks from here in this turn.\n\nIf you want me to help with task 90005, please resubmit with a concrete request like “implement/fix task 90005” or share the task details and I’ll guide you through it. If you’re in Chat-only mode, turn it off for code changes."
+    }
+  ],
+  "error": null,
+  "verificationResult": null,
+  "reviewFeedback": null,
+  "durationMs": 1034,
+  "threadKind": "ask",
+  "runMode": "auto",
+  "executionPath": "graph",
+  "queuedAt": "2026-03-26T14:28:29.369Z",
+  "startedAt": "2026-03-26T14:28:56.745Z",
+  "modelOverride": null,
+  "modelFamily": null,
+  "modelOverrides": null,
+  "resolvedModels": {
+    "planning": "gpt-5.3-codex",
+    "coding": "gpt-5.4-mini",
+    "review": "gpt-5.3-codex",
+    "verification": "gpt-5.4-mini",
+    "summary": "gpt-5.4-mini",
+    "intent": "gpt-5.4-mini",
+    "chat": "gpt-5.4-mini"
+  },
+  "completionStatus": "completed",
+  "cancellation": null,
+  "nextActions": [
+    {
+      "id": "continue_chat",
+      "label": "Continue chat",
+      "description": "Ask a follow-up question in the same thread.",
+      "recommended": true,
+      "prompt": "Continue with the next question."
+    }
+  ],
+  "savedAt": "2026-03-26T14:29:02.669Z"
+}
