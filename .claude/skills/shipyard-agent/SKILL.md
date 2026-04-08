@@ -1,0 +1,257 @@
+---
+name: shipyard-agent-conventions
+description: Development conventions and patterns for shipyard-agent. TypeScript Express project with mixed commits.
+---
+
+# Shipyard Agent Conventions
+
+> Generated from [maxpetrusenko/shipyard-agent](https://github.com/maxpetrusenko/shipyard-agent) on 2026-03-23
+
+## Overview
+
+This skill teaches Claude the development patterns and conventions used in shipyard-agent.
+
+## Tech Stack
+
+- **Primary Language**: TypeScript
+- **Framework**: Express
+- **Architecture**: type-based module organization
+- **Test Location**: separate
+- **Test Framework**: vitest
+
+## When to Use This Skill
+
+Activate this skill when:
+- Making changes to this repository
+- Adding new features following established patterns
+- Writing tests that match project conventions
+- Creating commits with proper message format
+
+## Commit Conventions
+
+Follow these commit message conventions based on 8 analyzed commits.
+
+### Commit Style: Mixed Style
+
+### Prefixes Used
+
+- `feat`
+- `docs`
+- `fix`
+- `chore`
+
+### Message Guidelines
+
+- Average message length: ~53 characters
+- Keep first line concise and descriptive
+- Use imperative mood ("Add feature" not "Added feature")
+
+
+*Commit message example*
+
+```text
+feat: polish ship-agent to 10/10 — 13 targeted improvements
+```
+
+*Commit message example*
+
+```text
+chore: gitignore AGENTS.md and CLAUDE.md
+```
+
+*Commit message example*
+
+```text
+docs: add README, presearch, and agent documentation
+```
+
+*Commit message example*
+
+```text
+fix: use npx tsx in bench.sh for reliable resolution
+```
+
+*Commit message example*
+
+```text
+feat: standalone ship-agent with bench harness
+```
+
+*Commit message example*
+
+```text
+docs: add critical test evidence and submission artifacts
+```
+
+*Commit message example*
+
+```text
+fix: return 401 for invalid firebase bearer tokens
+```
+
+*Commit message example*
+
+```text
+feat: stabilize board drag sync and add e2e test harness
+```
+
+## Architecture
+
+### Project Structure: Single Package
+
+This project uses **type-based** module organization.
+
+### Source Layout
+
+```
+src/
+├── config/
+├── context/
+├── graph/
+├── multi-agent/
+├── runtime/
+├── server/
+├── tools/
+```
+
+### Entry Points
+
+- `src/app.ts`
+- `src/index.ts`
+
+### Configuration Files
+
+- `mvp-1-collab-board/app/eslint.config.js`
+- `mvp-1-collab-board/app/package.json`
+- `mvp-1-collab-board/app/playwright.config.ts`
+- `mvp-1-collab-board/app/tsconfig.json`
+- `mvp-1-collab-board/app/vite.config.ts`
+- `mvp-1-collab-board/functions/package.json`
+- `package.json`
+- `tsconfig.json`
+- `vitest.config.ts`
+
+### Guidelines
+
+- Group code by type (components, services, utils)
+- Keep related functionality in the same type folder
+- Avoid circular dependencies between type folders
+
+## Code Style
+
+### Language: TypeScript
+
+### Naming Conventions
+
+| Element | Convention |
+|---------|------------|
+| Files | camelCase |
+| Functions | camelCase |
+| Classes | PascalCase |
+| Constants | SCREAMING_SNAKE_CASE |
+
+### Import Style: Mixed Style
+
+### Export Style: Named Exports
+
+
+*Preferred export style*
+
+```typescript
+// Use named exports
+export function calculateTotal() { ... }
+export const TAX_RATE = 0.1
+export interface Order { ... }
+```
+
+## Testing
+
+### Test Framework: vitest
+
+### File Pattern: `*.test.ts`
+
+### Test Types
+
+- **Unit tests**: Test individual functions and components in isolation
+- **E2e tests**: Test complete user flows through the application
+
+
+*Test file structure*
+
+```typescript
+import { describe, it, expect } from 'vitest'
+
+describe('MyFunction', () => {
+  it('should return expected result', () => {
+    const result = myFunction(input)
+    expect(result).toBe(expected)
+  })
+})
+```
+
+## Error Handling
+
+### Error Handling Style: Try-Catch Blocks
+
+
+*Standard error handling pattern*
+
+```typescript
+try {
+  const result = await riskyOperation()
+  return result
+} catch (error) {
+  console.error('Operation failed:', error)
+  throw new Error('User-friendly message')
+}
+```
+
+## Common Workflows
+
+These workflows were detected from analyzing commit patterns.
+
+### Feature Development
+
+Standard feature implementation workflow
+
+**Frequency**: ~16 times per month
+
+**Steps**:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+**Files typically involved**:
+- `mvp-1-collab-board/app/src/components/*`
+- `mvp-1-collab-board/app/src/firebase/*`
+- `mvp-1-collab-board/app/src/pages/*`
+- `**/*.test.*`
+- `**/api/**`
+
+**Example commit sequence**:
+```
+Add planning docs and decision log from CollabBoard requirements
+Close requirements gaps and map tasks to Linear tickets
+Revert AGENTS and add submission PDF package
+```
+
+
+## Best Practices
+
+Based on analysis of the codebase, follow these practices:
+
+### Do
+
+- Write tests using vitest
+- Follow *.test.ts naming pattern
+- Use camelCase for file names
+- Prefer named exports
+
+### Don't
+
+- Don't skip tests for new features
+- Don't deviate from established patterns without discussion
+
+---
+
+*This skill was auto-generated by [ECC Tools](https://ecc.tools). Review and customize as needed for your team.*
